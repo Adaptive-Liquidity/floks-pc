@@ -1,0 +1,30 @@
+{
+  "name": "flok-node-runtime",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Isolated Flok Node Computer runtime — per-Node VMs, MCP gateway, pairing, jobs, checkpoints, handoffs. Standalone until Gate G0.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0 <23"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/**/*.test.ts",
+    "test:domain": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/domain/**/*.test.ts",
+    "build": "tsc",
+    "verify": "npm run typecheck"
+  },
+  "dependencies": {
+    "zod": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.16.5",
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./computers": "./src/lib/computers/index.ts",
+    "./providers": "./src/lib/computers/providers/index.ts"
+  }
+}
