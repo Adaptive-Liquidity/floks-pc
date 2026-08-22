@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 20
     env:
       RUNLOOP_API_KEY: ${{ secrets.RUNLOOP_API_KEY }}
-      FLOK_RUNLOOP_BLUEPRINT: ${{ vars.FLOK_RUNLOOP_BLUEPRINT }}
+      FLOK_RUNLOOP_BLUEPRINT: ${{ vars.FLOK_RUNLOOP_BLUEPRINT || secrets.FLOK_RUNLOOP_BLUEPRINT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,10 +33,16 @@ jobs:
       - run: npm ci
       - name: Verify Runloop configuration
         run: |
-          test -n "$RUNLOOP_API_KEY"
-          test -n "$FLOK_RUNLOOP_BLUEPRINT"
-          echo "Runloop blueprint: $FLOK_RUNLOOP_BLUEPRINT"
-          echo "RUNLOOP_API_KEY length=${#RUNLOOP_API_KEY}"
+          if [ -z "$RUNLOOP_API_KEY" ]; then
+            echo "RUNLOOP_API_KEY is missing (must FAIL, not skip)"
+            exit 1
+          fi
+          if [ -z "$FLOK_RUNLOOP_BLUEPRINT" ]; then
+            FLOK_RUNLOOP_BLUEPRINT="runloop/universal-ubuntu-24.04-x86_64-dnd"
+            echo "FLOK_RUNLOOP_BLUEPRINT unset; using documented default"
+            echo "FLOK_RUNLOOP_BLUEPRINT=$FLOK_RUNLOOP_BLUEPRINT" >> "$GITHUB_ENV"
+          fi
+          echo "Runloop blueprint configured"
       - name: Run Runloop live tests
         env:
           FLOK_LIVE_RUNLOOP_TEST: "1"
