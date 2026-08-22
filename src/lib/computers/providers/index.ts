@@ -8,13 +8,15 @@ export {
   isUnpinnedImage,
 } from "./docker-dev.js";
 export {
-  DaytonaProvider,
-  DaytonaLinuxVmRequired,
-  DAYTONA_PROVIDER_NAME,
-  DAYTONA_WORKSPACE_ROOT,
-  MemoryDaytonaControlPlane,
-} from "./daytona.js";
+  RunloopProvider,
+  RunloopBlueprintRequired,
+  ComputerUseNotAvailable,
+  RUNLOOP_PROVIDER_NAME,
+  RUNLOOP_WORKSPACE_ROOT,
+  MemoryRunloopControlPlane,
+  DEFAULT_RUNLOOP_BLUEPRINT,
+} from "./runloop.js";
 export {
   assertNoControlPlaneSecrets,
   CONTROL_PLANE_SECRET_ENV_KEYS,
-} from "./daytona-client.js";
+} from "./runloop-client.js";

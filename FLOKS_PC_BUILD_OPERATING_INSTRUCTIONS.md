@@ -358,7 +358,7 @@ Conceptually:
 
 Phase-specific Docker/MCP/security checks may be separate jobs.
 
-Paid provider tests such as Daytona live tests remain opt-in or scheduled.
+Paid provider tests such as Runloop live tests remain opt-in or scheduled.
 
 ---
 
@@ -385,7 +385,7 @@ security tests
 container scanning
 ```
 
-Do not require paid Daytona live tests on every PR.
+Do not require paid Runloop live tests on every PR.
 
 ---
 

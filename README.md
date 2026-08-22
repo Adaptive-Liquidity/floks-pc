@@ -19,7 +19,7 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 | **C0** — scaffold, authority, domain types, ComputerProvider interface | **CLOSED / PASSED** |
 | **C1** — domain logic, FakeProvider, ComputerService, unit tests | **CLOSED / PASSED** |
 | **C2** — DockerDevProvider + isolation/persistence | **CLOSED / PASSED** |
-| **C3** — Daytona Linux VM provider | CURRENT |
+| **C3** — Runloop Devbox provider (C3A compute substrate) | CURRENT |
 | C4+ | Not started (Nexus-IQ remains hard-locked until G0) |
 
 ## Authority files (read in this order)
@@ -33,7 +33,7 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 
 - `FLOK_NEXUS_IQ_ENABLED=false` until Gate G0 passes
 - `FLOK_GRAPH_MEMORY_ENABLED=false` until after Nexus core
-- Production isolation boundary is a **VM** (Daytona Linux VM → later Kata/Firecracker), never a shared-kernel container
+- Production isolation boundary is a **VM** (Runloop Devboxes → later Kata/Firecracker), never a shared-kernel container
 
 ## Quick start
 
@@ -52,23 +52,31 @@ FLOK_LIVE_DOCKER_TEST=1 npm run test:live:docker
 
 When the flag is set, Docker unavailability **fails** the suite; it never silent-skips. These live tests are **not** part of `npm run verify`.
 
-Live Daytona tests (paid Linux VMs) skip unless `FLOK_LIVE_COMPUTER_TEST=1`. They require `DAYTONA_API_KEY` and `FLOK_DAYTONA_SNAPSHOT` (a **Linux VM** snapshot, not the default container class):
+Live Runloop tests (paid Devboxes) skip unless `FLOK_LIVE_RUNLOOP_TEST=1`. They require `RUNLOOP_API_KEY` and `FLOK_RUNLOOP_BLUEPRINT` (default `runloop/universal-ubuntu-24.04-x86_64-dnd`):
 
 ```bash
-FLOK_LIVE_COMPUTER_TEST=1 npm run test:live:daytona
+FLOK_LIVE_RUNLOOP_TEST=1 npm run test:live:runloop
 ```
 
-When either live flag is set, missing credentials **fail** the suite. Live Daytona is **not** part of `npm run verify` or required PR CI.
+When the flag is set, missing credentials **fail** the suite. Live Runloop is **not** part of `npm run verify` or required PR CI.
 
-Store production credentials in GitHub Actions only (never in git, `.env` committed to the repo, or a Node VM):
+Store production credentials in GitHub Actions only (never in git, `.env` committed to the repo, or a Node VM / Devbox):
 
 | Name | Where | Purpose |
 |------|--------|---------|
-| `DAYTONA_API_KEY` | Repository **secret** | Daytona control-plane API key |
-| `FLOK_DAYTONA_SNAPSHOT` | Repository **variable** (or secret) | Linux VM snapshot name/id |
-| `DAYTONA_API_URL` | Repository **variable**, optional | Override API URL |
+| `RUNLOOP_API_KEY` | Repository **secret** | Runloop control-plane API key |
+| `FLOK_RUNLOOP_BLUEPRINT` | Repository **variable** | Blueprint name (e.g. `runloop/universal-ubuntu-24.04-x86_64-dnd`) |
 
-The `daytona-c3` workflow reads those secrets on `workflow_dispatch` and on `main` pushes that touch the Daytona provider. It is skipped when the secret is empty. Do not make it a required status check.
+```text
+PR
+├─ verify        ← every PR (free)
+├─ docker-c2     ← every PR (GitHub-hosted Docker)
+└─ runloop-live  ← manual workflow_dispatch only
+       ├─ secrets.RUNLOOP_API_KEY
+       └─ vars.FLOK_RUNLOOP_BLUEPRINT
+```
+
+Run it from Actions → **runloop-c3** → Run workflow. Do not use `runloopai/deploy-agent`. Do not make it a required status check.
 
 Do **not** enable Nexus, AEON, or Graphiti until Gate G0 is marked PASSED in `PHASES.md`.
 

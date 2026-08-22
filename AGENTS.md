@@ -28,7 +28,7 @@ Violations are stop-the-line. Revert immediately.
 Work only on the currently open phase listed in `PHASES.md`.
 
 - Phase 0 / Gate C0: docs + types + interface only (this scaffold).
-- Do not implement FakeProvider body, DockerDev, Daytona, migrations, worker, or MCP server until the corresponding phase is open.
+- Do not implement FakeProvider body, DockerDev, Runloop, migrations, worker, or MCP server until the corresponding phase is open.
 - Do not enable or import Nexus-IQ, AEON, Graphiti, or any memory plane until Gate G0 is explicitly marked PASSED.
 
 ## Hard locks (never relax)
@@ -51,7 +51,7 @@ Nexus-IQ work begins only after the standalone Flok Computer has passed full end
 - Capability tokens are 256-bit, stored as digests only
 - Pair codes are one-use, short TTL, rate-limited
 - Never persist terminal output, screenshots, cookies, or page contents by default
-- Never put provider API keys (Daytona etc.) into a Node VM or MCP response
+- Never put provider API keys (Runloop etc.) into a Node VM or MCP response
 
 ## Verification (must stay green)
 

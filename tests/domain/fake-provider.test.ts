@@ -1,6 +1,6 @@
 /**
  * FakeProvider contract + isolation tests.
- * Zero network / Docker / Daytona.
+ * Zero network / Docker / paid providers.
  */
 
 import { describe, it, beforeEach } from "node:test";

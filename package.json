@@ -14,12 +14,12 @@
     "test:providers": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/providers/**/*.test.ts",
     "test:live": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/live/**/*.test.ts",
     "test:live:docker": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/providers/docker-dev.isolation.test.ts",
-    "test:live:daytona": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/providers/daytona.isolation.test.ts tests/live/daytona.live.test.ts",
+    "test:live:runloop": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/providers/runloop.isolation.test.ts tests/live/runloop.live.test.ts",
     "build": "tsc",
     "verify": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
-    "@daytona/sdk": "0.205.1",
+    "@runloop/api-client": "1.28.0",
     "zod": "^4.4.0"
   },
   "devDependencies": {

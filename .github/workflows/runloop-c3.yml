@@ -1,0 +1,43 @@
+# Manual Runloop Devbox live tests (C3A).
+# Not on pull_request. Not on push. Burns trial credits.
+# Do NOT use runloopai/deploy-agent — FLOKS tests Devboxes, not Runloop Agents.
+# RUNLOOP_API_KEY stays in GitHub secrets; never in git, guest env, or logs.
+name: runloop-c3
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: runloop-c3
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  runloop-live:
+    name: Runloop Devbox live test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUNLOOP_API_KEY: ${{ secrets.RUNLOOP_API_KEY }}
+      FLOK_RUNLOOP_BLUEPRINT: ${{ vars.FLOK_RUNLOOP_BLUEPRINT }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22.16"
+          cache: npm
+      - run: npm ci
+      - name: Verify Runloop configuration
+        run: |
+          test -n "$RUNLOOP_API_KEY"
+          test -n "$FLOK_RUNLOOP_BLUEPRINT"
+          echo "Runloop blueprint: $FLOK_RUNLOOP_BLUEPRINT"
+          echo "RUNLOOP_API_KEY length=${#RUNLOOP_API_KEY}"
+      - name: Run Runloop live tests
+        env:
+          FLOK_LIVE_RUNLOOP_TEST: "1"
+        run: npm run test:live:runloop

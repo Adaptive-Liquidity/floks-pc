@@ -77,12 +77,13 @@ export {
   DOCKER_DEV_WORKSPACE_ROOT,
 } from "./providers/docker-dev.js";
 export {
-  DaytonaProvider,
-  DaytonaLinuxVmRequired,
-  DAYTONA_PROVIDER_NAME,
-  DAYTONA_WORKSPACE_ROOT,
-  MemoryDaytonaControlPlane,
-} from "./providers/daytona.js";
+  RunloopProvider,
+  RunloopBlueprintRequired,
+  ComputerUseNotAvailable,
+  RUNLOOP_PROVIDER_NAME,
+  RUNLOOP_WORKSPACE_ROOT,
+  MemoryRunloopControlPlane,
+} from "./providers/runloop.js";
 export { FLAGS, assertNexusDisabled } from "./flags.js";
 
 export {

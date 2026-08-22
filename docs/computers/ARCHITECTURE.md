@@ -15,7 +15,7 @@ Flok Node Runtime (this package)
   ├─ ComputerProvider interface
   │     ├─ FakeProvider          (unit / contract tests)
   │     ├─ DockerDevProvider     (local integration only)
-  │     ├─ DaytonaProvider       (production v1 — Linux VM)
+  │     ├─ RunloopProvider       (production v1 — Devboxes)
   │     └─ KataProvider          (self-host, Phase 13)
   ├─ MCP Gateway (eight tools)
   ├─ Checkpoints → S3-compatible object storage
@@ -62,7 +62,7 @@ provider machine unavailable
 
 ## Security boundary
 
-Production isolation is a **VM** (Daytona Linux VM class, later Kata + Firecracker).  
+Production isolation is a **VM** (Runloop Devboxes, later Kata + Firecracker).  
 Ordinary containers share the host kernel and are not the production security architecture. Docker is useful for local testing and for optional tool containers *inside* a Node, not as the Node boundary itself.
 
 ## Nexus-IQ (Phase 14+)
