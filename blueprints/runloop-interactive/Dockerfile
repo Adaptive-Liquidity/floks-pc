@@ -47,7 +47,7 @@ RUN set -euo pipefail \
     && chown root:flok-ui /home/user/flok \
     && chmod 775 /home/user/flok \
     && chown -R flok-ui:flok-ui /home/flok-ui /home/user/flok/.browser /home/user/flok/.flok /run/user/1500 \
-    && chmod 700 /home/user/flok/.browser /run/user/1500 \
+    && chmod 700 /home/user/flok/.browser /home/user/flok/.browser/profile /run/user/1500 \
     && SANDBOX="$(find /opt/google -name chrome-sandbox -type f 2>/dev/null | head -1 || true)" \
     && test -n "$SANDBOX" \
     && chmod 4755 "$SANDBOX" \

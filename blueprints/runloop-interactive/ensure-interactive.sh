@@ -40,7 +40,16 @@ chmod 1777 /tmp/.X11-unix || true
 chown "$UI_USER:$UI_USER" "$RUNDIR" || true
 chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser /home/user/flok/.flok
 chmod 700 /home/user/flok/.browser
+chmod 700 "$PROFILE" || true
 chmod 775 /home/user/flok/.flok /home/user/flok || true
+touch /tmp/flok-chrome.log
+chown "$UI_USER:$UI_USER" /tmp/flok-chrome.log
+chmod 644 /tmp/flok-chrome.log
+if ! runuser -u "$UI_USER" -- test -w "$PROFILE"; then
+  echo "profile not writable by $UI_USER: $PROFILE" >&2
+  ls -ld "$PROFILE" /home/user/flok/.browser /home/user/flok >&2
+  exit 1
+fi
 
 alive() {
   local pf="$1"

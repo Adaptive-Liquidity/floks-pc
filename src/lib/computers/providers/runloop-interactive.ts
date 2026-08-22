@@ -195,6 +195,430 @@ export function chromeLaunchArgv(url: string): string[] {
   ]);
 }
 
+/** Guest-local Chrome startup log. Not an audit artifact; truncated in diagnostics. */
+export const CHROME_LOG_PATH = "/tmp/flok-chrome.log";
+export const CHROME_HOME_FALLBACK_DIR = `${FLOK_UI_HOME}/.config/google-chrome`;
+export const CHROME_READY_TIMEOUT_MS = 20_000;
+export const CHROME_READY_POLL_MS = 500;
+const CHROME_LOG_TAIL_CHARS = 4096;
+const PROFILE_TEST_MARKERS = new Set(["c3b-marker", "last-url", "launched"]);
+
+export type ChromeReadyClass =
+  | "ready"
+  | "pending"
+  | "never_started"
+  | "started_then_exited"
+  | "sandbox_disabled"
+  | "permissions_failure"
+  | "sandbox_failure"
+  | "display_failure"
+  | "profile_redirected"
+  | "readiness_timeout";
+
+export interface ChromeReadyEvidence {
+  chromeCmdlines: string[];
+  profileEntries: string[];
+  profileEntriesUi: string[];
+  profileUid: number | null;
+  profileGid: number | null;
+  profileMode: string | null;
+  profileWritableByUi: boolean;
+  browserDirMode: string | null;
+  workspaceMode: string | null;
+  sandboxPath: string | null;
+  sandboxMode: string | null;
+  sandboxNosuid: boolean | null;
+  xvfbAlive: boolean;
+  openboxAlive: boolean;
+  display: string;
+  visibleWindows: string[];
+  homeFallbackEntries: string[];
+  chromeLogTail: string;
+  logHasSandboxError: boolean;
+  logHasChromeOutput: boolean;
+  unprivilegedUserns: string | null;
+}
+
+export interface ChromeReadyResult {
+  status: ChromeReadyClass;
+  ready: boolean;
+  /** Stop polling: success or a classified failure. */
+  terminal: boolean;
+  message: string;
+}
+
+export function chromeHasUserDataDir(cmdline: string): boolean {
+  return cmdline.includes(`--user-data-dir=${BROWSER_PROFILE_DIR}`);
+}
+
+/** True if the cmdline disables Chrome's sandbox. Never treat this as ready. */
+export function chromeHasNoSandbox(cmdline: string): boolean {
+  return /(?:^|\s)--no-sandbox(?:\s|$)/.test(cmdline);
+}
+
+export function chromeHasDisableSetuidSandbox(cmdline: string): boolean {
+  return /(?:^|\s)--disable-setuid-sandbox(?:\s|$)/.test(cmdline);
+}
+
+export function chromeSandboxDisabled(cmdline: string): boolean {
+  return chromeHasNoSandbox(cmdline) || chromeHasDisableSetuidSandbox(cmdline);
+}
+
+export function chromeProfileHasBrowserState(entries: string[]): boolean {
+  return entries.some((name) => !PROFILE_TEST_MARKERS.has(name) && !name.startsWith("."));
+}
+
+export function sanitizeChromeLog(raw: string): string {
+  const filtered = raw
+    .split("\n")
+    .filter(
+      (line) =>
+        !/api[_-]?key|bearer\s+\S+|set-cookie|cookie:|runloop_api|authorization:/i.test(line),
+    )
+    .join("\n");
+  return filtered.length <= CHROME_LOG_TAIL_CHARS
+    ? filtered
+    : filtered.slice(filtered.length - CHROME_LOG_TAIL_CHARS);
+}
+
+function ourChromeCmdlines(cmdlines: string[]): string[] {
+  return cmdlines.filter(
+    (c) => /google-chrome/.test(c) || chromeHasUserDataDir(c),
+  );
+}
+
+export function classifyChromeReadiness(
+  evidence: ChromeReadyEvidence,
+  opts?: { timedOut?: boolean; requireProfile?: boolean },
+): ChromeReadyResult {
+  const timedOut = opts?.timedOut === true;
+  const requireProfile = opts?.requireProfile === true;
+  const ours = ourChromeCmdlines(evidence.chromeCmdlines);
+  const alive = ours.length > 0;
+  const noSandbox = ours.some(chromeSandboxDisabled);
+  const userData = ours.some(chromeHasUserDataDir);
+  const profileState =
+    chromeProfileHasBrowserState(evidence.profileEntries) ||
+    chromeProfileHasBrowserState(evidence.profileEntriesUi);
+  const windowUp = evidence.visibleWindows.length > 0;
+  const fallback = evidence.homeFallbackEntries.length > 0;
+
+  if (noSandbox) {
+    return {
+      status: "sandbox_disabled",
+      ready: false,
+      terminal: true,
+      message: "Chrome cmdline contains --no-sandbox or --disable-setuid-sandbox; refuse to continue",
+    };
+  }
+  if (alive && !evidence.profileWritableByUi) {
+    return {
+      status: "permissions_failure",
+      ready: false,
+      terminal: true,
+      message: `profile not writable by ${FLOK_UI_USER} (uid ${FLOK_UI_UID} mode=${evidence.profileMode} uid=${evidence.profileUid})`,
+    };
+  }
+  if (alive && !evidence.xvfbAlive) {
+    return {
+      status: "display_failure",
+      ready: false,
+      terminal: true,
+      message: `Xvfb not running on ${evidence.display}`,
+    };
+  }
+  if (alive && fallback && !profileState && timedOut) {
+    return {
+      status: "profile_redirected",
+      ready: false,
+      terminal: true,
+      message: `Chrome wrote ${CHROME_HOME_FALLBACK_DIR} instead of ${BROWSER_PROFILE_DIR}`,
+    };
+  }
+  if (alive && userData && profileState) {
+    return {
+      status: "ready",
+      ready: true,
+      terminal: true,
+      message: "Chrome alive with initialized profile",
+    };
+  }
+  if (alive && userData && windowUp && !requireProfile) {
+    return {
+      status: "ready",
+      ready: true,
+      terminal: true,
+      message: "Chrome alive with a visible window",
+    };
+  }
+  if (alive && evidence.logHasSandboxError && timedOut) {
+    return {
+      status: "sandbox_failure",
+      ready: false,
+      terminal: true,
+      message: "Chrome sandbox/namespace error in startup log; profile never initialized",
+    };
+  }
+  if (!alive && timedOut) {
+    if (evidence.logHasChromeOutput) {
+      return {
+        status: "started_then_exited",
+        ready: false,
+        terminal: true,
+        message: "Chrome started then exited before becoming ready",
+      };
+    }
+    return {
+      status: "never_started",
+      ready: false,
+      terminal: true,
+      message: "no flok-ui Chrome process and no Chrome log output",
+    };
+  }
+  if (timedOut) {
+    return {
+      status: "readiness_timeout",
+      ready: false,
+      terminal: true,
+      message: `Chrome still not ready after ${CHROME_READY_TIMEOUT_MS}ms (alive=${alive} userDataDir=${userData} profileState=${profileState} windows=${windowUp})`,
+    };
+  }
+  return {
+    status: "pending",
+    ready: false,
+    terminal: false,
+    message: alive
+      ? profileState
+        ? "Chrome alive; waiting for window"
+        : windowUp || requireProfile
+          ? "Chrome alive; waiting for profile"
+          : "Chrome alive; waiting for profile or window"
+      : "waiting for Chrome process",
+  };
+}
+
+export async function pollUntilChromeReady(
+  probe: () => Promise<ChromeReadyEvidence>,
+  opts?: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    requireProfile?: boolean;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  },
+): Promise<{ result: ChromeReadyResult; evidence: ChromeReadyEvidence }> {
+  const timeoutMs = opts?.timeoutMs ?? CHROME_READY_TIMEOUT_MS;
+  const intervalMs = opts?.intervalMs ?? CHROME_READY_POLL_MS;
+  const requireProfile = opts?.requireProfile === true;
+  const now = opts?.now ?? Date.now;
+  const sleep =
+    opts?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const deadline = now() + timeoutMs;
+  let evidence = await probe();
+  for (;;) {
+    const timedOut = now() >= deadline;
+    const result = classifyChromeReadiness(evidence, { timedOut, requireProfile });
+    if (result.ready || result.terminal) return { result, evidence };
+    if (timedOut) {
+      return {
+        result: classifyChromeReadiness(evidence, { timedOut: true, requireProfile }),
+        evidence,
+      };
+    }
+    await sleep(intervalMs);
+    evidence = await probe();
+  }
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function asNullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asNullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function asBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+export function parseChromeReadyEvidence(raw: string): ChromeReadyEvidence {
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("chrome ready probe did not return an object");
+  }
+  const o = parsed as Record<string, unknown>;
+  return {
+    chromeCmdlines: asStringArray(o.chromeCmdlines),
+    profileEntries: asStringArray(o.profileEntries),
+    profileEntriesUi: asStringArray(o.profileEntriesUi),
+    profileUid: asNullableNumber(o.profileUid),
+    profileGid: asNullableNumber(o.profileGid),
+    profileMode: asNullableString(o.profileMode),
+    profileWritableByUi: asBoolean(o.profileWritableByUi),
+    browserDirMode: asNullableString(o.browserDirMode),
+    workspaceMode: asNullableString(o.workspaceMode),
+    sandboxPath: asNullableString(o.sandboxPath),
+    sandboxMode: asNullableString(o.sandboxMode),
+    sandboxNosuid: typeof o.sandboxNosuid === "boolean" ? o.sandboxNosuid : null,
+    xvfbAlive: asBoolean(o.xvfbAlive),
+    openboxAlive: asBoolean(o.openboxAlive),
+    display: typeof o.display === "string" ? o.display : FLOK_DISPLAY,
+    visibleWindows: asStringArray(o.visibleWindows),
+    homeFallbackEntries: asStringArray(o.homeFallbackEntries),
+    chromeLogTail: sanitizeChromeLog(typeof o.chromeLogTail === "string" ? o.chromeLogTail : ""),
+    logHasSandboxError: asBoolean(o.logHasSandboxError),
+    logHasChromeOutput: asBoolean(o.logHasChromeOutput),
+    unprivilegedUserns: asNullableString(o.unprivilegedUserns),
+  };
+}
+
+export function formatChromeReadyFailure(
+  result: ChromeReadyResult,
+  evidence: ChromeReadyEvidence,
+): string {
+  const lines = [
+    `chrome readiness: ${result.status}`,
+    result.message,
+    `display=${evidence.display} xvfb=${evidence.xvfbAlive} openbox=${evidence.openboxAlive}`,
+    `profile mode=${evidence.profileMode} uid=${evidence.profileUid} gid=${evidence.profileGid} writableByUi=${evidence.profileWritableByUi}`,
+    `workspace mode=${evidence.workspaceMode} browserDir mode=${evidence.browserDirMode}`,
+    `sandbox path=${evidence.sandboxPath} mode=${evidence.sandboxMode} nosuid=${evidence.sandboxNosuid} userns_clone=${evidence.unprivilegedUserns}`,
+    `profile entries: ${evidence.profileEntries.join(",") || "(none)"}`,
+    `profile entries (flok-ui): ${evidence.profileEntriesUi.join(",") || "(none)"}`,
+    `home fallback entries: ${evidence.homeFallbackEntries.join(",") || "(none)"}`,
+    `windows: ${evidence.visibleWindows.join(" | ") || "(none)"}`,
+    "chrome cmdlines:",
+    evidence.chromeCmdlines.length ? evidence.chromeCmdlines.map((c) => `  ${c}`).join("\n") : "  (none)",
+    "chrome log tail:",
+    evidence.chromeLogTail.trim() ? evidence.chromeLogTail.trim() : "  (empty)",
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * Guest probe: one argv python3 -c. No secrets. Prints JSON on stdout.
+ * Lists the profile as root and as flok-ui so a mount-namespace split is visible.
+ */
+export const CHROME_READY_PROBE_PY = [
+  "import json,os,subprocess,pathlib",
+  "UID=1500",
+  "USER='flok-ui'",
+  "PROFILE='/home/user/flok/.browser/profile'",
+  "BROWSER='/home/user/flok/.browser'",
+  "WS='/home/user/flok'",
+  "LOG='/tmp/flok-chrome.log'",
+  "FALLBACK='/home/flok-ui/.config/google-chrome'",
+  "DISPLAY=':99'",
+  "def listdir(p):",
+  "    try: return sorted(os.listdir(p))",
+  "    except Exception: return []",
+  "def mode_of(p):",
+  "    try:",
+  "        st=os.stat(p)",
+  "        return st.st_uid, st.st_gid, format(st.st_mode & 0o7777, 'o')",
+  "    except Exception:",
+  "        return None, None, None",
+  "def pgrep(pat):",
+  "    try:",
+  "        r=subprocess.run(['pgrep','-u',USER,'-af',pat],capture_output=True,text=True)",
+  "        return [ln for ln in (r.stdout or '').splitlines() if ln.strip() and 'pgrep' not in ln]",
+  "    except Exception:",
+  "        return []",
+  "def alive(pat):",
+  "    try:",
+  "        r=subprocess.run(['pgrep','-u',USER,'-f',pat],capture_output=True)",
+  "        return r.returncode==0",
+  "    except Exception:",
+  "        return False",
+  "def runuser_ls(p):",
+  "    try:",
+  "        r=subprocess.run(['runuser','-u',USER,'--','ls','-1',p],capture_output=True,text=True)",
+  "        if r.returncode!=0: return []",
+  "        return [ln for ln in (r.stdout or '').splitlines() if ln.strip()]",
+  "    except Exception:",
+  "        return []",
+  "def writable(p):",
+  "    try:",
+  "        r=subprocess.run(['runuser','-u',USER,'--','test','-w',p])",
+  "        return r.returncode==0",
+  "    except Exception:",
+  "        return False",
+  "def windows():",
+  "    out=[]",
+  "    cmds=[",
+  "      ['runuser','-u',USER,'--','env',f'DISPLAY={DISPLAY}','xlsclients','-display',DISPLAY],",
+  "      ['runuser','-u',USER,'--','env',f'DISPLAY={DISPLAY}','xdotool','search','--onlyvisible','--class','Google-chrome'],",
+  "    ]",
+  "    for argv in cmds:",
+  "        try:",
+  "            r=subprocess.run(argv,capture_output=True,text=True,timeout=2)",
+  "        except Exception:",
+  "            continue",
+  "        for ln in (r.stdout or '').splitlines():",
+  "            s=ln.strip()",
+  "            if not s: continue",
+  "            low=s.lower()",
+  "            if 'xlsclients' in argv and ('chrome' not in low and 'chromium' not in low): continue",
+  "            if s not in out: out.append(s)",
+  "    return out",
+  "def sandbox():",
+  "    path=None",
+  "    for cand in ('/opt/google/chrome/chrome-sandbox','/opt/google/chrome-sandbox'):",
+  "        if os.path.isfile(cand): path=cand; break",
+  "    if not path:",
+  "        for root,dirs,files in os.walk('/opt/google'):",
+  "            if 'chrome-sandbox' in files:",
+  "                path=os.path.join(root,'chrome-sandbox'); break",
+  "    if not path: return None,None,None",
+  "    st=os.stat(path)",
+  "    nosuid=None",
+  "    try:",
+  "        m=subprocess.run(['findmnt','-no','OPTIONS','-T',path],capture_output=True,text=True,timeout=2)",
+  "        nosuid='nosuid' in (m.stdout or '')",
+  "    except Exception:",
+  "        pass",
+  "    return path, format(st.st_mode & 0o7777, 'o'), nosuid",
+  "def userns():",
+  "    try: return pathlib.Path('/proc/sys/kernel/unprivileged_userns_clone').read_text().strip()",
+  "    except Exception: return None",
+  "cmd=pgrep('google-chrome')+pgrep('--user-data-dir=/home/user/flok/.browser/profile')",
+  "seen=set(); cmdlines=[]",
+  "for ln in cmd:",
+  "    if ln not in seen: seen.add(ln); cmdlines.append(ln)",
+  "pu,pg,pm=mode_of(PROFILE)",
+  "_,_,bm=mode_of(BROWSER)",
+  "_,_,wm=mode_of(WS)",
+  "sp,sm,sn=sandbox()",
+  "try: log=pathlib.Path(LOG).read_bytes()[-4096:].decode('utf-8','replace')",
+  "except Exception: log=''",
+  "low=log.lower()",
+  "sand_err=any(s in low for s in ['suid sandbox','chrome-sandbox','new namespace','operation not permitted','zygote_host','no_sandbox','namespace sandbox'])",
+  "out={",
+  " 'chromeCmdlines':cmdlines,",
+  " 'profileEntries':listdir(PROFILE),",
+  " 'profileEntriesUi':runuser_ls(PROFILE),",
+  " 'profileUid':pu,'profileGid':pg,'profileMode':pm,",
+  " 'profileWritableByUi':writable(PROFILE),",
+  " 'browserDirMode':bm,'workspaceMode':wm,",
+  " 'sandboxPath':sp,'sandboxMode':sm,'sandboxNosuid':sn,",
+  " 'xvfbAlive':alive('Xvfb'),'openboxAlive':alive('openbox'),",
+  " 'display':DISPLAY,",
+  " 'visibleWindows':windows(),",
+  " 'homeFallbackEntries':listdir(FALLBACK),",
+  " 'chromeLogTail':log,",
+  " 'logHasSandboxError':sand_err,",
+  " 'logHasChromeOutput':bool(log.strip()),",
+  " 'unprivilegedUserns':userns(),",
+  "}",
+  "print(json.dumps(out))",
+].join("\n");
+
 /**
  * Guest-side stack starter. Written onto the Devbox at ensure time.
  * If Xvfb is absent (generic C3A Ubuntu Blueprint) this exits 0 so compute
@@ -238,7 +662,16 @@ chmod 1777 /tmp/.X11-unix || true
 chown "$UI_USER:$UI_USER" "$RUNDIR" || true
 chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser /home/user/flok/.flok
 chmod 700 /home/user/flok/.browser
+chmod 700 "$PROFILE" || true
 chmod 775 /home/user/flok/.flok /home/user/flok || true
+touch /tmp/flok-chrome.log
+chown "$UI_USER:$UI_USER" /tmp/flok-chrome.log
+chmod 644 /tmp/flok-chrome.log
+if ! runuser -u "$UI_USER" -- test -w "$PROFILE"; then
+  echo "profile not writable by $UI_USER: $PROFILE" >&2
+  ls -ld "$PROFILE" /home/user/flok/.browser /home/user/flok >&2
+  exit 1
+fi
 
 alive() {
   local pf="$1"

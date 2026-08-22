@@ -26,6 +26,22 @@ import {
   BROWSER_PROFILE_DIR,
   FLOK_UI_USER,
   FLOK_UI_UID,
+  CHROME_LOG_PATH,
+  CHROME_HOME_FALLBACK_DIR,
+  CHROME_READY_TIMEOUT_MS,
+  CHROME_READY_POLL_MS,
+  CHROME_READY_PROBE_PY,
+  chromeHasNoSandbox,
+  chromeHasDisableSetuidSandbox,
+  chromeHasUserDataDir,
+  chromeProfileHasBrowserState,
+  chromeSandboxDisabled,
+  classifyChromeReadiness,
+  formatChromeReadyFailure,
+  parseChromeReadyEvidence,
+  pollUntilChromeReady,
+  sanitizeChromeLog,
+  type ChromeReadyEvidence,
 } from "../../src/lib/computers/providers/runloop-interactive.js";
 
 function provider(): RunloopProvider {
@@ -137,6 +153,10 @@ describe("C3B Dockerfile and ensure contract", () => {
     assert.match(dockerfile, /command -v python3/);
     assert.match(dockerfile, /command -v node/);
     assert.match(dockerfile, /chmod 4755/);
+    assert.match(
+      dockerfile,
+      /chmod 700 \/home\/user\/flok\/\.browser \/home\/user\/flok\/\.browser\/profile/,
+    );
     assert.equal(/^(RUN|CMD|ENTRYPOINT).*(--no-sandbox)/m.test(dockerfile), false);
   });
 
@@ -146,7 +166,12 @@ describe("C3B Dockerfile and ensure contract", () => {
       assert.match(src, /x11vnc .* -localhost /);
       assert.match(src, /127\.0\.0\.1:\$\{NOVNC_PORT\}/);
       assert.match(src, /rm -f \/tmp\/\.X11-unix\/X99 \/tmp\/\.X99-lock/);
+      assert.match(src, /chmod 700 "\$PROFILE"/);
+      assert.match(src, /\/tmp\/flok-chrome\.log/);
+      assert.match(src, /test -w "\$PROFILE"/);
       assert.doesNotMatch(src, /--no-sandbox/);
+      assert.doesNotMatch(src, /chmod 777/);
+      assert.doesNotMatch(src, /--disable-setuid-sandbox/);
     }
   });
 });
@@ -283,5 +308,291 @@ describe("C3B RunloopProvider (memory)", () => {
     assert.equal(p.capabilities().vnc, false);
     const a = await p.provision({ birdId: "vnc", flockId: "f" });
     await assert.rejects(() => p.takeover(a.providerRef));
+  });
+
+  it("memory-plane last-url/launched markers are not a real Chrome profile", async () => {
+    const p = provider();
+    const a = await p.provision({ birdId: "fake-profile", flockId: "f" });
+    await p.act(a.providerRef, {
+      actions: [
+        { type: "open_url", url: "https://example.com/" },
+        { type: "launch_application", application: "browser" },
+      ],
+    });
+    const listed = await p.filesystem(a.providerRef, {
+      operation: "list",
+      path: BROWSER_PROFILE_DIR,
+    });
+    assert.equal(listed.ok, true);
+    assert.ok(Array.isArray(listed.data));
+    assert.equal(
+      chromeProfileHasBrowserState(listed.data as string[]),
+      false,
+      "memory-plane last-url/launched must not count as Chrome browser state",
+    );
+  });
+});
+
+const CHROME_CMD =
+  "1500 google-chrome-stable --user-data-dir=/home/user/flok/.browser/profile --window-size=1440,900 --app=file:///home/user/flok/.flok/fixture.html";
+
+function evidence(over: Partial<ChromeReadyEvidence> = {}): ChromeReadyEvidence {
+  return {
+    chromeCmdlines: [],
+    profileEntries: [],
+    profileEntriesUi: [],
+    profileUid: 1500,
+    profileGid: 1500,
+    profileMode: "700",
+    profileWritableByUi: true,
+    browserDirMode: "700",
+    workspaceMode: "775",
+    sandboxPath: "/opt/google/chrome/chrome-sandbox",
+    sandboxMode: "4755",
+    sandboxNosuid: false,
+    xvfbAlive: true,
+    openboxAlive: true,
+    display: ":99",
+    visibleWindows: [],
+    homeFallbackEntries: [],
+    chromeLogTail: "",
+    logHasSandboxError: false,
+    logHasChromeOutput: false,
+    unprivilegedUserns: "1",
+    ...over,
+  };
+}
+
+describe("C3B Chrome readiness classification", () => {
+  it("is ready when flok-ui Chrome has user-data-dir and real profile state", () => {
+    const result = classifyChromeReadiness(
+      evidence({
+        chromeCmdlines: [CHROME_CMD],
+        profileEntries: ["Default", "Local State"],
+      }),
+    );
+    assert.equal(result.status, "ready");
+    assert.equal(result.ready, true);
+    assert.equal(result.terminal, true);
+  });
+
+  it("is ready when a Chrome window is visible even before profile flush", () => {
+    const result = classifyChromeReadiness(
+      evidence({
+        chromeCmdlines: [CHROME_CMD],
+        visibleWindows: ["chrome"],
+      }),
+    );
+    assert.equal(result.status, "ready");
+    assert.equal(result.ready, true);
+    const live = classifyChromeReadiness(
+      evidence({
+        chromeCmdlines: [CHROME_CMD],
+        visibleWindows: ["chrome"],
+      }),
+      { requireProfile: true },
+    );
+    assert.equal(live.status, "pending");
+    assert.equal(live.ready, false);
+  });
+
+  it("treats an empty profile as not ready", () => {
+    const pending = classifyChromeReadiness(evidence({ chromeCmdlines: [CHROME_CMD] }));
+    assert.equal(pending.status, "pending");
+    assert.equal(pending.ready, false);
+    assert.equal(pending.terminal, false);
+    const timed = classifyChromeReadiness(evidence({ chromeCmdlines: [CHROME_CMD] }), {
+      timedOut: true,
+    });
+    assert.equal(timed.status, "readiness_timeout");
+    assert.equal(timed.ready, false);
+    assert.equal(timed.terminal, true);
+  });
+
+  it("does not treat memory-plane test markers as Chrome browser state", () => {
+    assert.equal(chromeProfileHasBrowserState(["last-url"]), false);
+    assert.equal(chromeProfileHasBrowserState(["launched"]), false);
+    assert.equal(chromeProfileHasBrowserState(["c3b-marker"]), false);
+    assert.equal(chromeProfileHasBrowserState([".pki"]), false);
+    assert.equal(chromeProfileHasBrowserState(["Default"]), true);
+    assert.equal(chromeProfileHasBrowserState(["Local State"]), true);
+    const result = classifyChromeReadiness(
+      evidence({
+        chromeCmdlines: [CHROME_CMD],
+        profileEntries: ["last-url", "c3b-marker", "launched"],
+      }),
+    );
+    assert.equal(result.status, "pending");
+    assert.equal(result.ready, false);
+  });
+
+  it("classifies never_started and started_then_exited on timeout", () => {
+    const never = classifyChromeReadiness(evidence(), { timedOut: true });
+    assert.equal(never.status, "never_started");
+    const exited = classifyChromeReadiness(
+      evidence({ logHasChromeOutput: true, chromeLogTail: "chrome failed" }),
+      { timedOut: true },
+    );
+    assert.equal(exited.status, "started_then_exited");
+  });
+
+  it("refuses --no-sandbox and --disable-setuid-sandbox immediately", () => {
+    const noSandbox = classifyChromeReadiness(
+      evidence({
+        chromeCmdlines: [`${CHROME_CMD} --no-sandbox`],
+        profileEntries: ["Default"],
+      }),
+    );
+    assert.equal(noSandbox.status, "sandbox_disabled");
+    assert.equal(noSandbox.ready, false);
+    assert.equal(noSandbox.terminal, true);
+    const disableSetuid = classifyChromeReadiness(
+      evidence({ chromeCmdlines: [`${CHROME_CMD} --disable-setuid-sandbox`] }),
+    );
+    assert.equal(disableSetuid.status, "sandbox_disabled");
+    assert.equal(chromeHasNoSandbox(CHROME_CMD), false);
+    assert.equal(chromeHasNoSandbox(`${CHROME_CMD} --no-sandbox`), true);
+    assert.equal(chromeHasDisableSetuidSandbox(`${CHROME_CMD} --disable-setuid-sandbox`), true);
+    assert.equal(chromeSandboxDisabled(`${CHROME_CMD} --no-sandbox`), true);
+  });
+
+  it("classifies permissions_failure when the profile is not writable by flok-ui", () => {
+    const result = classifyChromeReadiness(
+      evidence({
+        chromeCmdlines: [CHROME_CMD],
+        profileWritableByUi: false,
+        profileUid: 0,
+        profileMode: "755",
+      }),
+    );
+    assert.equal(result.status, "permissions_failure");
+    assert.equal(result.terminal, true);
+    assert.match(result.message, /not writable/);
+  });
+
+  it("classifies display_failure when Chrome is alive without Xvfb", () => {
+    const result = classifyChromeReadiness(
+      evidence({ chromeCmdlines: [CHROME_CMD], xvfbAlive: false }),
+    );
+    assert.equal(result.status, "display_failure");
+    assert.equal(result.terminal, true);
+  });
+
+  it("waits on HOME fallback during startup, then classifies profile_redirected", () => {
+    const ev = evidence({
+      chromeCmdlines: [CHROME_CMD],
+      homeFallbackEntries: ["Default"],
+    });
+    const pending = classifyChromeReadiness(ev);
+    assert.equal(pending.status, "pending");
+    assert.equal(pending.terminal, false);
+    const redirected = classifyChromeReadiness(ev, { timedOut: true });
+    assert.equal(redirected.status, "profile_redirected");
+    assert.match(redirected.message, new RegExp(CHROME_HOME_FALLBACK_DIR));
+  });
+
+  it("classifies sandbox_failure from startup log only after timeout", () => {
+    const ev = evidence({
+      chromeCmdlines: [CHROME_CMD],
+      logHasSandboxError: true,
+      logHasChromeOutput: true,
+      chromeLogTail: "The SUID sandbox helper binary was found, but is not configured correctly",
+    });
+    const pending = classifyChromeReadiness(ev);
+    assert.equal(pending.status, "pending");
+    const failed = classifyChromeReadiness(ev, { timedOut: true });
+    assert.equal(failed.status, "sandbox_failure");
+  });
+
+  it("becomes ready on the third probe via pollUntilChromeReady", async () => {
+    let n = 0;
+    let now = 0;
+    const { result, evidence: ev } = await pollUntilChromeReady(
+      async () => {
+        n += 1;
+        if (n < 3) {
+          return evidence({ chromeCmdlines: [CHROME_CMD], visibleWindows: ["chrome"] });
+        }
+        return evidence({
+          chromeCmdlines: [CHROME_CMD],
+          profileEntries: ["Default"],
+        });
+      },
+      {
+        timeoutMs: 10_000,
+        intervalMs: 100,
+        requireProfile: true,
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+      },
+    );
+    assert.equal(result.status, "ready");
+    assert.equal(n, 3);
+    assert.deepEqual(ev.profileEntries, ["Default"]);
+  });
+
+  it("pollUntilChromeReady terminals on classified failure without waiting out the clock", async () => {
+    let n = 0;
+    const { result } = await pollUntilChromeReady(
+      async () => {
+        n += 1;
+        return evidence({
+          chromeCmdlines: [`${CHROME_CMD} --no-sandbox`],
+        });
+      },
+      {
+        timeoutMs: 20_000,
+        intervalMs: 500,
+        now: () => 0,
+        sleep: async () => {
+          throw new Error("should not sleep after sandbox_disabled");
+        },
+      },
+    );
+    assert.equal(result.status, "sandbox_disabled");
+    assert.equal(n, 1);
+  });
+
+  it("sanitizes Chrome logs and formats classified failures", () => {
+    const raw = sanitizeChromeLog("ok\nAuthorization: Bearer secret\napi_key=abc\nchrome started");
+    assert.doesNotMatch(raw, /Bearer secret/);
+    assert.doesNotMatch(raw, /api_key=abc/);
+    assert.match(raw, /chrome started/);
+    const failure = formatChromeReadyFailure(
+      {
+        status: "permissions_failure",
+        ready: false,
+        terminal: true,
+        message: "profile not writable by flok-ui",
+      },
+      evidence({ profileMode: "755", profileUid: 0, profileWritableByUi: false }),
+    );
+    assert.match(failure, /permissions_failure/);
+    assert.match(failure, /profile mode=755 uid=0/);
+    assert.doesNotMatch(failure, /RUNLOOP_API_KEY/);
+  });
+
+  it("parses probe JSON and keeps CHROME_READY_PROBE_PY guest-local", () => {
+    const parsed = parseChromeReadyEvidence(
+      JSON.stringify(
+        evidence({
+          chromeCmdlines: [CHROME_CMD],
+          profileEntries: ["Default"],
+          chromeLogTail: "api_key=should-strip\nready",
+        }),
+      ),
+    );
+    assert.equal(parsed.profileEntries[0], "Default");
+    assert.equal(chromeHasUserDataDir(parsed.chromeCmdlines[0] ?? ""), true);
+    assert.doesNotMatch(parsed.chromeLogTail, /api_key/);
+    assert.match(CHROME_READY_PROBE_PY, /\/tmp\/flok-chrome\.log/);
+    assert.match(CHROME_READY_PROBE_PY, /\/home\/user\/flok\/\.browser\/profile/);
+    assert.match(CHROME_READY_PROBE_PY, /flok-ui/);
+    assert.match(CHROME_READY_PROBE_PY, /unprivileged_userns_clone/);
+    assert.equal(CHROME_LOG_PATH, "/tmp/flok-chrome.log");
+    assert.equal(CHROME_READY_TIMEOUT_MS, 20_000);
+    assert.equal(CHROME_READY_POLL_MS, 500);
   });
 });

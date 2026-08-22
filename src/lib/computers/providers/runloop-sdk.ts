@@ -21,6 +21,7 @@ import {
   argvAsUiUser,
   chromeLaunchArgv,
   pngDimensions,
+  CHROME_LOG_PATH,
 } from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
@@ -449,10 +450,13 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
             ? (action.url ?? `file://${FIXTURE_PATH}`)
             : `file://${FIXTURE_PATH}`;
         // Detach so exec returning does not SIGHUP Chrome. No --no-sandbox.
+        // Launch accepted ≠ Chrome ready; live gate polls readiness separately.
         // runuser drops to flok-ui; python launcher stays the Devbox user (root on DnD).
+        // Startup stderr goes to a guest tmp log (not FLOKS audit).
         const chromeCode = [
           "import subprocess,sys",
-          "subprocess.Popen(sys.argv[1:], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)",
+          `log=open(${JSON.stringify(CHROME_LOG_PATH)},"ab",buffering=0)`,
+          "subprocess.Popen(sys.argv[1:], start_new_session=True, stdout=log, stderr=subprocess.STDOUT)",
           "print('launched')",
           "",
         ].join("\n");

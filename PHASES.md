@@ -150,6 +150,24 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
 
 **Status:** OPEN
 
+**Paid live evidence (FAIL — do not close)**
+- Interactive Blueprint: `bpt_34BQTBwmrCLxEQkEMjQKm` / `flok-runloop-interactive` `build_complete` (~106s). Workflow run `32557645663`.
+- Live: `runloop-c3` phase `c3b-live` run [`32557742597`](https://github.com/Adaptive-Liquidity/floks-pc/actions/runs/32557742597) job `96994511350` SHA `3efa97f94fad2e84fa76ff31e5e0fd8966e9beb3`
+  - 0 pass / 1 fail / 0 skip, 18.3s
+  - Provision, DnD tools, `flok-ui` uid 1500, Chrome 151.0.7922.173, Xvfb :99, Openbox, `open_url` launch-accepted, flok-ui Chrome with `--user-data-dir=/home/user/flok/.browser/profile` and without `--no-sandbox` all succeeded
+  - Failed at `tests/live/runloop.c3b.live.test.ts` `filesystem.list` of the profile: `ok: true` with an empty array (~2.5s after Popen)
+  - Screenshot, click/type/key/scroll, noVNC, suspend/resume were not reached
+- Diagnosis: `open_url` returns when the detached Python `Popen` starts (`runuser` → `google-chrome-stable`). That is launch-accepted, not Chrome-ready. Stderr was discarded (`DEVNULL`), so a stuck/sandbox/permissions failure was indistinguishable from a slow first-run. An empty profile at 2.5s is **not** treated as “needs a longer sleep”: a healthy Chrome typically writes `Default` / `Local State` / `SingletonLock` within hundreds of ms. Unpaid work cannot prove whether the process failed to write, wrote to `HOME` fallback `/home/flok-ui/.config/google-chrome`, or was still in zygote/sandbox setup.
+- Unpaid fix (this branch, still OPEN): bounded `pollUntilChromeReady` (~20s / 500ms) with classified failures; guest probe lists the profile as root and as `flok-ui`; Chrome startup captured at `/tmp/flok-chrome.log` (not FLOKS audit); ensure/Dockerfile verify the profile is writable by `flok-ui` (`chmod 700`, `test -w`). `open_url` stays launch-accepted. `computerUse` stays **false**. Do **not** dispatch another paid live run until approved.
+
+**Known limitations (not C3B close criteria)**
+- Chrome `.deb` is unpinned stable (151.0.7922.173 recorded live)
+- Horizontal scroll not implemented
+- WM chrome can offset clicks
+- Memory-plane screenshots stub a 1×1 PNG advertised as 1440×900
+- `/run/user/1500` is tmpfs and is recreated after resume
+- If user namespaces are disabled **and** `chrome-sandbox` sits on a `nosuid` mount, live Chrome will fail closed. That evidence is required before considering `--no-sandbox`, which remains forbidden.
+
 ---
 
 ## Phase 4 — Node pairing and capability security
