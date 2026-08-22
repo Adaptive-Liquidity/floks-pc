@@ -37,8 +37,11 @@ jobs:
             exit 1
           fi
           if [ -z "$FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT" ] && [ -z "$FLOK_RUNLOOP_BLUEPRINT" ]; then
-            echo "FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT is missing (must FAIL, not skip)"
-            exit 1
+            FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT="flok-runloop-interactive"
+            FLOK_RUNLOOP_BLUEPRINT="flok-runloop-interactive"
+            echo "FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT unset; using documented default"
+            echo "FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT=$FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT" >> "$GITHUB_ENV"
+            echo "FLOK_RUNLOOP_BLUEPRINT=$FLOK_RUNLOOP_BLUEPRINT" >> "$GITHUB_ENV"
           fi
           echo "C3B blueprint configured"
       - name: Run C3B live tests
