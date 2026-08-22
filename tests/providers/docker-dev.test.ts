@@ -8,9 +8,21 @@ import assert from "node:assert/strict";
 import {
   DockerDevProvider,
   DockerDevForbiddenInProduction,
+  isUnpinnedImage,
 } from "../../src/lib/computers/providers/index.js";
 
 describe("DockerDevProvider (no Docker)", () => {
+  it("reports provider name docker-dev", () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "test";
+    try {
+      assert.equal(new DockerDevProvider().name, "docker-dev");
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+  });
+
   it("rejects construction when NODE_ENV=production", () => {
     const prev = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
@@ -61,6 +73,33 @@ describe("DockerDevProvider (no Docker)", () => {
     try {
       assert.throws(
         () => new DockerDevProvider({ image: "ubuntu:latest" }),
+        (err: unknown) =>
+          err instanceof Error &&
+          "code" in err &&
+          (err as { code: string }).code === "IMAGE_PIN_REQUIRED",
+      );
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+  });
+
+  it("rejects untagged image refs that Docker would resolve as :latest", () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "test";
+    try {
+      assert.equal(isUnpinnedImage("ubuntu"), true);
+      assert.equal(isUnpinnedImage("flok-computer-dev"), true);
+      assert.equal(isUnpinnedImage("ubuntu:latest"), true);
+      assert.equal(isUnpinnedImage("flok-computer-dev:0.0.1"), false);
+      assert.equal(
+        isUnpinnedImage(
+          "ubuntu@sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316",
+        ),
+        false,
+      );
+      assert.throws(
+        () => new DockerDevProvider({ image: "ubuntu" }),
         (err: unknown) =>
           err instanceof Error &&
           "code" in err &&

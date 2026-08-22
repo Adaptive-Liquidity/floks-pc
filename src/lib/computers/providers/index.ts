@@ -5,4 +5,5 @@ export {
   DockerDevForbiddenInProduction,
   DOCKER_DEV_IMAGE,
   DOCKER_DEV_WORKSPACE_ROOT,
+  isUnpinnedImage,
 } from "./docker-dev.js";

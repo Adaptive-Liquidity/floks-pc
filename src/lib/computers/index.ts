@@ -20,6 +20,7 @@ export type {
   ComputerSpec,
   ComputerState,
   ComputerStatus,
+  ComputerProviderName,
   ExecRequest,
   ExecResult,
   FsOperation,
@@ -76,7 +77,6 @@ export {
   DOCKER_DEV_WORKSPACE_ROOT,
 } from "./providers/docker-dev.js";
 export { FLAGS, assertNexusDisabled } from "./flags.js";
-export type { ComputerProviderName } from "./flags.js";
 
 export {
   canTransition,

@@ -52,7 +52,7 @@ export class ComputerService {
       id,
       birdId: spec.birdId,
       flockId: spec.flockId,
-      provider: "fake", // concrete name filled by caller later; Phase 1 uses injected provider
+      provider: this.provider.name,
       providerRef: null,
       state: "requested",
       osType: spec.osType ?? "linux",

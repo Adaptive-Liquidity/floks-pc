@@ -33,6 +33,8 @@ import { assertInsideRoot } from "../path.js";
 export const DOCKER_DEV_IMAGE = "flok-computer-dev:0.0.1";
 export const DOCKER_DEV_WORKSPACE_ROOT = "/workspace";
 
+const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 export class DockerDevForbiddenInProduction extends ComputerError {
   constructor() {
     super(
@@ -54,16 +56,33 @@ interface DockerHandle {
 interface DockerResult {
   exitCode: number;
   stdout: string;
+  stdoutBytes: Buffer;
   stderr: string;
   timedOut: boolean;
 }
 
-function isUnpinnedImage(image: string): boolean {
-  const tag = image.split("/").pop() ?? image;
-  return image === "latest" || image.endsWith(":latest") || tag === "latest";
+/**
+ * Reject :latest, untagged refs (Docker implies :latest), and non-digest
+ * references without an explicit non-latest tag.
+ */
+export function isUnpinnedImage(image: string): boolean {
+  const trimmed = image.trim();
+  if (!trimmed) return true;
+  const lastAt = trimmed.lastIndexOf("@");
+  if (lastAt >= 0) {
+    const digest = trimmed.slice(lastAt + 1);
+    return !/^sha256:[0-9a-f]{64}$/i.test(digest);
+  }
+  const lastSlash = trimmed.lastIndexOf("/");
+  const lastComponent = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
+  const colon = lastComponent.lastIndexOf(":");
+  if (colon <= 0) return true;
+  const tag = lastComponent.slice(colon + 1);
+  return tag.length === 0 || tag === "latest";
 }
 
 export class DockerDevProvider implements ComputerProvider {
+  readonly name = "docker-dev" as const;
   private readonly image: string;
   private readonly dockerBin: string;
   private readonly machines = new Map<string, DockerHandle>();
@@ -113,6 +132,7 @@ export class DockerDevProvider implements ComputerProvider {
       await this.docker(["volume", "create",
         "--label", "flok.provider=docker-dev",
         "--label", `flok.bird_id=${spec.birdId}`,
+        "--label", `flok.flock_id=${spec.flockId}`,
         "--label", `flok.provider_ref=${ref}`,
         volume,
       ]);
@@ -231,24 +251,53 @@ export class DockerDevProvider implements ComputerProvider {
     if (!request.argv.length) {
       return { exitCode: 2, stdout: "", stderr: "empty argv", timedOut: false };
     }
-    const args = ["exec"];
-    const cwd = request.cwd
-      ? assertInsideRoot(request.cwd, DOCKER_DEV_WORKSPACE_ROOT)
-      : DOCKER_DEV_WORKSPACE_ROOT;
-    args.push("-w", cwd);
+    if (request.env) {
+      for (const k of Object.keys(request.env)) {
+        if (!ENV_KEY.test(k)) {
+          return {
+            exitCode: 2,
+            stdout: "",
+            stderr: `invalid environment variable name: ${k}`,
+            timedOut: false,
+          };
+        }
+      }
+    }
+
+    let cwd: string;
+    try {
+      cwd = request.cwd
+        ? await this.resolveInsideWorkspace(h.container, request.cwd)
+        : DOCKER_DEV_WORKSPACE_ROOT;
+    } catch (e) {
+      if (e instanceof PathEscape) {
+        return {
+          exitCode: 126,
+          stdout: "",
+          stderr: `PATH_ESCAPE: cwd escapes workspace: ${request.cwd}`,
+          timedOut: false,
+        };
+      }
+      throw e;
+    }
+
+    const timeoutMs = Math.min(request.timeoutMs ?? 30_000, 600_000);
+    const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
+    const args = ["exec", "-w", cwd];
     if (request.env) {
       for (const [k, v] of Object.entries(request.env)) {
         args.push("-e", `${k}=${v}`);
       }
     }
-    args.push(h.container, ...request.argv);
-    const timeoutMs = Math.min(request.timeoutMs ?? 30_000, 600_000);
-    const result = await this.docker(args, { timeoutMs, allowNonZero: true });
+    // Container-side bound so a client timeout cannot leave orphans.
+    args.push(h.container, "timeout", "--signal=KILL", String(timeoutSec), ...request.argv);
+    const result = await this.docker(args, { timeoutMs: timeoutMs + 2_000, allowNonZero: true });
+    const timedOut = result.timedOut || result.exitCode === 124;
     return {
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
-      timedOut: result.timedOut,
+      timedOut,
     };
   }
 
@@ -256,7 +305,7 @@ export class DockerDevProvider implements ComputerProvider {
     const h = await this.requireHandle(ref);
     let canonical: string;
     try {
-      canonical = assertInsideRoot(request.path, DOCKER_DEV_WORKSPACE_ROOT);
+      canonical = await this.resolveInsideWorkspace(h.container, request.path);
     } catch (e) {
       if (e instanceof PathEscape) return { ok: false, errorCode: "PATH_ESCAPE" };
       throw e;
@@ -265,17 +314,18 @@ export class DockerDevProvider implements ComputerProvider {
     switch (request.operation) {
       case "stat": {
         const r = await this.docker(
-          ["exec", h.container, "stat", "-c", "%F %s", canonical],
+          ["exec", h.container, "stat", "-c", "%s|%F", canonical],
           { allowNonZero: true },
         );
         if (r.exitCode !== 0) return { ok: false, errorCode: "NOT_FOUND" };
-        const [kind, sizeStr] = r.stdout.trim().split(/\s+/);
+        const [sizeStr, ...kindParts] = r.stdout.trim().split("|");
+        const kind = kindParts.join("|");
         return {
           ok: true,
           data: {
             path: canonical,
-            isDir: (kind ?? "").includes("directory"),
-            size: Number(sizeStr ?? 0),
+            isDir: kind.includes("directory"),
+            size: Number(sizeStr ?? 0) || 0,
           },
         };
       }
@@ -290,13 +340,13 @@ export class DockerDevProvider implements ComputerProvider {
       }
       case "read": {
         const r = await this.docker(
-          ["exec", h.container, "cat", canonical],
+          ["exec", h.container, "cat", "--", canonical],
           { allowNonZero: true },
         );
         if (r.exitCode !== 0) return { ok: false, errorCode: "NOT_FOUND" };
         const data =
           request.encoding === "base64"
-            ? Buffer.from(r.stdout, "utf8").toString("base64")
+            ? r.stdoutBytes.toString("base64")
             : r.stdout;
         return { ok: true, data };
       }
@@ -309,26 +359,31 @@ export class DockerDevProvider implements ComputerProvider {
             ? request.content
             : Buffer.from(request.content);
         const r = await this.docker(
-          ["exec", "-i", h.container, "tee", canonical],
+          ["exec", "-i", h.container, "dd", `of=${canonical}`, "status=none"],
           { stdin: body, allowNonZero: true },
         );
-        if (r.exitCode !== 0) return { ok: false, errorCode: "NOT_FOUND" };
+        if (r.exitCode !== 0) {
+          return { ok: false, errorCode: classifyFsError(r.stderr) };
+        }
         return { ok: true };
       }
       case "mkdir": {
         const r = await this.docker(
-          ["exec", h.container, "mkdir", "-p", canonical],
+          ["exec", h.container, "mkdir", "-p", "--", canonical],
           { allowNonZero: true },
         );
-        if (r.exitCode !== 0) return { ok: false, errorCode: "UNSUPPORTED" };
+        if (r.exitCode !== 0) return { ok: false, errorCode: classifyFsError(r.stderr) };
         return { ok: true };
       }
       case "delete": {
+        if (canonical === DOCKER_DEV_WORKSPACE_ROOT) {
+          return { ok: false, errorCode: "PATH_ESCAPE" };
+        }
         const r = await this.docker(
-          ["exec", h.container, "rm", "-rf", canonical],
+          ["exec", h.container, "rm", "-rf", "--", canonical],
           { allowNonZero: true },
         );
-        if (r.exitCode !== 0) return { ok: false, errorCode: "NOT_FOUND" };
+        if (r.exitCode !== 0) return { ok: false, errorCode: classifyFsError(r.stderr) };
         return { ok: true };
       }
       case "move":
@@ -338,17 +393,17 @@ export class DockerDevProvider implements ComputerProvider {
         }
         let dest: string;
         try {
-          dest = assertInsideRoot(request.destination, DOCKER_DEV_WORKSPACE_ROOT);
+          dest = await this.resolveInsideWorkspace(h.container, request.destination);
         } catch {
           return { ok: false, errorCode: "PATH_ESCAPE" };
         }
         const cmd = request.operation === "move" ? "mv" : "cp";
         const cpArgs =
           cmd === "cp"
-            ? ["exec", h.container, "cp", "-a", canonical, dest]
-            : ["exec", h.container, "mv", canonical, dest];
+            ? ["exec", h.container, "cp", "-a", "--", canonical, dest]
+            : ["exec", h.container, "mv", "--", canonical, dest];
         const r = await this.docker(cpArgs, { allowNonZero: true });
-        if (r.exitCode !== 0) return { ok: false, errorCode: "NOT_FOUND" };
+        if (r.exitCode !== 0) return { ok: false, errorCode: classifyFsError(r.stderr) };
         return { ok: true };
       }
       default:
@@ -387,15 +442,44 @@ export class DockerDevProvider implements ComputerProvider {
     throw new ProviderUnavailable("docker-dev", "restore not implemented in C2");
   }
 
+  /**
+   * Lexical jail is not enough: /workspace/link -> /etc makes
+   * /workspace/link/passwd resolve outside the workspace.
+   * Resolve inside the container with GNU realpath -m, then re-check the root.
+   */
+  private async resolveInsideWorkspace(container: string, userPath: string): Promise<string> {
+    const lexical = assertInsideRoot(userPath, DOCKER_DEV_WORKSPACE_ROOT);
+    const r = await this.docker(
+      ["exec", container, "realpath", "-m", "--", lexical],
+      { allowNonZero: true },
+    );
+    const resolved = r.stdout.trim();
+    if (r.exitCode !== 0 || !resolved) {
+      if (/is not running|no such container/i.test(r.stderr)) {
+        throw new ProviderUnavailable("docker-dev", r.stderr.trim() || "container not running");
+      }
+      throw new PathEscape(userPath);
+    }
+    const root = DOCKER_DEV_WORKSPACE_ROOT;
+    if (resolved !== root && !resolved.startsWith(`${root}/`)) {
+      throw new PathEscape(userPath);
+    }
+    return resolved;
+  }
+
   private async requireHandle(ref: string): Promise<DockerHandle> {
     const existing = this.machines.get(ref);
     if (existing) return existing;
-    // Rediscover by label if the process map is cold.
     const ps = await this.docker(
-      ["ps", "-a", "--filter", `label=flok.provider_ref=${ref}`, "--format", "{{.Names}}"],
+      [
+        "ps", "-a",
+        "--filter", `label=flok.provider_ref=${ref}`,
+        "--format", `{{.Names}}\t{{.Label "flok.bird_id"}}\t{{.Label "flok.flock_id"}}`,
+      ],
       { allowNonZero: true },
     );
-    const name = ps.stdout.trim().split("\n")[0];
+    const line = ps.stdout.trim().split("\n")[0] ?? "";
+    const [name, birdId, flockId] = line.split("\t");
     if (!name) {
       throw new ProviderUnavailable("docker-dev", `computer ${ref} not found`);
     }
@@ -403,8 +487,8 @@ export class DockerDevProvider implements ComputerProvider {
       ref,
       container: name,
       volume: `flok-ws-${ref}`,
-      birdId: "unknown",
-      flockId: "unknown",
+      birdId: birdId || "unknown",
+      flockId: flockId || "unknown",
     };
     this.machines.set(ref, handle);
     return handle;
@@ -434,6 +518,9 @@ export class DockerDevProvider implements ComputerProvider {
       child.stdout.on("data", (c: Buffer) => stdout.push(c));
       child.stderr.on("data", (c: Buffer) => stderr.push(c));
 
+      child.stdin.on("error", () => {
+        // Ignore EPIPE: the close handler reports the real exit status.
+      });
       if (opts.stdin !== undefined) {
         child.stdin.end(
           typeof opts.stdin === "string" ? opts.stdin : Buffer.from(opts.stdin),
@@ -449,9 +536,11 @@ export class DockerDevProvider implements ComputerProvider {
 
       child.on("close", (code) => {
         clearTimeout(timer);
+        const stdoutBytes = Buffer.concat(stdout);
         const result: DockerResult = {
           exitCode: code ?? 1,
-          stdout: Buffer.concat(stdout).toString("utf8"),
+          stdout: stdoutBytes.toString("utf8"),
+          stdoutBytes,
           stderr: Buffer.concat(stderr).toString("utf8"),
           timedOut,
         };
@@ -468,4 +557,15 @@ export class DockerDevProvider implements ComputerProvider {
       });
     });
   }
+}
+
+function classifyFsError(stderr: string): string {
+  const s = stderr.toLowerCase();
+  if (s.includes("permission denied") || s.includes("read-only")) {
+    return "PERMISSION_DENIED";
+  }
+  if (s.includes("no such file") || s.includes("not a directory")) {
+    return "NOT_FOUND";
+  }
+  return "IO_ERROR";
 }

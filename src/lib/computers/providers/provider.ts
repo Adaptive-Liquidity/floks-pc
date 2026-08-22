@@ -11,6 +11,7 @@
 import type {
   ActionBatch,
   ActionResult,
+  ComputerProviderName,
   ComputerSpec,
   ComputerStatus,
   ExecRequest,
@@ -27,6 +28,9 @@ import type {
 } from "../types.js";
 
 export interface ComputerProvider {
+  /** Identity of the injected implementation. ComputerService records this. */
+  readonly name: ComputerProviderName;
+
   /** Static capability advertisement */
   capabilities(): ProviderCapabilities;
 

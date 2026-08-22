@@ -4,12 +4,16 @@
  * Nexus and Graph memory stay hard-locked until Gate G0.
  */
 
+import type { ComputerProviderName } from "./types.js";
+
+export type { ComputerProviderName } from "./types.js";
+
 export const FLAGS = {
   /** Master switch for the computer system */
   FLOK_COMPUTERS_ENABLED: false,
 
-  /** Active provider: "fake" | "docker-dev" | "daytona" | "kata" */
-  FLOK_COMPUTER_PROVIDER: "fake" as const,
+  /** Active provider. C2 implements fake + docker-dev only. */
+  FLOK_COMPUTER_PROVIDER: "fake" as ComputerProviderName,
 
   /** Whether the MCP computer tools are registered */
   FLOK_MCP_COMPUTERS_ENABLED: false,
@@ -25,8 +29,6 @@ export const FLAGS = {
    */
   FLOK_GRAPH_MEMORY_ENABLED: false,
 } as const;
-
-export type ComputerProviderName = typeof FLAGS.FLOK_COMPUTER_PROVIDER;
 
 /** Runtime assertion used by Gate C0 and later smoke checks */
 export function assertNexusDisabled(): void {

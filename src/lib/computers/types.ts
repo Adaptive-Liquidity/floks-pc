@@ -33,6 +33,9 @@ export const LEGAL_TRANSITIONS: Readonly<Record<ComputerState, readonly Computer
 
 export type OsType = "linux" | "windows";
 
+/** Concrete providers currently implemented. Do not add a factory in C2. */
+export type ComputerProviderName = "fake" | "docker-dev";
+
 export interface ComputerSpec {
   birdId: string;
   flockId: string;
@@ -48,7 +51,7 @@ export interface Computer {
   id: string;
   birdId: string;
   flockId: string;
-  provider: string;
+  provider: ComputerProviderName;
   providerRef: string | null;
   state: ComputerState;
   osType: OsType;

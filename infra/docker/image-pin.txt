@@ -1,13 +1,16 @@
 # DockerDev image pin — never :latest
 #
-# Runtime tag (what DockerDevProvider runs):
+# Runtime tag (what DockerDevProvider runs). Single source of truth for build.sh.
 runtime_tag=flok-computer-dev:0.0.1
 #
-# Base image (Dockerfile.dev FROM):
+# Base image (Dockerfile.dev FROM) pinned by immutable digest.
 base=ubuntu:24.04
+# Manifest-list digest used by `docker pull ubuntu:24.04` (2026-08-19).
+base_digest=sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
+# linux/amd64 image digest (GitHub-hosted ubuntu-24.04 runners).
+base_digest_amd64=sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316
 #
-# After the first successful `./infra/docker/build.sh` on a Docker host, record:
-#   docker image inspect flok-computer-dev:0.0.1 --format '{{.Id}} {{index .RepoDigests 0}}'
-# and replace the placeholders below.
-runtime_id=PENDING_FIRST_BUILD
-base_digest=PENDING_FIRST_BUILD
+# Locally built runtime image ID is CI / Gate C2 evidence, not a source pin.
+# After `./infra/docker/build.sh`:
+#   docker image inspect flok-computer-dev:0.0.1 --format '{{.Id}}'
+runtime_id=CI_EVIDENCE_NOT_SOURCE_PIN

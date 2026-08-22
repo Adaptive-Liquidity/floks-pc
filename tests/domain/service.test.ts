@@ -28,6 +28,7 @@ describe("ComputerService", () => {
     });
     assert.equal(c.birdId, "bird-1");
     assert.equal(c.state, "ready");
+    assert.equal(c.provider, "fake");
     assert.ok(c.providerRef);
     assert.ok(c.id);
   });
