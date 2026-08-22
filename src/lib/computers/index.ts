@@ -76,6 +76,13 @@ export {
   DOCKER_DEV_IMAGE,
   DOCKER_DEV_WORKSPACE_ROOT,
 } from "./providers/docker-dev.js";
+export {
+  DaytonaProvider,
+  DaytonaLinuxVmRequired,
+  DAYTONA_PROVIDER_NAME,
+  DAYTONA_WORKSPACE_ROOT,
+  MemoryDaytonaControlPlane,
+} from "./providers/daytona.js";
 export { FLAGS, assertNexusDisabled } from "./flags.js";
 
 export {

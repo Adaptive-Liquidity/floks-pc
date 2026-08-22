@@ -18,7 +18,7 @@ No route or MCP tool may import or call a concrete provider.
 
 ```ts
 interface ComputerProvider {
-  readonly name: ComputerProviderName; // "fake" | "docker-dev" (C2)
+  readonly name: ComputerProviderName; // "fake" | "docker-dev" | "daytona" (C3)
 
   capabilities(): ProviderCapabilities;
 
@@ -43,7 +43,7 @@ interface ComputerProvider {
 }
 ```
 
-`ComputerService` records `provider: injected.name`. Do not add a provider factory in C2.
+`ComputerService` records `provider: injected.name`. Do not add a provider factory in C3.
 
 
 ## Capabilities advertisement

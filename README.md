@@ -10,7 +10,7 @@ This package implements the complete Flok Computer system (Phases 0–15) as a s
 
 > **This package must never write to, import runtime code from, or modify the main Flok application repository.**
 
-All computer domain logic, providers, migrations, worker, and MCP surface live here. After Gate G0 (full standalone acceptance) this package can be published or consumed by Flok as a dependency / monorepo workspace.
+All computer domain logic, providers, migrations, worker, and MCP surface live here. After Gate G0 this package can be published or consumed by Flok as a dependency / monorepo workspace.
 
 ## Current status
 
@@ -18,8 +18,9 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 |------|--------|
 | **C0** — scaffold, authority, domain types, ComputerProvider interface | **CLOSED / PASSED** |
 | **C1** — domain logic, FakeProvider, ComputerService, unit tests | **CLOSED / PASSED** |
-| **C2** — DockerDevProvider + isolation/persistence | CURRENT |
-| C3+ | Not started (Nexus-IQ remains hard-locked until G0) |
+| **C2** — DockerDevProvider + isolation/persistence | **CLOSED / PASSED** |
+| **C3** — Daytona Linux VM provider | CURRENT |
+| C4+ | Not started (Nexus-IQ remains hard-locked until G0) |
 
 ## Authority files (read in this order)
 
@@ -51,6 +52,23 @@ FLOK_LIVE_DOCKER_TEST=1 npm run test:live:docker
 
 When the flag is set, Docker unavailability **fails** the suite; it never silent-skips. These live tests are **not** part of `npm run verify`.
 
+Live Daytona tests (paid Linux VMs) skip unless `FLOK_LIVE_COMPUTER_TEST=1`. They require `DAYTONA_API_KEY` and `FLOK_DAYTONA_SNAPSHOT` (a **Linux VM** snapshot, not the default container class):
+
+```bash
+FLOK_LIVE_COMPUTER_TEST=1 npm run test:live:daytona
+```
+
+When either live flag is set, missing credentials **fail** the suite. Live Daytona is **not** part of `npm run verify` or required PR CI.
+
+Store production credentials in GitHub Actions only (never in git, `.env` committed to the repo, or a Node VM):
+
+| Name | Where | Purpose |
+|------|--------|---------|
+| `DAYTONA_API_KEY` | Repository **secret** | Daytona control-plane API key |
+| `FLOK_DAYTONA_SNAPSHOT` | Repository **variable** (or secret) | Linux VM snapshot name/id |
+| `DAYTONA_API_URL` | Repository **variable**, optional | Override API URL |
+
+The `daytona-c3` workflow reads those secrets on `workflow_dispatch` and on `main` pushes that touch the Daytona provider. It is skipped when the secret is empty. Do not make it a required status check.
 
 Do **not** enable Nexus, AEON, or Graphiti until Gate G0 is marked PASSED in `PHASES.md`.
 
