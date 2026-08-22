@@ -16,6 +16,7 @@ describe("FakeProvider", () => {
   });
 
   it("implements capabilities", () => {
+    assert.equal(provider.name, "fake");
     const caps = provider.capabilities();
     assert.equal(caps.linuxVm, true);
     assert.equal(caps.computerUse, true);

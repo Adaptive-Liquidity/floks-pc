@@ -48,6 +48,7 @@ interface FakeMachine {
 }
 
 export class FakeProvider implements ComputerProvider {
+  readonly name = "fake" as const;
   private machines = new Map<string, FakeMachine>();
   private failures = new Map<string, FailureMode>();
   private seq = 0;

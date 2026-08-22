@@ -17,8 +17,9 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 | Gate | Status |
 |------|--------|
 | **C0** — scaffold, authority, domain types, ComputerProvider interface | **CLOSED / PASSED** |
-| **C1** — domain logic, FakeProvider, ComputerService, unit tests | Implementation complete — run `npm test` to close |
-| C2+ | Not started (Nexus-IQ remains hard-locked until G0) |
+| **C1** — domain logic, FakeProvider, ComputerService, unit tests | **CLOSED / PASSED** |
+| **C2** — DockerDevProvider + isolation/persistence | CURRENT |
+| C3+ | Not started (Nexus-IQ remains hard-locked until G0) |
 
 ## Authority files (read in this order)
 
@@ -37,10 +38,19 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 
 ```bash
 # Requires Node >= 22.12 < 23
-npm install
-npm run typecheck
-npm run test:domain   # or npm test
+npm ci
+npm run verify        # typecheck + non-paid tests + build
 ```
+
+Live Docker isolation tests skip unless `FLOK_LIVE_DOCKER_TEST=1`. On a Docker host (including the `docker-c2` GitHub Actions job) run:
+
+```bash
+bash ./infra/docker/build.sh
+FLOK_LIVE_DOCKER_TEST=1 npm run test:live:docker
+```
+
+When the flag is set, Docker unavailability **fails** the suite; it never silent-skips. These live tests are **not** part of `npm run verify`.
+
 
 Do **not** enable Nexus, AEON, or Graphiti until Gate G0 is marked PASSED in `PHASES.md`.
 
