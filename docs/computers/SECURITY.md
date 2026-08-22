@@ -12,17 +12,27 @@
 ## Pairing
 
 - Separate from Flok’s existing six-character join code.
-- Format recommendation: `ABCD-EFGH-JK` (≥ 50 bits entropy).
-- One-use, short TTL (e.g. 10 minutes), rate-limited.
-- Only the digest is stored.
+- Format: `ABCD-EFGH-JK` (32-char alphabet, 10 chars, ≥ 50 bits entropy).
+- One-use, 10-minute TTL, per-code attempt limit, per-account failure window.
+- Bound to the computer’s exact `computer_id` + `bird_id` + `flock_id` at issue time.
+- Redeeming requires the presented Node identity to match that binding.
+- Only the digest is stored. The raw code is returned once from `issuePairCode`.
+- Shared account / MCP auth may be attached to `pair()` (C5 will have it) but does **not** authorize issuance.
 
 ## Capabilities
 
-- 256-bit random tokens.
-- Only digests stored in Postgres.
-- Scoped to one `computer_id` + `bird_id`.
-- Explicit expiry + revocation.
-- Cross-Node use is rejected even when both Bots share the same account MCP connection.
+- 256-bit random tokens (`randomBytes(32)`, base64url).
+- Only SHA-256 digests are stored. The raw secret is returned once from `pair()`.
+- Bound to exact `computer_id` + `bird_id` + `flock_id`.
+- Explicit scopes, expiry, and `revoked_at`.
+- Default pair scopes: `status`, `exec`, `fs`, `observe`, `act`, `lifecycle`.
+- `shell` is **not** granted by default (`mode: "shell"` requires it in addition to `exec`).
+- Every Bot-facing computer operation goes through `ComputerService` and requires a valid capability with the right scope.
+- Shared account / MCP authentication is never sufficient on its own.
+- Cross-Node use is rejected (`CROSS_NODE_DENIED`) even when both Bots share the same account MCP connection.
+- Deleting a computer revokes its capabilities and burns outstanding pair codes.
+
+C5 (MCP gateway) is not implemented here. C5 tools must call `ComputerService` — never a provider, never skip the capability check.
 
 ## Path jail
 

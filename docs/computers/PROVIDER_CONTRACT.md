@@ -102,10 +102,12 @@ interface ProviderCapabilities {
 ## Path and execution safety (enforced by ComputerService)
 
 - Prefer `argv[]` over uncontrolled shell strings.
-- `mode: "shell"` requires a stronger capability.
+- `mode: "shell"` requires the `shell` capability scope (not granted by default pairing).
 - Max runtime, max output, max environment vars, max processes, cwd root.
 - Path canonicalization + root jail on every FS operation.
 - Long-running commands return an `operation_handle` that can be polled.
+
+Bot-facing `status` / `exec` / `filesystem` / `observe` / `act` / lifecycle methods on `ComputerService` require a valid capability bound to that computer + bird + flock. Shared MCP auth is not an authorization input. The public MCP gateway is C5 and must not be added in C4.
 
 ## Failure injection (FakeProvider)
 

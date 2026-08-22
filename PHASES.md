@@ -173,7 +173,7 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
 - Isolation: zero writes under Floks-main
 - Nexus / graph flags remain false
 - Capabilities after this close: `computerUse: true`, `accessibility: false`, `vnc: false`, `pauseMemory: false`
-- C4 is **not started**. Do not begin pairing / MCP / Grok Bot work until explicit approval.
+- C4 pairing / capability layer is implemented on `feat/c4-pairing-capabilities`. MCP gateway remains C5.
 
 **Known limitations (not C3B close criteria)**
 - Chrome `.deb` is unpinned stable (151.0.7922.173 recorded live)
@@ -189,10 +189,41 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
 
 **Goal:** Pair codes + capability tokens. MCP auth alone cannot identify a Bot.
 
-**Status:** NOT STARTED. Do not begin C4 until explicit approval.
+C3B remains closed. C4 implements only the **internal** capability layer. Do not build the public MCP gateway (C5). Do not connect a real Grok Bot. Do not start C5/C6/C7. Do not add Nexus/AEON/Graphiti. Do not dispatch paid Runloop.
+
+### Implement
+- Pair codes: short-lived (10 min), one-time-use, digest-only storage, identity-bound
+- Capability secrets: 256-bit random; store digest only
+- Capability bound to exact `computer_id` / `bird_id` / `flock_id`
+- Scopes, expiry, revoked state
+- `ComputerService` Bot-facing operations require a valid capability with the right scope
+- Shared account / MCP auth alone must not authorize access
+
+### Non-goals (do not invent)
+- Public MCP gateway / Streamable HTTP / `POST /mcp`
+- Real Grok Bot connection
+- Kysely/Postgres wiring (in-memory store; schema stub updated)
+- Nexus / AEON / Graphiti
+- Paid Runloop live tests
 
 ### Gate C4
 Valid NOEMA capability cannot access Code’s machine even when both Bots share the same account-level MCP connection.
+
+**Status:** IMPLEMENTED (2026-08-22). Unpaid gate tests green. Do not merge until explicit approval.
+
+**Evidence**
+- Branch: `feat/c4-pairing-capabilities`
+- Base: `main` after [Adaptive-Liquidity/floks-pc#5](https://github.com/Adaptive-Liquidity/floks-pc/pull/5) (`7bcefc5`)
+- Unpaid: `npm run typecheck` + `npm test` + `npm run build` + `npm run verify`
+- Paid Runloop: **not required** and **not run**
+- Isolation: zero writes under Floks-main
+- Nexus / graph flags remain false
+- C3B preserved: `computerUse: true`, `accessibility: false`, `vnc: false`, `pauseMemory: false`
+
+**Known limitations (not C4 blockers)**
+- Store is in-memory (Kysely in a later persistence phase)
+- Public MCP gateway is C5
+- Pair-code possession is the identity proof at redeem time (MCP cannot identify the Bot). One-time + short TTL mitigate theft. After redeem, the capability binding is the authorization boundary.
 
 ---
 
