@@ -54,24 +54,65 @@ Work only on the currently open phase. Nexus-IQ / AEON / Graphiti are **forbidde
 
 ---
 
-## Phase 2 — Fake + Docker development providers  ← CURRENT
+## Phase 2 — Fake + Docker development providers
 
 **Goal:** Deterministic FakeProvider + DockerDevProvider for local isolation proof.
 
 ### Gate C2
-- Node A writes `/workspace/A.txt` → Node B cannot read it (and vice versa)
-- Restart containers → workspace persistence holds
-- `NODE_ENV=production` rejects DockerDevProvider
+- [x] Node A writes `/workspace/A.txt` → Node B cannot read it (and vice versa)
+- [x] Restart containers → workspace persistence holds
+- [x] `NODE_ENV=production` rejects DockerDevProvider
+- [x] Zero files modified under Floks-main
+- [x] `FLOK_NEXUS_IQ_ENABLED=false` and `FLOK_GRAPH_MEMORY_ENABLED=false`
+
+**Status:** CLOSED / PASSED (2026-08-22)
+
+**Evidence**
+- Merge: [Adaptive-Liquidity/floks-pc#1](https://github.com/Adaptive-Liquidity/floks-pc/pull/1) → `d68b7b25fb812207a86f4a940deb6d21b776d7e8`
+- Integrated head: `966027c4210ff756a4939b26d0b906b6e30add7c`
+- CI: GitHub Actions workflow `verify` run `32544440128` (Node 22.16)
+  - `typecheck + tests + build` on `ubuntu-latest`: **success**
+  - `live docker isolation` on GitHub-hosted `ubuntu-24.04`: **success**
+    - `docker version` / `docker info`
+    - `bash ./infra/docker/build.sh`
+    - `FLOK_LIVE_DOCKER_TEST=1 npm run test:live:docker`
+    - `if: always()` cleanup of `flok.provider=docker-dev` containers/volumes (zero leftovers)
+- Live proofs: A/B filesystem isolation; stop/wake persistence; symlink jail (`/workspace/link -> /etc`); destroy A does not leak B
+- Production: `NODE_ENV=production` throws `PROVIDER_FORBIDDEN_IN_PRODUCTION`
+- Base image pin: `ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517`
+- Isolation: zero writes under Floks-main
+
+**Known limitations (not C2 blockers; follow-ups)**
+- `read` / `stat` / `list` still map non-zero exits to `NOT_FOUND`
+- Path jail `realpath` + follow-up exec is not TOCTOU-safe (cross-Node isolation is volume-based)
+- `restore()` not implemented; checkpoint returns the named volume
+- Runtime tag `flok-computer-dev:0.0.1` is a local pin; image ID is CI evidence, not a source pin
 
 ---
 
-## Phase 3 — Daytona production provider
+## Phase 3 — Daytona production provider  ← CURRENT
 
 **Goal:** Linux VM class, real lifecycle + exec + fs + observe + act + VNC + checkpoint.
 
+### Implement
+- `providers/daytona.ts` — DaytonaProvider (`name: "daytona"`)
+- Linux **VM** snapshot only (not the default container class)
+- Official `@daytona/sdk` (`new Daytona({ apiKey })` → `create()` / `get()`)
+- `DAYTONA_API_KEY` stays in the control plane; never in Node env, workspace, exec env, MCP, or audit
+- argv[] exec (shell mode rejected); path jail at `/home/flok`
+- observe / act via Computer Use; takeover via signed noVNC preview URL
+- checkpoint via `createSnapshot`; restore from snapshot
+- Non-live tests with an injected control-plane fake (zero network)
+- Live tests opt-in: `FLOK_LIVE_COMPUTER_TEST=1` — missing key/snapshot **FAILS**, never silent skip
+
+### Non-goals (do not invent)
+- Provider factory, MCP gateway, pairing/capability wiring, worker, Kysely, Nexus/AEON/Graphiti
+
 ### Gate C3
-Two live machines prove different provider IDs, filesystems, browser profiles, process namespaces, independent lifecycle.  
-Live tests are **opt-in only** (`FLOK_LIVE_COMPUTER_TEST=1`).
+Two live Linux VMs prove different provider IDs, filesystems, browser profiles, process namespaces, independent lifecycle.  
+Live tests are **opt-in only** (`FLOK_LIVE_COMPUTER_TEST=1`). Not part of required PR CI.
+
+**Status:** OPEN
 
 ---
 
