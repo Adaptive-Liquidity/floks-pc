@@ -42,7 +42,15 @@ npm ci
 npm run verify        # typecheck + non-paid tests + build
 ```
 
-Live Docker isolation tests are opt-in (`FLOK_LIVE_DOCKER_TEST=1` / `npm run test:live`) and are **not** part of `verify` or required CI.
+Live Docker isolation tests skip unless `FLOK_LIVE_DOCKER_TEST=1`. On a Docker host (including the `docker-c2` GitHub Actions job) run:
+
+```bash
+bash ./infra/docker/build.sh
+FLOK_LIVE_DOCKER_TEST=1 npm run test:live:docker
+```
+
+When the flag is set, Docker unavailability **fails** the suite; it never silent-skips. These live tests are **not** part of `npm run verify`.
+
 
 Do **not** enable Nexus, AEON, or Graphiti until Gate G0 is marked PASSED in `PHASES.md`.
 
