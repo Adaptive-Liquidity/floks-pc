@@ -69,6 +69,12 @@ export {
 
 export type { ComputerProvider } from "./providers/provider.js";
 export { FakeProvider } from "./providers/fake.js";
+export {
+  DockerDevProvider,
+  DockerDevForbiddenInProduction,
+  DOCKER_DEV_IMAGE,
+  DOCKER_DEV_WORKSPACE_ROOT,
+} from "./providers/docker-dev.js";
 export { FLAGS, assertNexusDisabled } from "./flags.js";
 export type { ComputerProviderName } from "./flags.js";
 

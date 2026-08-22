@@ -1,0 +1,27 @@
+# Flok Computer — local DockerDev image. DEV ONLY. Never pull :latest.
+# Pin the Ubuntu LTS tag (not latest). Record digest in image-pin.txt after first build.
+FROM ubuntu:24.04
+
+ARG INSTALL_CHROMIUM=0
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      bash \
+      coreutils \
+      ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /workspace \
+ && chown 1000:1000 /workspace
+
+# Optional Chromium (Phase 7). Keep off for C2 so the image stays small.
+RUN if [ "$INSTALL_CHROMIUM" = "1" ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends chromium-browser \
+      && rm -rf /var/lib/apt/lists/* ; \
+    fi
+
+WORKDIR /workspace
+USER 1000:1000
+CMD ["sleep", "infinity"]

@@ -1,0 +1,13 @@
+# DockerDev image pin — never :latest
+#
+# Runtime tag (what DockerDevProvider runs):
+runtime_tag=flok-computer-dev:0.0.1
+#
+# Base image (Dockerfile.dev FROM):
+base=ubuntu:24.04
+#
+# After the first successful `./infra/docker/build.sh` on a Docker host, record:
+#   docker image inspect flok-computer-dev:0.0.1 --format '{{.Id}} {{index .RepoDigests 0}}'
+# and replace the placeholders below.
+runtime_id=PENDING_FIRST_BUILD
+base_digest=PENDING_FIRST_BUILD
