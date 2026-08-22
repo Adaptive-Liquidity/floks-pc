@@ -104,7 +104,7 @@ export function assertNoControlPlaneSecrets(env: Record<string, string> | undefi
     }
   }
   for (const [k, v] of Object.entries(env)) {
-    if (/api[_-]?key/i.test(k) || /runloop/i.test(k) && /key|token|secret/i.test(k)) {
+    if (/api[_-]?key/i.test(k) || (/runloop/i.test(k) && /key|token|secret/i.test(k))) {
       throw new Error(`refusing to place control-plane secret ${k} inside a Node VM`);
     }
     if (typeof v === "string" && v.length > 8 && process.env.RUNLOOP_API_KEY === v) {

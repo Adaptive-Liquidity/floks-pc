@@ -37,7 +37,7 @@ const EXECVP_PATH = `${RUNLOOP_WORKSPACE_ROOT}/.flok/execvp.py`;
 
 type SdkDevbox = {
   id: string;
-  getInfo(): Promise<{ status: string }>;
+  getInfo(): Promise<{ status: string; metadata?: Record<string, string> }>;
   cmd: {
     exec(
       command: string,
@@ -100,7 +100,19 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
 
   async get(id: string): Promise<RunloopDevboxSession> {
     const box = this.sdk.devbox.fromId(id) as unknown as SdkDevbox;
-    return new SdkRunloopDevbox(box, "unknown", "unknown");
+    let birdId = "unknown";
+    let flockId = "unknown";
+    try {
+      const info = await box.getInfo();
+      const meta = info.metadata ?? {};
+      if (meta["flok.bird_id"]) birdId = meta["flok.bird_id"];
+      if (meta["flok.flock_id"]) flockId = meta["flok.flock_id"];
+    } catch {
+      // metadata is diagnostic only
+    }
+    const session = new SdkRunloopDevbox(box, birdId, flockId);
+    await session.ensureWorkspace();
+    return session;
   }
 
   async restore(
@@ -117,7 +129,9 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
       metadata: params.labels,
       launch_parameters: launch,
     })) as unknown as SdkDevbox;
-    return new SdkRunloopDevbox(created, params.birdId, params.flockId);
+    const session = new SdkRunloopDevbox(created, params.birdId, params.flockId);
+    await session.ensureWorkspace();
+    return session;
   }
 }
 
@@ -181,6 +195,8 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     if (req.env) payload.env = req.env;
     const b64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
     const command = `python3 ${shellSingle(EXECVP_PATH)} ${b64}`;
+    // Runloop documents optimistic_timeout as "up to 25 seconds. Operation is not killed."
+    // cmd.exec still waits for completion; the cap is the first-wait hint, not FLOKS's contract.
     const timeoutSec = Math.max(1, Math.min(25, Math.ceil(req.timeoutMs / 1000)));
     try {
       const result = await this.box.cmd.exec(command, {
@@ -188,12 +204,12 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       });
       const stdout = await result.stdout();
       const stderr = await result.stderr();
-      const exitCode = result.exitCode ?? 1;
+      const timedOut = result.exitCode == null;
       return {
-        exitCode,
+        exitCode: result.exitCode ?? 124,
         stdout,
         stderr,
-        timedOut: false,
+        timedOut,
       };
     } catch (e) {
       throw new ProviderUnavailable(
