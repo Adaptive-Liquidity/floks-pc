@@ -27,6 +27,7 @@ import {
   handleMcpHttp,
   loadMcpGatewayConfig,
   parseBearer,
+  PairConnectionThrottle,
 } from "../../src/lib/mcp/index.js";
 import { RecordingLogger, blobContainsSecret } from "../../src/lib/mcp/log.js";
 
@@ -705,6 +706,137 @@ describe("C5 MCP gateway", () => {
     assert.equal(execBody.stdout.length, MCP_MAX_EXEC_OUTPUT_CHARS);
     assert.equal(execBody.stdout_truncated, true);
     assert.equal(execBody.stderr_truncated, false);
+  });
+
+  it("unexpected gateway throw ends the HTTP response with a sanitized JSON-RPC 500", async () => {
+    class BoomGateway extends McpGateway {
+      override async handleJsonRpc(): Promise<null> {
+        throw new Error(
+          "RUNLOOP_API_KEY=rlk_live_abcdefghijklmnopqrstuvwxyz0123 pair_code=ABCD-EFGH-JK capability_token=tok_" +
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx stack at FakeProvider",
+        );
+      }
+    }
+    const boom = new BoomGateway(service, { logger });
+    const server = createServer((req, res) => {
+      void handleMcpHttp(req, res, { gateway: boom, path: MCP_PATH });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address();
+    assert.ok(addr && typeof addr === "object");
+    const base = `http://127.0.0.1:${addr.port}${MCP_PATH}`;
+    try {
+      const res = await fetch(base, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/list" }),
+      });
+      assert.equal(res.status, 500);
+      const text = await res.text();
+      const json = JSON.parse(text) as {
+        jsonrpc: string;
+        id: number;
+        error: { code: number; message: string; data?: { code: string } };
+      };
+      assert.equal(json.jsonrpc, "2.0");
+      assert.equal(json.id, 42);
+      assert.equal(json.error.code, -32603);
+      assert.equal(json.error.message, "internal error");
+      assert.equal(json.error.data?.code, "INTERNAL");
+      assert.equal(text.includes("RUNLOOP_API_KEY"), false);
+      assert.equal(text.includes("rlk_live_"), false);
+      assert.equal(text.includes("ABCD-EFGH-JK"), false);
+      assert.equal(text.includes("capability_token"), false);
+      assert.equal(text.includes("FakeProvider"), false);
+      assert.equal(text.includes("stack"), false);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+    }
+  });
+
+  it("initialize with unsupported protocol reports the negotiated version in body and response header", async () => {
+    const server = createServer((req, res) => {
+      void handleMcpHttp(req, res, { gateway, path: MCP_PATH });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address();
+    assert.ok(addr && typeof addr === "object");
+    const base = `http://127.0.0.1:${addr.port}${MCP_PATH}`;
+    try {
+      const res = await fetch(base, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "mcp-protocol-version": "2099-01-01",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2099-01-01",
+            capabilities: {},
+            clientInfo: { name: "test", version: "0" },
+          },
+        }),
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get("mcp-protocol-version"), MCP_PREFERRED_PROTOCOL);
+      const json = (await res.json()) as {
+        result: { protocolVersion: string };
+        _meta: { "io.modelcontextprotocol/protocolVersion": string };
+      };
+      assert.equal(json.result.protocolVersion, MCP_PREFERRED_PROTOCOL);
+      assert.equal(json._meta["io.modelcontextprotocol/protocolVersion"], MCP_PREFERRED_PROTOCOL);
+
+      const listed = await fetch(base, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "mcp-protocol-version": "2099-01-01",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/list",
+          params: { _meta: { "io.modelcontextprotocol/protocolVersion": "2099-01-01" } },
+        }),
+      });
+      const listedJson = (await listed.json()) as { error?: { code: number } };
+      assert.equal(listedJson.error?.code, -32022);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+    }
+  });
+
+  it("throttled connection identities are not evicted by flooding new identities", () => {
+    const limit = 3;
+    const throttle = new PairConnectionThrottle(limit, 60_000, 5);
+    const attacker = { connectionId: "attacker", authenticated: false };
+    const near = { connectionId: "near-limit", authenticated: false };
+    const t0 = 1_700_000_000_000;
+
+    for (let i = 0; i < limit; i += 1) throttle.noteFailure(attacker, t0);
+    for (let i = 0; i < limit - 1; i += 1) throttle.noteFailure(near, t0 + 1);
+
+    assert.throws(() => throttle.assert(attacker, t0 + 2), (err: unknown) => {
+      return Boolean(err && typeof err === "object" && "code" in err && err.code === "PAIR_THROTTLED");
+    });
+
+    for (let i = 0; i < 40; i += 1) {
+      const now = t0 + 10 + i;
+      // Keep the near-limit identity recently seen so LRU prefers idle flood entries.
+      throttle.assert(near, now);
+      throttle.noteFailure({ connectionId: `flood-${i}`, authenticated: false }, now);
+    }
+
+    assert.throws(() => throttle.assert(attacker, t0 + 100), (err: unknown) => {
+      return Boolean(err && typeof err === "object" && "code" in err && err.code === "PAIR_THROTTLED");
+    });
+    throttle.noteFailure(near, t0 + 101);
+    assert.throws(() => throttle.assert(near, t0 + 102), (err: unknown) => {
+      return Boolean(err && typeof err === "object" && "code" in err && err.code === "PAIR_THROTTLED");
+    });
   });
 
   it("Nexus stays locked and C3B flags are preserved", () => {

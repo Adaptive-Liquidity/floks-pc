@@ -6,7 +6,13 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { digestEquals, sha256Hex } from "../computers/digest.js";
-import { MCP_MAX_BODY_BYTES, MCP_PATH, type McpGatewayConfig } from "./config.js";
+import {
+  MCP_MAX_BODY_BYTES,
+  MCP_PATH,
+  MCP_PREFERRED_PROTOCOL,
+  type McpGatewayConfig,
+} from "./config.js";
+import { JSONRPC_INTERNAL, jsonRpcError } from "./errors.js";
 import { McpGateway, type McpRequestContext } from "./handler.js";
 import { header } from "./protocol.js";
 import { parseBearer } from "./throttle.js";
@@ -19,10 +25,52 @@ export interface McpHttpOptions {
   path?: string;
 }
 
+/** Always-ending internal error. Never includes stacks, secrets, or provider refs. */
+export function endUnhandledMcpError(
+  res: ServerResponse,
+  id: string | number | null = null,
+): void {
+  if (res.writableEnded) return;
+  try {
+    if (!res.headersSent) {
+      res.statusCode = 500;
+      res.setHeader("content-type", "application/json");
+    }
+    res.end(JSON.stringify(jsonRpcError(id, JSONRPC_INTERNAL, "internal error", "INTERNAL")));
+  } catch {
+    try {
+      res.end();
+    } catch {
+      /* already closed */
+    }
+  }
+}
+
 export async function handleMcpHttp(
   req: IncomingMessage,
   res: ServerResponse,
   opts: McpHttpOptions,
+): Promise<void> {
+  let rpcId: string | number | null = null;
+  try {
+    await handleMcpHttpInner(req, res, opts, (id) => {
+      rpcId = id;
+    });
+  } catch {
+    try {
+      opts.logger?.error("mcp.http_internal", {});
+    } catch {
+      /* never let logging block the sanitized 500 */
+    }
+    endUnhandledMcpError(res, rpcId);
+  }
+}
+
+async function handleMcpHttpInner(
+  req: IncomingMessage,
+  res: ServerResponse,
+  opts: McpHttpOptions,
+  noteId: (id: string | number) => void,
 ): Promise<void> {
   const path = opts.path ?? MCP_PATH;
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -95,6 +143,9 @@ export async function handleMcpHttp(
     return;
   }
 
+  const parsedId = jsonRpcIdOf(parsed);
+  if (parsedId !== undefined) noteId(parsedId);
+
   const ctx: McpRequestContext = {};
   if (authorization) ctx.authorization = authorization;
   if (req.socket.remoteAddress) ctx.remoteAddress = req.socket.remoteAddress;
@@ -113,10 +164,29 @@ export async function handleMcpHttp(
     res.end();
     return;
   }
+  const negotiated = protocolFromRpc(result) ?? protocol ?? MCP_PREFERRED_PROTOCOL;
   res.statusCode = 200;
   res.setHeader("content-type", "application/json");
-  res.setHeader("mcp-protocol-version", protocol ?? "2026-07-28");
+  res.setHeader("mcp-protocol-version", negotiated);
   res.end(JSON.stringify(result));
+}
+
+function jsonRpcIdOf(parsed: unknown): string | number | undefined {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const id = (parsed as { id?: unknown }).id;
+  if (typeof id === "string" || typeof id === "number") return id;
+  return undefined;
+}
+
+function protocolFromRpc(
+  result: Record<string, unknown> | Record<string, unknown>[],
+): string | undefined {
+  const rec = Array.isArray(result) ? result[0] : result;
+  if (!rec) return undefined;
+  const meta = rec._meta;
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return undefined;
+  const version = (meta as Record<string, unknown>)["io.modelcontextprotocol/protocolVersion"];
+  return typeof version === "string" && version.length > 0 ? version : undefined;
 }
 
 function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {

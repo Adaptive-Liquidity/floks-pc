@@ -14,6 +14,7 @@ import {
   McpGateway,
   MCP_PATH,
 } from "./lib/mcp/index.js";
+import { endUnhandledMcpError } from "./lib/mcp/http.js";
 
 assertNexusDisabled();
 
@@ -31,7 +32,9 @@ const service = new ComputerService(new FakeProvider());
 const gateway = new McpGateway(service);
 
 const server = createServer((req, res) => {
-  void handleMcpHttp(req, res, { gateway, config, path: MCP_PATH });
+  void handleMcpHttp(req, res, { gateway, config, path: MCP_PATH }).catch(() => {
+    endUnhandledMcpError(res);
+  });
 });
 
 server.listen(port, host, () => {
