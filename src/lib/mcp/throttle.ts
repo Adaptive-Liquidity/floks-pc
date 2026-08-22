@@ -35,17 +35,21 @@ export class PairConnectionThrottle {
 
   assert(identity: ConnectionIdentity, now = Date.now()): void {
     const cur = this.windows.get(identity.connectionId);
-    if (!cur) return;
+    if (!cur) {
+      // Saturated with live at-limit windows: cannot track this identity, so
+      // fail closed instead of leaving it unthrottled.
+      if (this.windows.size >= this.maxEntries && !this.hasEvictable(now)) {
+        throwThrottled();
+      }
+      return;
+    }
     if (now - cur.windowStart > this.windowMs) {
       this.windows.delete(identity.connectionId);
       return;
     }
     cur.lastSeen = now;
     if (cur.count >= this.limit) {
-      throw Object.assign(new Error("too many pair attempts"), {
-        name: "PairThrottled",
-        code: "PAIR_THROTTLED",
-      });
+      throwThrottled();
     }
   }
 
@@ -64,6 +68,15 @@ export class PairConnectionThrottle {
 
   reset(): void {
     this.windows.clear();
+  }
+
+  /** True when an expired or live non-throttled window can be dropped. */
+  private hasEvictable(now: number): boolean {
+    for (const win of this.windows.values()) {
+      if (now - win.windowStart > this.windowMs) return true;
+      if (win.count < this.limit) return true;
+    }
+    return false;
   }
 
   /**
@@ -100,6 +113,13 @@ export class PairConnectionThrottle {
     this.windows.delete(victim);
     return true;
   }
+}
+
+function throwThrottled(): never {
+  throw Object.assign(new Error("too many pair attempts"), {
+    name: "PairThrottled",
+    code: "PAIR_THROTTLED",
+  });
 }
 
 export function connectionIdentityFromAuth(

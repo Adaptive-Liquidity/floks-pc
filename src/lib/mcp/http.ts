@@ -164,7 +164,8 @@ async function handleMcpHttpInner(
     res.end();
     return;
   }
-  const negotiated = protocolFromRpc(result) ?? protocol ?? MCP_PREFERRED_PROTOCOL;
+  const negotiated = protocolFromRpc(result) ?? MCP_PREFERRED_PROTOCOL;
+
   res.statusCode = 200;
   res.setHeader("content-type", "application/json");
   res.setHeader("mcp-protocol-version", negotiated);

@@ -803,6 +803,8 @@ describe("C5 MCP gateway", () => {
         }),
       });
       const listedJson = (await listed.json()) as { error?: { code: number } };
+      assert.equal(listed.status, 200);
+      assert.equal(listed.headers.get("mcp-protocol-version"), MCP_PREFERRED_PROTOCOL);
       assert.equal(listedJson.error?.code, -32022);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
@@ -837,6 +839,32 @@ describe("C5 MCP gateway", () => {
     assert.throws(() => throttle.assert(near, t0 + 102), (err: unknown) => {
       return Boolean(err && typeof err === "object" && "code" in err && err.code === "PAIR_THROTTLED");
     });
+  });
+
+  it("saturated throttle map fails closed for unknown identities", () => {
+    const limit = 2;
+    const max = 3;
+    const throttle = new PairConnectionThrottle(limit, 60_000, max);
+    const t0 = 1_700_000_000_000;
+    for (let i = 0; i < max; i += 1) {
+      const id = { connectionId: `full-${i}`, authenticated: false };
+      for (let n = 0; n < limit; n += 1) throttle.noteFailure(id, t0);
+    }
+
+    const fresh = { connectionId: "fresh", authenticated: false };
+    assert.throws(() => throttle.assert(fresh, t0 + 1), (err: unknown) => {
+      return Boolean(err && typeof err === "object" && "code" in err && err.code === "PAIR_THROTTLED");
+    });
+    throttle.noteFailure(fresh, t0 + 1);
+    assert.throws(() => throttle.assert(fresh, t0 + 2), (err: unknown) => {
+      return Boolean(err && typeof err === "object" && "code" in err && err.code === "PAIR_THROTTLED");
+    });
+    assert.throws(
+      () => throttle.assert({ connectionId: "full-0", authenticated: false }, t0 + 2),
+      (err: unknown) => {
+        return Boolean(err && typeof err === "object" && "code" in err && err.code === "PAIR_THROTTLED");
+      },
+    );
   });
 
   it("Nexus stays locked and C3B flags are preserved", () => {
