@@ -37,11 +37,19 @@ function newId(prefix: string): string {
 export class MemoryRunloopControlPlane implements RunloopControlPlane {
   private readonly sessions = new Map<string, MemoryRunloopDevbox>();
   private readonly snapshots = new Map<string, Map<string, MemFile>>();
+  /** Test hook: next create/restore session fails its first ensureInteractiveStack. */
+  failNextEnsure = false;
+  lastCreatedId: string | null = null;
 
   async create(params: RunloopCreateParams): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
     const id = newId("rlbox");
     const session = new MemoryRunloopDevbox(id, params, this.snapshots);
+    if (this.failNextEnsure) {
+      session.failEnsureOnce = true;
+      this.failNextEnsure = false;
+    }
+    this.lastCreatedId = id;
     this.sessions.set(id, session);
     return session;
   }
@@ -75,6 +83,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
   destroyed = false;
   /** How many times ensureInteractiveStack actually (re)started. */
   stackStarts = 0;
+  failEnsureOnce = false;
   private stackUp = false;
   private current: RunloopDevboxState = "running";
   private fs: Map<string, MemFile>;
@@ -259,6 +268,10 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
 
   async ensureInteractiveStack(): Promise<void> {
     this.assertAlive();
+    if (this.failEnsureOnce) {
+      this.failEnsureOnce = false;
+      throw new Error("ensureInteractiveStack failed");
+    }
     if (this.current !== "running") {
       throw new Error(`runloop devbox ${this.id} is ${this.current}`);
     }

@@ -138,8 +138,13 @@ export class RunloopProvider implements ComputerProvider {
     const params = this.createParams(spec);
     const session = await this.plane.create(params);
     this.sessions.set(session.id, session);
-    await session.fsMkdir(RUNLOOP_WORKSPACE_ROOT).catch(() => undefined);
-    await session.ensureInteractiveStack();
+    try {
+      await session.fsMkdir(RUNLOOP_WORKSPACE_ROOT).catch(() => undefined);
+      await session.ensureInteractiveStack();
+    } catch (e) {
+      await this.abandonSession(session.id);
+      throw e;
+    }
     return { providerRef: session.id, status: "ready" };
   }
 
@@ -423,7 +428,12 @@ export class RunloopProvider implements ComputerProvider {
     };
     const session = await this.plane.restore(request.providerSnapshotRef, params);
     this.sessions.set(session.id, session);
-    await session.ensureInteractiveStack();
+    try {
+      await session.ensureInteractiveStack();
+    } catch (e) {
+      await this.abandonSession(session.id);
+      throw e;
+    }
     return { providerRef: session.id, status: "ready" };
   }
 
@@ -458,6 +468,15 @@ export class RunloopProvider implements ComputerProvider {
         "runloop",
         e instanceof Error ? e.message : `devbox ${ref} not found`,
       );
+    }
+  }
+
+  /** Unregister and shut down a session the caller never received a providerRef for. */
+  private async abandonSession(id: string): Promise<void> {
+    const session = this.sessions.get(id);
+    this.sessions.delete(id);
+    if (session) {
+      await session.shutdown().catch(() => undefined);
     }
   }
 }

@@ -179,6 +179,10 @@ describe("C3B Dockerfile and ensure contract", () => {
       assert.match(src, /rm -f \/tmp\/\.X11-unix\/X99 \/tmp\/\.X99-lock/);
       assert.match(src, /chmod 700 "\$PROFILE"/);
       assert.match(src, /\/tmp\/flok-chrome\.log/);
+      assert.match(src, /not a regular file/);
+      assert.match(src, /chmod 640 \/tmp\/flok-chrome\.log/);
+      assert.match(src, /chown --no-dereference/);
+      assert.doesNotMatch(src, /chmod 644 \/tmp\/flok-chrome\.log/);
       assert.match(src, /test -w "\$PROFILE"/);
       assert.match(src, /chown root:root \/home\/user\/flok\/\.flok/);
       assert.match(src, /chown -R "\$UI_USER:\$UI_USER" \/home\/user\/flok\/\.browser/);
@@ -235,6 +239,46 @@ describe("C3B RunloopProvider (memory)", () => {
     await p.pause(a.providerRef);
     await p.wake(a.providerRef);
     assert.equal((session as unknown as { stackStarts: number }).stackStarts, 2);
+  });
+
+  it("re-ensures after in-session stack death without suspend", async () => {
+    const plane = new MemoryRunloopControlPlane();
+    const p = new RunloopProvider({ client: plane, blueprint: "memory" });
+    const a = await p.provision({ birdId: "stack-death", flockId: "f" });
+    const session = await plane.get(a.providerRef);
+    assert.equal((session as unknown as { stackStarts: number }).stackStarts, 1);
+    (session as unknown as { markStackDown: () => void }).markStackDown();
+    await p.observe(a.providerRef, { includeScreenshot: true });
+    assert.equal((session as unknown as { stackStarts: number }).stackStarts, 2);
+  });
+
+  it("destroys the Devbox if ensure fails during provision", async () => {
+    const plane = new MemoryRunloopControlPlane();
+    plane.failNextEnsure = true;
+    const p = new RunloopProvider({ client: plane, blueprint: "memory" });
+    await assert.rejects(() => p.provision({ birdId: "leak-prov", flockId: "f" }));
+    assert.ok(plane.lastCreatedId);
+    await assert.rejects(() => plane.get(plane.lastCreatedId as string));
+  });
+
+  it("destroys the restored Devbox if ensure fails", async () => {
+    const plane = new MemoryRunloopControlPlane();
+    const p = new RunloopProvider({ client: plane, blueprint: "memory" });
+    const a = await p.provision({ birdId: "leak-restore", flockId: "f" });
+    const ck = await p.checkpoint(a.providerRef);
+    plane.failNextEnsure = true;
+    await assert.rejects(() =>
+      p.restore({
+        computerId: a.providerRef,
+        checkpointId: ck.providerSnapshotRef,
+        providerSnapshotRef: ck.providerSnapshotRef,
+      }),
+    );
+    assert.ok(plane.lastCreatedId);
+    assert.notEqual(plane.lastCreatedId, a.providerRef);
+    await assert.rejects(() => plane.get(plane.lastCreatedId as string));
+    const original = await plane.get(a.providerRef);
+    assert.equal((original as unknown as { destroyed: boolean }).destroyed, false);
   });
 
   it("observe screenshot shape without fabricating accessibility", async () => {

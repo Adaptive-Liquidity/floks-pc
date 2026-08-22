@@ -15,6 +15,7 @@ import {
   FIXTURE_HTML,
   FIXTURE_PATH,
   FLOK_DISPLAY,
+  FLOK_UI_USER,
   INTERACTIVE_DIR,
   argvAsUiUser,
   chromeLaunchArgv,
@@ -156,6 +157,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   readonly flockId: string;
   bootId = "";
   private interactiveStackUp = false;
+  private graphicalStack = false;
 
   constructor(
     private readonly box: SdkDevbox,
@@ -347,7 +349,10 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   }
 
   async ensureInteractiveStack(): Promise<void> {
-    if (this.interactiveStackUp) return;
+    if (this.interactiveStackUp) {
+      if (!this.graphicalStack || (await this.xvfbAlive())) return;
+      this.interactiveStackUp = false;
+    }
     this.requireFs(
       await this.fsMkdir(pathPosix.dirname(ENSURE_SCRIPT_PATH)),
       "ensureInteractiveStack mkdir",
@@ -375,6 +380,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
         `ensureInteractiveStack failed: ${r.stderr || r.stdout}`,
       );
     }
+    this.graphicalStack = !r.stdout.includes("missing-xvfb");
     this.interactiveStackUp = true;
   }
 
@@ -521,6 +527,20 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   private requireFs(r: RunloopFsResult, what: string): void {
     if (!r.ok) {
       throw new ProviderUnavailable("runloop", `${what} failed: ${r.errorCode}`);
+    }
+  }
+
+  /** Cheap Xvfb liveness probe. Full ensure only re-runs if this fails. */
+  private async xvfbAlive(): Promise<boolean> {
+    try {
+      const r = await this.exec({
+        argv: ["pgrep", "-u", FLOK_UI_USER, "-f", `Xvfb ${FLOK_DISPLAY}`],
+        cwd: RUNLOOP_WORKSPACE_ROOT,
+        timeoutMs: 5_000,
+      });
+      return r.exitCode === 0;
+    } catch {
+      return false;
     }
   }
 

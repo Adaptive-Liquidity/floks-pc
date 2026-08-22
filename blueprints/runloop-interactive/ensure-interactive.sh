@@ -57,9 +57,18 @@ chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser
 chmod 700 /home/user/flok/.browser
 chmod 700 "$PROFILE" || true
 chmod 775 /home/user/flok || true
+if [ -L /tmp/flok-chrome.log ] || { [ -e /tmp/flok-chrome.log ] && [ ! -f /tmp/flok-chrome.log ]; }; then
+  echo "refusing to use /tmp/flok-chrome.log: not a regular file" >&2
+  ls -ld /tmp/flok-chrome.log >&2
+  exit 1
+fi
 touch /tmp/flok-chrome.log
-chown "$UI_USER:$UI_USER" /tmp/flok-chrome.log
-chmod 644 /tmp/flok-chrome.log
+if [ -L /tmp/flok-chrome.log ]; then
+  echo "refusing to use /tmp/flok-chrome.log: not a regular file" >&2
+  exit 1
+fi
+chown --no-dereference "$UI_USER:$UI_USER" /tmp/flok-chrome.log
+chmod 640 /tmp/flok-chrome.log
 if ! runuser -u "$UI_USER" -- test -w "$PROFILE"; then
   echo "profile not writable by $UI_USER: $PROFILE" >&2
   ls -ld "$PROFILE" /home/user/flok/.browser /home/user/flok >&2
