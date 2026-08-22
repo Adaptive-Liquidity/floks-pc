@@ -36,6 +36,69 @@ export type OsType = "linux" | "windows";
 /** Concrete providers currently implemented. Do not add a factory in C3. */
 export type ComputerProviderName = "fake" | "docker-dev" | "runloop";
 
+/**
+ * Capability scopes for Bot-facing computer operations.
+ * `shell` is stronger than `exec` and is not granted by default pairing.
+ * Handoff scopes are deferred to C9. MCP tools (C5) map onto these.
+ */
+export const CAPABILITY_SCOPES = [
+  "status",
+  "exec",
+  "fs",
+  "observe",
+  "act",
+  "lifecycle",
+  "shell",
+] as const;
+
+export type CapabilityScope = (typeof CAPABILITY_SCOPES)[number];
+
+/**
+ * Account-level MCP authentication. Shared by every Grok Bot on the same
+ * xAI team/account. Never identifies a Bot and never authorizes computer access.
+ */
+export interface SharedAccountAuth {
+  accountId: string;
+}
+
+/**
+ * Auth presented to ComputerService operation methods.
+ * Only `{ kind: "capability", token }` can authorize. Shared MCP auth cannot.
+ */
+export type ComputerOperationAuth =
+  | { kind: "capability"; token: string }
+  | { kind: "shared"; accountId: string }
+  | { kind: "none" };
+
+export interface NodeIdentity {
+  birdId: string;
+  flockId: string;
+}
+
+export interface PairResult {
+  /** Opaque capability secret — returned once, never stored */
+  token: string;
+  capabilityId: string;
+  computerHandle: string;
+  nodeHandle: string;
+  flockId: string;
+  scopes: CapabilityScope[];
+  expiresAt: Date;
+}
+
+export interface IssuedPairCode {
+  id: string;
+  /** Human-readable pair code — returned once, never stored */
+  code: string;
+  expiresAt: Date;
+}
+
+export interface IssuePairCodeOptions {
+  ttlMs?: number;
+  scopes?: readonly CapabilityScope[];
+  capabilityTtlMs?: number;
+}
+
 export interface ComputerSpec {
   birdId: string;
   flockId: string;
@@ -160,8 +223,9 @@ export interface ComputerCapability {
   id: string;
   computerId: string;
   birdId: string;
+  flockId: string;
   tokenDigest: string;
-  scopes: string[];
+  scopes: CapabilityScope[];
   issuedAt: Date;
   expiresAt: Date;
   revokedAt: Date | null;
@@ -171,6 +235,8 @@ export interface ComputerCapability {
 export interface ComputerPairCode {
   id: string;
   computerId: string;
+  birdId: string;
+  flockId: string;
   codeDigest: string;
   expiresAt: Date;
   usedAt: Date | null;

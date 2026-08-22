@@ -21,7 +21,8 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 | **C2** — DockerDevProvider + isolation/persistence | **CLOSED / PASSED** |
 | **C3A** — Runloop Devbox compute substrate | **CLOSED / PASSED** |
 | **C3B** — interactive computer (display, browser, screenshot, bounded input) | **CLOSED / PASSED** |
-| C4+ | Not started (do not begin C4; Nexus-IQ remains hard-locked until G0) |
+| **C4** — pair codes + capability tokens (internal layer) | **IMPLEMENTED** (unpaid gate tests; do not merge until approval) |
+| C5+ | Not started (no public MCP gateway; Nexus-IQ remains hard-locked until G0) |
 
 ## Authority files (read in this order)
 

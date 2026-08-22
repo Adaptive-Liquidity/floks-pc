@@ -20,6 +20,31 @@ export const ComputerStateSchema = z.enum([
 
 export const OsTypeSchema = z.enum(["linux", "windows"]);
 
+export const CapabilityScopeSchema = z.enum([
+  "status",
+  "exec",
+  "fs",
+  "observe",
+  "act",
+  "lifecycle",
+  "shell",
+]);
+
+export const SharedAccountAuthSchema = z.object({
+  accountId: z.string().min(1),
+});
+
+export const ComputerOperationAuthSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("capability"), token: z.string().min(1) }),
+  z.object({ kind: z.literal("shared"), accountId: z.string().min(1) }),
+  z.object({ kind: z.literal("none") }),
+]);
+
+export const NodeIdentitySchema = z.object({
+  birdId: z.string().min(1),
+  flockId: z.string().min(1),
+});
+
 export const ComputerSpecSchema = z.object({
   birdId: z.string().min(1),
   flockId: z.string().min(1),
@@ -134,4 +159,29 @@ export const ActionSchema = z.object({
 
 export const ActionBatchSchema = z.object({
   actions: z.array(ActionSchema).min(1).max(50),
+});
+
+export const ComputerCapabilitySchema = z.object({
+  id: z.string().min(1),
+  computerId: z.string().min(1),
+  birdId: z.string().min(1),
+  flockId: z.string().min(1),
+  tokenDigest: z.string().min(1),
+  scopes: z.array(CapabilityScopeSchema),
+  issuedAt: z.coerce.date(),
+  expiresAt: z.coerce.date(),
+  revokedAt: z.coerce.date().nullable(),
+  lastUsedAt: z.coerce.date().nullable(),
+});
+
+export const ComputerPairCodeSchema = z.object({
+  id: z.string().min(1),
+  computerId: z.string().min(1),
+  birdId: z.string().min(1),
+  flockId: z.string().min(1),
+  codeDigest: z.string().min(1),
+  expiresAt: z.coerce.date(),
+  usedAt: z.coerce.date().nullable(),
+  attemptCount: z.number().int().nonnegative(),
+  createdAt: z.coerce.date(),
 });
