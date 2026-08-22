@@ -4,6 +4,9 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   ComputerUseNotAvailable,
   MemoryRunloopControlPlane,
@@ -14,9 +17,15 @@ import {
 import {
   validateAction,
   pngDimensions,
+  classifyBlueprintBuildStatus,
+  chromeLaunchArgv,
+  argvAsUiUser,
+  ENSURE_INTERACTIVE_SH,
   DISPLAY_WIDTH,
   DISPLAY_HEIGHT,
   BROWSER_PROFILE_DIR,
+  FLOK_UI_USER,
+  FLOK_UI_UID,
 } from "../../src/lib/computers/providers/runloop-interactive.js";
 
 function provider(): RunloopProvider {
@@ -80,15 +89,77 @@ describe("C3B pngDimensions", () => {
   });
 });
 
+describe("C3B blueprint build status", () => {
+  it("polls queued/provisioning/building and terminals on complete or failed", () => {
+    assert.equal(classifyBlueprintBuildStatus("queued"), "pending");
+    assert.equal(classifyBlueprintBuildStatus("provisioning"), "pending");
+    assert.equal(classifyBlueprintBuildStatus("building"), "pending");
+    assert.equal(classifyBlueprintBuildStatus("build_complete"), "success");
+    assert.equal(classifyBlueprintBuildStatus("failed"), "failure");
+    assert.equal(classifyBlueprintBuildStatus("build_failed"), "failure");
+    assert.equal(classifyBlueprintBuildStatus("mystery"), "failure");
+  });
+});
+
+describe("C3B graphical user isolation", () => {
+  it("drops Chrome and input to flok-ui without --no-sandbox", () => {
+    assert.equal(FLOK_UI_USER, "flok-ui");
+    assert.equal(FLOK_UI_UID, 1500);
+    const chrome = chromeLaunchArgv("https://example.com/");
+    assert.equal(chrome[0], "runuser");
+    assert.equal(chrome[2], "flok-ui");
+    assert.equal(chrome.includes("--no-sandbox"), false);
+    assert.equal(chrome.includes("--disable-setuid-sandbox"), false);
+    assert.ok(chrome.some((a) => a.startsWith("--user-data-dir=")));
+    const click = argvAsUiUser(["xdotool", "click", "1"]);
+    assert.deepEqual(click.slice(0, 3), ["runuser", "-u", "flok-ui"]);
+  });
+});
+
+describe("C3B Dockerfile and ensure contract", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const root = join(here, "../..");
+  const dockerfile = readFileSync(
+    join(root, "blueprints/runloop-interactive/Dockerfile"),
+    "utf8",
+  );
+  const ensureFile = readFileSync(
+    join(root, "blueprints/runloop-interactive/ensure-interactive.sh"),
+    "utf8",
+  );
+
+  it("extends the documented DnD Ubuntu base and stays root", () => {
+    assert.match(dockerfile, /^FROM runloop:runloop\/universal-ubuntu-24.04-x86_64-dnd$/m);
+    assert.equal(/^USER\s/m.test(dockerfile), false);
+    assert.match(dockerfile, /useradd -m -u 1500/);
+    assert.match(dockerfile, /command -v docker/);
+    assert.match(dockerfile, /command -v git/);
+    assert.match(dockerfile, /command -v python3/);
+    assert.match(dockerfile, /command -v node/);
+    assert.match(dockerfile, /chmod 4755/);
+    assert.equal(/^(RUN|CMD|ENTRYPOINT).*(--no-sandbox)/m.test(dockerfile), false);
+  });
+
+  it("ensure script is localhost-only, flok-ui only, and restarts X after resume", () => {
+    for (const src of [ENSURE_INTERACTIVE_SH, ensureFile]) {
+      assert.match(src, /refuse to start Chrome as root/);
+      assert.match(src, /x11vnc .* -localhost /);
+      assert.match(src, /127\.0\.0\.1:\$\{NOVNC_PORT\}/);
+      assert.match(src, /rm -f \/tmp\/\.X11-unix\/X99 \/tmp\/\.X99-lock/);
+      assert.doesNotMatch(src, /--no-sandbox/);
+    }
+  });
+});
+
 describe("C3B RunloopProvider (memory)", () => {
   it("hard-locks Nexus", () => {
     assert.equal(FLAGS.FLOK_NEXUS_IQ_ENABLED, false);
     assertNexusDisabled();
   });
 
-  it("advertises computerUse true and vnc false", () => {
+  it("advertises computerUse false until the paid C3B live gate", () => {
     const caps = provider().capabilities();
-    assert.equal(caps.computerUse, true);
+    assert.equal(caps.computerUse, false);
     assert.equal(caps.vnc, false);
     assert.equal(caps.accessibility, false);
     assert.equal(caps.pauseMemory, false);

@@ -42,7 +42,7 @@ describe("RunloopProvider (no network)", () => {
     assert.equal(caps.forks, true);
     assert.equal(caps.customImages, true);
     assert.equal(caps.networkPolicy, true);
-    assert.equal(caps.computerUse, true);
+    assert.equal(caps.computerUse, false);
     assert.equal(caps.vnc, false);
     assert.equal(caps.accessibility, false);
   });

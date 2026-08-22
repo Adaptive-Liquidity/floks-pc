@@ -132,13 +132,14 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
 **Goal:** Browser + private display + screenshot + bounded input + persistent profile inside each Runloop Devbox. Grok remains the intelligence. Runloop remains the computer.
 
 ### Implement
-- Reproducible interactive Blueprint under `blueprints/runloop-interactive/`
+- Reproducible interactive Blueprint under `blueprints/runloop-interactive/` based on `FROM runloop:runloop/universal-ubuntu-24.04-x86_64-dnd`
+- Graphical stack as non-root `flok-ui`; Chrome without `--no-sandbox`
 - Persistent profile `/home/user/flok/.browser/profile`
 - `ensureInteractiveStack()` after provision and resume (disk survives suspend; RAM/processes do not)
 - `observe()` screenshot from `:99`
 - Bounded `act()`: click_coordinates, type, key, scroll, open_url, wait; `click_element` fail-closed
 - Local noVNC on localhost only; `takeover()` remains fail-closed; `vnc: false`
-- `computerUse: true` only after unpaid tests prove the contract
+- `computerUse: false` until a real Runloop interactive Devbox passes the paid C3B live gate
 - Manual `runloop-c3b` workflow; **do not run paid live tests until approved**
 
 ### Non-goals (do not invent)

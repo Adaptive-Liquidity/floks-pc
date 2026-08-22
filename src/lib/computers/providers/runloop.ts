@@ -6,7 +6,8 @@
  * Shell mode is rejected. Filesystem is jailed to /home/user/flok.
  *
  * Suspend preserves disk, not RAM (pauseMemory: false).
- * C3B: screenshot + bounded input on a private display. takeover/vnc stay fail-closed.
+ * C3B: screenshot + bounded input on a private display (as flok-ui).
+ * takeover/vnc stay fail-closed. computerUse stays false until live C3B.
  */
 
 import { posix as pathPosix } from "node:path";
@@ -119,7 +120,7 @@ export class RunloopProvider implements ComputerProvider {
     return {
       linuxVm: true,
       windowsVm: false,
-      computerUse: true,
+      computerUse: false, // true only after paid C3B live gate
       accessibility: false,
       vnc: false,
       pauseMemory: false,

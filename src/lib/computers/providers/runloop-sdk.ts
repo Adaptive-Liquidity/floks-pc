@@ -18,6 +18,8 @@ import {
   FIXTURE_PATH,
   FLOK_DISPLAY,
   OBS_SHOT_PATH,
+  argvAsUiUser,
+  chromeLaunchArgv,
   pngDimensions,
 } from "./runloop-interactive.js";
 import {
@@ -348,7 +350,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const r = await this.exec({
       argv: ["bash", ENSURE_SCRIPT_PATH],
       cwd: RUNLOOP_WORKSPACE_ROOT,
-      timeoutMs: 20_000,
+      timeoutMs: 30_000,
     });
     if (r.exitCode !== 0) {
       throw new ProviderUnavailable(
@@ -366,7 +368,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   }> {
     await this.fsMkdir(pathPosix.dirname(OBS_SHOT_PATH));
     const shot = await this.exec({
-      argv: ["import", "-display", FLOK_DISPLAY, "-window", "root", OBS_SHOT_PATH],
+      argv: argvAsUiUser(["import", "-display", FLOK_DISPLAY, "-window", "root", OBS_SHOT_PATH]),
       cwd: RUNLOOP_WORKSPACE_ROOT,
       env: { DISPLAY: FLOK_DISPLAY },
       timeoutMs: 15_000,
@@ -382,7 +384,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const dims = pngDimensions(file.data);
     let activeWindow: string | undefined;
     const win = await this.exec({
-      argv: ["xdotool", "getactivewindow", "getwindowname"],
+      argv: argvAsUiUser(["xdotool", "getactivewindow", "getwindowname"]),
       cwd: RUNLOOP_WORKSPACE_ROOT,
       env: { DISPLAY: FLOK_DISPLAY },
       timeoutMs: 5_000,
@@ -415,19 +417,26 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     let argv: string[];
     switch (action.type) {
       case "click_coordinates":
-        argv = ["xdotool", "mousemove", String(action.x), String(action.y), "click", "1"];
+        argv = argvAsUiUser([
+          "xdotool",
+          "mousemove",
+          String(action.x),
+          String(action.y),
+          "click",
+          "1",
+        ]);
         break;
       case "type":
-        argv = ["xdotool", "type", "--", action.text ?? ""];
+        argv = argvAsUiUser(["xdotool", "type", "--", action.text ?? ""]);
         break;
       case "key":
-        argv = ["xdotool", "key", "--", action.key ?? ""];
+        argv = argvAsUiUser(["xdotool", "key", "--", action.key ?? ""]);
         break;
       case "scroll": {
         const dy = action.y ?? 0;
         const button = dy < 0 ? "4" : "5";
         const n = Math.min(20, Math.max(1, Math.abs(dy) || 1));
-        argv = ["xdotool", "click", "--repeat", String(n), button];
+        argv = argvAsUiUser(["xdotool", "click", "--repeat", String(n), button]);
         break;
       }
       case "wait":
@@ -440,24 +449,14 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
             ? (action.url ?? `file://${FIXTURE_PATH}`)
             : `file://${FIXTURE_PATH}`;
         // Detach so exec returning does not SIGHUP Chrome. No --no-sandbox.
+        // runuser drops to flok-ui; python launcher stays the Devbox user (root on DnD).
         const chromeCode = [
           "import subprocess,sys",
           "subprocess.Popen(sys.argv[1:], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)",
           "print('launched')",
           "",
         ].join("\n");
-        argv = [
-          "python3",
-          "-c",
-          chromeCode,
-          "google-chrome-stable",
-          `--user-data-dir=${BROWSER_PROFILE_DIR}`,
-          `--window-size=${DISPLAY_WIDTH},${DISPLAY_HEIGHT}`,
-          "--window-position=0,0",
-          `--app=${url}`,
-          "--no-first-run",
-          "--disable-sync",
-        ];
+        argv = ["python3", "-c", chromeCode, ...chromeLaunchArgv(url)];
         break;
       }
       default:

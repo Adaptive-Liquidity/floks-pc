@@ -61,7 +61,7 @@ FLOK_LIVE_RUNLOOP_TEST=1 npm run test:live:runloop
 
 When the flag is set, missing credentials **fail** the suite. Live Runloop is **not** part of `npm run verify` or required PR CI.
 
-C3B interactive live tests are a separate manual workflow (`runloop-c3b`). They need the custom interactive Blueprint (not the generic Ubuntu image) and `FLOK_LIVE_RUNLOOP_C3B_TEST=1`. Do **not** run them until explicitly approved.
+C3B interactive live tests are a separate manual workflow (`runloop-c3b`). They need the custom interactive Blueprint (built from the DnD base; not bare Ubuntu) and `FLOK_LIVE_RUNLOOP_C3B_TEST=1`. Do **not** run them until the Blueprint reports `build_complete` and you explicitly approve. `computerUse` stays **false** until that live gate passes.
 
 Store production credentials in GitHub Actions only (never in git, `.env` committed to the repo, or a Node VM / Devbox):
 

@@ -60,6 +60,11 @@ C3B installs localhost-only x11vnc + noVNC (`127.0.0.1:6080`). That is **not** a
 - Never use `auth_mode=open` as the production takeover mechanism.
 - Tunnel URLs/credentials are sensitive; do not log them.
 
+C3B Chrome runs as dedicated non-root user `flok-ui` (uid 1500). The DnD
+Devbox remains root so Docker-in-Docker still works. `--no-sandbox` is not
+used. Browser profile `/home/user/flok/.browser/profile` is `700` and owned by
+`flok-ui`. x11vnc/noVNC bind `127.0.0.1` only.
+
 Later (C7): single-use, short-lived signed URL. Never exposes provider credentials.
 
 ## Provider secrets

@@ -23,6 +23,11 @@ export const LOCAL_NOVNC_URL = "http://127.0.0.1:6080/";
 export const MAX_TYPE_CHARS = 2000;
 export const MAX_WAIT_MS = 10_000;
 export const DEFAULT_INTERACTIVE_BLUEPRINT = "flok-runloop-interactive";
+/** Non-root user that owns Xvfb/Openbox/Chrome/x11vnc/noVNC. DnD stays root. */
+export const FLOK_UI_USER = "flok-ui";
+export const FLOK_UI_HOME = "/home/flok-ui";
+export const FLOK_UI_UID = 1500;
+export const FLOK_UI_XDG_RUNTIME = `/run/user/${FLOK_UI_UID}`;
 
 export const ALLOWED_APPS = new Set(["browser", "chromium", "chrome", "google-chrome"]);
 
@@ -140,10 +145,61 @@ export function pngDimensions(png: Buffer): { width: number; height: number } | 
   return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
 }
 
+export type BlueprintBuildPhase = "pending" | "success" | "failure";
+
+/**
+ * Runloop Blueprint `status` is queued | provisioning | building | failed | build_complete.
+ * Docs also mention build_failed as a failure_reason (and sometimes as a status alias).
+ */
+export function classifyBlueprintBuildStatus(status: string): BlueprintBuildPhase {
+  switch (status) {
+    case "queued":
+    case "provisioning":
+    case "building":
+      return "pending";
+    case "build_complete":
+      return "success";
+    case "failed":
+    case "build_failed":
+      return "failure";
+    default:
+      return "failure";
+  }
+}
+
+/** Prefix argv so a Devbox-root exec drops to flok-ui. No shell concatenation. */
+export function argvAsUiUser(argv: string[]): string[] {
+  return [
+    "runuser",
+    "-u",
+    FLOK_UI_USER,
+    "--",
+    "env",
+    `DISPLAY=${FLOK_DISPLAY}`,
+    `HOME=${FLOK_UI_HOME}`,
+    `XDG_RUNTIME_DIR=${FLOK_UI_XDG_RUNTIME}`,
+    ...argv,
+  ];
+}
+
+/** Chrome argv as flok-ui. Sandbox preserved: never add --no-sandbox. */
+export function chromeLaunchArgv(url: string): string[] {
+  return argvAsUiUser([
+    "google-chrome-stable",
+    `--user-data-dir=${BROWSER_PROFILE_DIR}`,
+    `--window-size=${DISPLAY_WIDTH},${DISPLAY_HEIGHT}`,
+    "--window-position=0,0",
+    `--app=${url}`,
+    "--no-first-run",
+    "--disable-sync",
+  ]);
+}
+
 /**
  * Guest-side stack starter. Written onto the Devbox at ensure time.
  * If Xvfb is absent (generic C3A Ubuntu Blueprint) this exits 0 so compute
  * provision/resume still succeed. observe/act then fail on screenshot/input.
+ * Graphical processes run as flok-ui; refuse to start Chrome as root.
  */
 export const ENSURE_INTERACTIVE_SH = `#!/bin/bash
 set -euo pipefail
@@ -154,12 +210,35 @@ DEPTH="\${FLOK_DISPLAY_DEPTH:-24}"
 PROFILE="\${FLOK_BROWSER_PROFILE:-/home/user/flok/.browser/profile}"
 RUNDIR="/tmp/flok-interactive"
 NOVNC_PORT="\${FLOK_NOVNC_PORT:-6080}"
+UI_USER="\${FLOK_UI_USER:-${FLOK_UI_USER}}"
+UI_HOME="\${FLOK_UI_HOME:-${FLOK_UI_HOME}}"
+UI_UID="\${FLOK_UI_UID:-${FLOK_UI_UID}}"
+XDG_RUNTIME_DIR="/run/user/\${UI_UID}"
+
 mkdir -p "$RUNDIR" "$PROFILE" /home/user/flok/.flok /home/user/flok/.browser
 
 if ! command -v Xvfb >/dev/null 2>&1; then
   echo "ok missing-xvfb profile=$PROFILE"
   exit 0
 fi
+
+if ! id -u "$UI_USER" >/dev/null 2>&1; then
+  echo "flok-ui user missing; refuse to start Chrome as root" >&2
+  exit 1
+fi
+if ! command -v runuser >/dev/null 2>&1; then
+  echo "runuser missing; refuse to start graphical stack as root" >&2
+  exit 1
+fi
+
+mkdir -p "$XDG_RUNTIME_DIR" /tmp/.X11-unix
+chown "$UI_USER:$UI_USER" "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+chmod 1777 /tmp/.X11-unix || true
+chown "$UI_USER:$UI_USER" "$RUNDIR" || true
+chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser /home/user/flok/.flok
+chmod 700 /home/user/flok/.browser
+chmod 775 /home/user/flok/.flok /home/user/flok || true
 
 alive() {
   local pf="$1"
@@ -173,23 +252,36 @@ alive() {
   return 1
 }
 
-# Suspend kills Chrome but leaves SingletonLock on disk.
-if ! pgrep -f -- "--user-data-dir=\${PROFILE}" >/dev/null 2>&1; then
+start_ui() {
+  local name="$1"
+  shift
+  local pidfile="$RUNDIR/\${name}.pid"
+  local logfile="/tmp/flok-\${name}.log"
+  local pid
+  pid="\$(
+    runuser -u "$UI_USER" -- env \\
+      DISPLAY="$DISPLAY" \\
+      HOME="$UI_HOME" \\
+      XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \\
+      sh -c 'log="$1"; shift; nohup "$@" >>"$log" 2>&1 & echo $!' sh "$logfile" "$@"
+  )"
+  echo "$pid" > "$pidfile"
+}
+
+if ! pgrep -u "$UI_USER" -f -- "--user-data-dir=\${PROFILE}" >/dev/null 2>&1; then
   rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonSocket" "$PROFILE/SingletonCookie"
 fi
 
 if ! alive "$RUNDIR/xvfb.pid"; then
-  Xvfb "$DISPLAY" -screen 0 "\${WIDTH}x\${HEIGHT}x\${DEPTH}" -nolisten tcp >/tmp/flok-xvfb.log 2>&1 &
-  echo $! > "$RUNDIR/xvfb.pid"
+  rm -f /tmp/.X11-unix/X99 /tmp/.X99-lock
+  start_ui xvfb Xvfb "$DISPLAY" -screen 0 "\${WIDTH}x\${HEIGHT}x\${DEPTH}" -nolisten tcp
   sleep 0.4
 fi
 if ! alive "$RUNDIR/openbox.pid"; then
-  DISPLAY="$DISPLAY" openbox >/tmp/flok-openbox.log 2>&1 &
-  echo $! > "$RUNDIR/openbox.pid"
+  start_ui openbox openbox
 fi
 if command -v x11vnc >/dev/null 2>&1 && ! alive "$RUNDIR/x11vnc.pid"; then
-  x11vnc -display "$DISPLAY" -localhost -nopw -forever -shared -rfbport 5900 >/tmp/flok-x11vnc.log 2>&1 &
-  echo $! > "$RUNDIR/x11vnc.pid"
+  start_ui x11vnc x11vnc -display "$DISPLAY" -localhost -nopw -forever -shared -rfbport 5900
 fi
 if command -v websockify >/dev/null 2>&1 && ! alive "$RUNDIR/novnc.pid"; then
   WEB=""
@@ -197,11 +289,10 @@ if command -v websockify >/dev/null 2>&1 && ! alive "$RUNDIR/novnc.pid"; then
     if [ -d "$d" ]; then WEB="$d"; break; fi
   done
   if [ -n "$WEB" ]; then
-    websockify --web "$WEB" "127.0.0.1:\${NOVNC_PORT}" 127.0.0.1:5900 >/tmp/flok-novnc.log 2>&1 &
-    echo $! > "$RUNDIR/novnc.pid"
+    start_ui novnc websockify --web "$WEB" "127.0.0.1:\${NOVNC_PORT}" 127.0.0.1:5900
   fi
 fi
-echo "ok display=$DISPLAY profile=$PROFILE"
+echo "ok display=$DISPLAY profile=$PROFILE ui=$UI_USER"
 `;
 
 export const FIXTURE_HTML = `<!DOCTYPE html>
