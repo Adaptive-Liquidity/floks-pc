@@ -6,6 +6,8 @@
  * RUNLOOP_API_KEY must never appear in create env, exec env, or guest files.
  */
 
+import type { Action } from "../types.js";
+
 export const RUNLOOP_WORKSPACE_ROOT = "/home/user/flok";
 export const RUNLOOP_PROVIDER_NAME = "runloop" as const;
 export const DEFAULT_RUNLOOP_BLUEPRINT =
@@ -88,6 +90,12 @@ export interface RunloopDevboxSession {
   fsCopy(from: string, to: string): Promise<RunloopFsResult>;
 
   snapshotDisk(name: string): Promise<string>;
+
+  /** C3B: start or no-op restart of display/WM/VNC. Idempotent. */
+  ensureInteractiveStack(): Promise<void>;
+  screenshot(): Promise<{ width: number; height: number; png: Buffer; activeWindow?: string }>;
+  novncLocalOk(): Promise<boolean>;
+  uiAction(action: Action): Promise<void>;
 }
 
 export interface RunloopControlPlane {

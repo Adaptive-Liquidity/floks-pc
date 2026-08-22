@@ -42,7 +42,7 @@ describe("RunloopProvider (no network)", () => {
     assert.equal(caps.forks, true);
     assert.equal(caps.customImages, true);
     assert.equal(caps.networkPolicy, true);
-    assert.equal(caps.computerUse, false);
+    assert.equal(caps.computerUse, true);
     assert.equal(caps.vnc, false);
     assert.equal(caps.accessibility, false);
   });
@@ -177,17 +177,13 @@ describe("RunloopProvider (no network)", () => {
     assert.equal(r.data, "hello-runloop");
   });
 
-  it("observe / act / takeover are C3B not implemented", async () => {
+  it("observe returns screenshot; takeover stays fail-closed", async () => {
     const p = provider();
     const a = await p.provision({ birdId: "c3b", flockId: "f" });
-    await assert.rejects(
-      () => p.observe(a.providerRef, { includeScreenshot: true }),
-      (err: unknown) => err instanceof ComputerUseNotAvailable,
-    );
-    await assert.rejects(
-      () => p.act(a.providerRef, { actions: [] }),
-      (err: unknown) => err instanceof ComputerUseNotAvailable,
-    );
+    const obs = await p.observe(a.providerRef, { includeScreenshot: true });
+    assert.equal(obs.screenWidth, 1440);
+    assert.equal(obs.screenHeight, 900);
+    assert.ok(obs.screenshotBase64 && obs.screenshotBase64.length > 10);
     await assert.rejects(
       () => p.takeover(a.providerRef),
       (err: unknown) => err instanceof ComputerUseNotAvailable,

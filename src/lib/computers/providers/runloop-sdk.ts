@@ -7,6 +7,19 @@ import { RunloopSDK } from "@runloop/api-client";
 import { posix as pathPosix } from "node:path";
 import { ProviderUnavailable } from "../errors.js";
 import { assertInsideRoot } from "../path.js";
+import type { Action } from "../types.js";
+import {
+  BROWSER_PROFILE_DIR,
+  DISPLAY_HEIGHT,
+  DISPLAY_WIDTH,
+  ENSURE_INTERACTIVE_SH,
+  ENSURE_SCRIPT_PATH,
+  FIXTURE_HTML,
+  FIXTURE_PATH,
+  FLOK_DISPLAY,
+  OBS_SHOT_PATH,
+  pngDimensions,
+} from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
   DEFAULT_RUNLOOP_ARCH,
@@ -325,6 +338,150 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   async snapshotDisk(name: string): Promise<string> {
     const snap = await this.box.snapshotDisk({ name });
     return snap.id;
+  }
+
+  async ensureInteractiveStack(): Promise<void> {
+    await this.fsMkdir(pathPosix.dirname(ENSURE_SCRIPT_PATH));
+    await this.fsWrite(ENSURE_SCRIPT_PATH, Buffer.from(ENSURE_INTERACTIVE_SH, "utf8"));
+    await this.fsWrite(FIXTURE_PATH, Buffer.from(FIXTURE_HTML, "utf8"));
+    await this.fsMkdir(BROWSER_PROFILE_DIR);
+    const r = await this.exec({
+      argv: ["bash", ENSURE_SCRIPT_PATH],
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      timeoutMs: 20_000,
+    });
+    if (r.exitCode !== 0) {
+      throw new ProviderUnavailable(
+        "runloop",
+        `ensureInteractiveStack failed: ${r.stderr || r.stdout}`,
+      );
+    }
+  }
+
+  async screenshot(): Promise<{
+    width: number;
+    height: number;
+    png: Buffer;
+    activeWindow?: string;
+  }> {
+    await this.fsMkdir(pathPosix.dirname(OBS_SHOT_PATH));
+    const shot = await this.exec({
+      argv: ["import", "-display", FLOK_DISPLAY, "-window", "root", OBS_SHOT_PATH],
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      env: { DISPLAY: FLOK_DISPLAY },
+      timeoutMs: 15_000,
+    });
+    if (shot.exitCode !== 0) {
+      throw new ProviderUnavailable("runloop", `screenshot failed: ${shot.stderr}`);
+    }
+    const file = await this.fsRead(OBS_SHOT_PATH);
+    await this.fsDelete(OBS_SHOT_PATH).catch(() => undefined);
+    if (!file.ok || !file.data) {
+      throw new ProviderUnavailable("runloop", "screenshot read failed");
+    }
+    const dims = pngDimensions(file.data);
+    let activeWindow: string | undefined;
+    const win = await this.exec({
+      argv: ["xdotool", "getactivewindow", "getwindowname"],
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      env: { DISPLAY: FLOK_DISPLAY },
+      timeoutMs: 5_000,
+    });
+    if (win.exitCode === 0 && win.stdout.trim()) activeWindow = win.stdout.trim();
+    const out: { width: number; height: number; png: Buffer; activeWindow?: string } = {
+      width: dims?.width ?? DISPLAY_WIDTH,
+      height: dims?.height ?? DISPLAY_HEIGHT,
+      png: file.data,
+    };
+    if (activeWindow) out.activeWindow = activeWindow;
+    return out;
+  }
+
+  async novncLocalOk(): Promise<boolean> {
+    const r = await this.exec({
+      argv: [
+        "python3",
+        "-c",
+        "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6080/', timeout=2); print('ok')",
+      ],
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      timeoutMs: 5_000,
+    });
+    return r.exitCode === 0 && r.stdout.includes("ok");
+  }
+
+  async uiAction(action: Action): Promise<void> {
+    const env = { DISPLAY: FLOK_DISPLAY };
+    let argv: string[];
+    switch (action.type) {
+      case "click_coordinates":
+        argv = ["xdotool", "mousemove", String(action.x), String(action.y), "click", "1"];
+        break;
+      case "type":
+        argv = ["xdotool", "type", "--", action.text ?? ""];
+        break;
+      case "key":
+        argv = ["xdotool", "key", "--", action.key ?? ""];
+        break;
+      case "scroll": {
+        const dy = action.y ?? 0;
+        const button = dy < 0 ? "4" : "5";
+        const n = Math.min(20, Math.max(1, Math.abs(dy) || 1));
+        argv = ["xdotool", "click", "--repeat", String(n), button];
+        break;
+      }
+      case "wait":
+        argv = ["sleep", String((action.durationMs ?? 100) / 1000)];
+        break;
+      case "open_url":
+      case "launch_application": {
+        const url =
+          action.type === "open_url"
+            ? (action.url ?? `file://${FIXTURE_PATH}`)
+            : `file://${FIXTURE_PATH}`;
+        // Detach so exec returning does not SIGHUP Chrome. No --no-sandbox.
+        const chromeCode = [
+          "import subprocess,sys",
+          "subprocess.Popen(sys.argv[1:], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)",
+          "print('launched')",
+          "",
+        ].join("\n");
+        argv = [
+          "python3",
+          "-c",
+          chromeCode,
+          "google-chrome-stable",
+          `--user-data-dir=${BROWSER_PROFILE_DIR}`,
+          `--window-size=${DISPLAY_WIDTH},${DISPLAY_HEIGHT}`,
+          "--window-position=0,0",
+          `--app=${url}`,
+          "--no-first-run",
+          "--disable-sync",
+        ];
+        break;
+      }
+      default:
+        throw new Error(`unsupported action ${action.type}`);
+    }
+    const r = await this.exec({
+      argv,
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      env,
+      timeoutMs: 20_000,
+    });
+    if (action.type === "open_url" || action.type === "launch_application") {
+      // Python Popen returns immediately; non-zero means spawn failed (missing binary, etc.).
+      if (r.exitCode !== 0) {
+        throw new ProviderUnavailable(
+          "runloop",
+          r.stderr || r.stdout || "chrome launch failed",
+        );
+      }
+      return;
+    }
+    if (r.exitCode !== 0 && !r.timedOut) {
+      throw new ProviderUnavailable("runloop", r.stderr || `uiAction ${action.type} failed`);
+    }
   }
 
   private async enforceResolved(path: string): Promise<RunloopFsResult> {

@@ -1,0 +1,47 @@
+# Manual Runloop C3B interactive live tests.
+# workflow_dispatch only. Burns trial credits. Do not add to PR CI.
+name: runloop-c3b
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: runloop-c3b
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  runloop-c3b-live:
+    name: Runloop interactive live test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      RUNLOOP_API_KEY: ${{ secrets.RUNLOOP_API_KEY }}
+      FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT: ${{ vars.FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT || secrets.FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT }}
+      FLOK_RUNLOOP_BLUEPRINT: ${{ vars.FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT || secrets.FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22.16"
+          cache: npm
+      - run: npm ci
+      - name: Verify Runloop configuration
+        run: |
+          if [ -z "$RUNLOOP_API_KEY" ]; then
+            echo "RUNLOOP_API_KEY is missing (must FAIL, not skip)"
+            exit 1
+          fi
+          if [ -z "$FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT" ] && [ -z "$FLOK_RUNLOOP_BLUEPRINT" ]; then
+            echo "FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT is missing (must FAIL, not skip)"
+            exit 1
+          fi
+          echo "C3B blueprint configured"
+      - name: Run C3B live tests
+        env:
+          FLOK_LIVE_RUNLOOP_C3B_TEST: "1"
+        run: npm run test:live:runloop-c3b

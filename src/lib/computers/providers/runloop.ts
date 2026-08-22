@@ -6,7 +6,7 @@
  * Shell mode is rejected. Filesystem is jailed to /home/user/flok.
  *
  * Suspend preserves disk, not RAM (pauseMemory: false).
- * Native Computer Use / VNC are C3B — not claimed here.
+ * C3B: screenshot + bounded input on a private display. takeover/vnc stay fail-closed.
  */
 
 import { posix as pathPosix } from "node:path";
@@ -30,6 +30,7 @@ import type {
 } from "../types.js";
 import { ComputerError, PathEscape, ProviderUnavailable } from "../errors.js";
 import { assertInsideRoot } from "../path.js";
+import { validateAction } from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
   DEFAULT_RUNLOOP_ARCH,
@@ -54,11 +55,10 @@ export class RunloopBlueprintRequired extends ComputerError {
 }
 
 export class ComputerUseNotAvailable extends ComputerError {
-  constructor() {
-    super(
-      "C3B_NOT_IMPLEMENTED",
-      "Interactive computer layer is C3B; Runloop C3A has no native Computer Use/VNC",
-    );
+  constructor(
+    detail = "Secure human takeover is not enabled; local noVNC stays on 127.0.0.1",
+  ) {
+    super("C3B_TAKEOVER_UNAVAILABLE", detail);
     this.name = "ComputerUseNotAvailable";
   }
 }
@@ -119,7 +119,7 @@ export class RunloopProvider implements ComputerProvider {
     return {
       linuxVm: true,
       windowsVm: false,
-      computerUse: false,
+      computerUse: true,
       accessibility: false,
       vnc: false,
       pauseMemory: false,
@@ -138,6 +138,7 @@ export class RunloopProvider implements ComputerProvider {
     const session = await this.plane.create(params);
     this.sessions.set(session.id, session);
     await session.fsMkdir(RUNLOOP_WORKSPACE_ROOT).catch(() => undefined);
+    await session.ensureInteractiveStack();
     return { providerRef: session.id, status: "ready" };
   }
 
@@ -157,6 +158,7 @@ export class RunloopProvider implements ComputerProvider {
   async wake(ref: string): Promise<void> {
     const s = await this.requireSession(ref);
     await s.resume();
+    await s.ensureInteractiveStack();
   }
 
   async pause(ref: string): Promise<void> {
@@ -335,12 +337,49 @@ export class RunloopProvider implements ComputerProvider {
     }
   }
 
-  async observe(_ref: string, _request: ObserveRequest): Promise<Observation> {
-    throw new ComputerUseNotAvailable();
+  async observe(ref: string, request: ObserveRequest): Promise<Observation> {
+    const s = await this.requireSession(ref);
+    await s.ensureInteractiveStack();
+    if (request.includeAccessibility) {
+      throw new ComputerUseNotAvailable("accessibility addressing is not implemented");
+    }
+    const shot = await s.screenshot();
+    const obs: Observation = {
+      screenWidth: shot.width,
+      screenHeight: shot.height,
+    };
+    if (shot.activeWindow) obs.activeWindow = shot.activeWindow;
+    if (request.includeScreenshot !== false) {
+      obs.screenshotBase64 = shot.png.toString("base64");
+    }
+    return obs;
   }
 
-  async act(_ref: string, _request: ActionBatch): Promise<ActionResult> {
-    throw new ComputerUseNotAvailable();
+  async act(ref: string, request: ActionBatch): Promise<ActionResult> {
+    const s = await this.requireSession(ref);
+    await s.ensureInteractiveStack();
+    const results: ActionResult["results"] = [];
+    let ok = true;
+    for (const action of request.actions) {
+      const err = validateAction(action);
+      if (err) {
+        ok = false;
+        results.push({ action, success: false, error: err });
+        continue;
+      }
+      try {
+        await s.uiAction(action);
+        results.push({ action, success: true });
+      } catch (e) {
+        ok = false;
+        results.push({
+          action,
+          success: false,
+          error: e instanceof Error ? e.message : "action failed",
+        });
+      }
+    }
+    return { ok, results };
   }
 
   async takeover(_ref: string): Promise<TakeoverGrant> {
@@ -375,6 +414,7 @@ export class RunloopProvider implements ComputerProvider {
     };
     const session = await this.plane.restore(request.providerSnapshotRef, params);
     this.sessions.set(session.id, session);
+    await session.ensureInteractiveStack();
     return { providerRef: session.id, status: "ready" };
   }
 
