@@ -1,5 +1,5 @@
 # Non-paid verification for Adaptive-Liquidity/floks-pc.
-# `verify` does NOT run Daytona live tests.
+# `verify` does NOT run Daytona live tests (paid).
 # `docker-c2` runs live Docker isolation on a GitHub-hosted ubuntu-24.04 runner.
 name: verify
 

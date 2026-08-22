@@ -14,16 +14,18 @@
     "test:providers": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/providers/**/*.test.ts",
     "test:live": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/live/**/*.test.ts",
     "test:live:docker": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/providers/docker-dev.isolation.test.ts",
+    "test:live:daytona": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/providers/daytona.isolation.test.ts tests/live/daytona.live.test.ts",
     "build": "tsc",
     "verify": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
+    "@daytona/sdk": "0.205.1",
     "zod": "^4.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.16.5",
-    "typescript": "^5.7.0",
-    "tsx": "^4.19.0"
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
   },
   "exports": {
     ".": "./src/index.ts",
