@@ -634,6 +634,58 @@ describe("C5 MCP gateway", () => {
     assert.equal((other.result as { isError: boolean }).isError, false);
   });
 
+  it("unvalidated Bearer values do not mint distinct pair-throttle identities", async () => {
+    const server = createServer((req, res) => {
+      void handleMcpHttp(req, res, { gateway, path: MCP_PATH });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address();
+    assert.ok(addr && typeof addr === "object");
+    const base = `http://127.0.0.1:${addr.port}${MCP_PATH}`;
+    try {
+      for (let i = 0; i < MCP_PAIR_CONNECTION_FAILURE_LIMIT; i += 1) {
+        const res = await fetch(base, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer rot-${i}`,
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: i,
+            method: "tools/call",
+            params: {
+              name: "computer_pair",
+              arguments: { pair_code: `NOPE-${i}`, bird_id: `bird-rot-http-${i}`, flock_id: FLOCK },
+            },
+          }),
+        });
+        const json = (await res.json()) as { result: { structuredContent: { code: string } } };
+        assert.equal(json.result.structuredContent.code, "PAIR_CODE_INVALID");
+      }
+      const blocked = await fetch(base, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer rot-fresh",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 99,
+          method: "tools/call",
+          params: {
+            name: "computer_pair",
+            arguments: { pair_code: "NOPE-FRESH", bird_id: "bird-rot-http-x", flock_id: FLOCK },
+          },
+        }),
+      });
+      const blockedJson = (await blocked.json()) as { result: { structuredContent: { code: string } } };
+      assert.equal(blockedJson.result.structuredContent.code, "PAIR_THROTTLED");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+    }
+  });
+
   it("parseBearer accepts only the Bearer scheme", () => {
     assert.equal(parseBearer(undefined), undefined);
     assert.equal(parseBearer("wrapper-secret"), undefined);
@@ -749,6 +801,35 @@ describe("C5 MCP gateway", () => {
       assert.equal(text.includes("capability_token"), false);
       assert.equal(text.includes("FakeProvider"), false);
       assert.equal(text.includes("stack"), false);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+    }
+  });
+
+  it("unexpected throw on a JSON-RPC notification does not emit a JSON-RPC response", async () => {
+    class BoomGateway extends McpGateway {
+      override async handleJsonRpc(): Promise<null> {
+        throw new Error("notification boom");
+      }
+    }
+    const boom = new BoomGateway(service, { logger });
+    const server = createServer((req, res) => {
+      void handleMcpHttp(req, res, { gateway: boom, path: MCP_PATH });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address();
+    assert.ok(addr && typeof addr === "object");
+    const base = `http://127.0.0.1:${addr.port}${MCP_PATH}`;
+    try {
+      const res = await fetch(base, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      });
+      assert.equal(res.status, 202);
+      const text = await res.text();
+      assert.equal(text.length, 0);
+      assert.equal(text.includes("jsonrpc"), false);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
     }

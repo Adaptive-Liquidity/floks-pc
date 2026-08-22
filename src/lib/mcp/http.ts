@@ -53,15 +53,32 @@ export async function handleMcpHttp(
   opts: McpHttpOptions,
 ): Promise<void> {
   let rpcId: string | number | null = null;
+  let notification = false;
   try {
-    await handleMcpHttpInner(req, res, opts, (id) => {
-      rpcId = id;
+    await handleMcpHttpInner(req, res, opts, {
+      noteId: (id) => {
+        rpcId = id;
+      },
+      noteNotification: () => {
+        notification = true;
+      },
     });
   } catch {
     try {
       opts.logger?.error("mcp.http_internal", {});
     } catch {
       /* never let logging block the sanitized 500 */
+    }
+    if (notification) {
+      if (!res.writableEnded) {
+        try {
+          res.statusCode = 202;
+          res.end();
+        } catch {
+          /* client already gone */
+        }
+      }
+      return;
     }
     endUnhandledMcpError(res, rpcId);
   }
@@ -71,7 +88,10 @@ async function handleMcpHttpInner(
   req: IncomingMessage,
   res: ServerResponse,
   opts: McpHttpOptions,
-  noteId: (id: string | number) => void,
+  notes: {
+    noteId: (id: string | number) => void;
+    noteNotification: () => void;
+  },
 ): Promise<void> {
   const path = opts.path ?? MCP_PATH;
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -155,7 +175,8 @@ async function handleMcpHttpInner(
   }
 
   const parsedId = jsonRpcIdOf(parsed);
-  if (parsedId !== undefined) noteId(parsedId);
+  if (parsedId !== undefined) notes.noteId(parsedId);
+  else if (isJsonRpcNotificationShape(parsed)) notes.noteNotification();
 
   const ctx: McpRequestContext = {};
   // Only use bearer-keyed identity when wrapper auth is configured and the
@@ -198,6 +219,11 @@ function jsonRpcIdOf(parsed: unknown): string | number | undefined {
   const id = (parsed as { id?: unknown }).id;
   if (typeof id === "string" || typeof id === "number") return id;
   return undefined;
+}
+
+function isJsonRpcNotificationShape(parsed: unknown): boolean {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+  return !("id" in parsed) || (parsed as { id?: unknown }).id === undefined;
 }
 
 function protocolFromRpc(

@@ -122,6 +122,7 @@ function throwThrottled(): never {
   });
 }
 
+/** `authorization` must be a server-validated wrapper Bearer, never a client-claimed token. */
 export function connectionIdentityFromAuth(
   authorization: string | undefined,
   remoteAddress: string | undefined,
