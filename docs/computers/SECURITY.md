@@ -34,7 +34,7 @@
 - Cross-Node use is rejected (`CROSS_NODE_DENIED`) even when both Bots share the same account MCP connection.
 - Deleting a computer revokes its capabilities and burns outstanding pair codes.
 
-C5 (MCP gateway) is not implemented here. C5 tools must call `ComputerService` — never a provider, never skip the capability check.
+C5 (MCP gateway) tools call `ComputerService` — never a provider, never skip the capability check. MCP wrapper auth and session IDs are not Bot identity. Pairing is throttled per MCP connection (wrapper bearer digest or unauth+IP). See `docs/computers/MCP.md`.
 
 ## Path jail
 

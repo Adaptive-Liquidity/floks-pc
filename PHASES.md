@@ -212,7 +212,7 @@ C3B remains closed. C4 implements only the **internal** capability layer. Do not
 
 Valid NOEMA capability cannot access Code’s machine even when both Bots share the same account-level MCP connection.
 
-**Status:** IMPLEMENTED (2026-08-22). Unpaid gate tests green. Do not merge until explicit approval.
+**Status:** CLOSED / PASSED (2026-08-22). Merged in [Adaptive-Liquidity/floks-pc#6](https://github.com/Adaptive-Liquidity/floks-pc/pull/6) (`1fcedac`).
 
 **Evidence**
 - Branch: `feat/c4-pairing-capabilities`
@@ -236,7 +236,10 @@ Valid NOEMA capability cannot access Code’s machine even when both Bots share 
 
 **Goal:** Single `POST /mcp` endpoint, Streamable HTTP, 2026-07-28 preferred, eight tools only.
 
+C4 remains closed. C5 is the public Bot surface. Do not start C6/C7/C8. Do not add Nexus/AEON/Graphiti. Do not dispatch paid Runloop. Do not deploy publicly unless explicitly approved.
+
 ### Tools
+
 ```
 computer_pair
 computer_status
@@ -248,8 +251,49 @@ handoff_send
 handoff_receive
 ```
 
+### Implement
+
+- Streamable HTTP `POST /mcp` (stateless 2026-07-28 + 2025-era `initialize` compatibility)
+- Eight tools only; each Bot-facing computer tool calls `ComputerService` (never a provider)
+- Capability token is the post-pair authorization/routing credential
+- MCP session ID and shared xAI account auth are not Bot identity and do not authorize computer access
+- `computer_pair` throttled per MCP connection (wrapper bearer digest or unauth+IP)
+- Handoffs listed then fail closed (`PHASE_NOT_STARTED`, C9)
+- Redacting logger: no pair codes, capability tokens, or provider keys
+
+### Non-goals (do not invent)
+
+- C6 shell/coding-exercise productization
+- C7 VNC / public takeover
+- C8 checkpoints
+- C9 real handoffs
+- Public deployment
+- Paid Runloop live tests
+- Nexus / AEON / Graphiti
+- Reuse of `~/flok/token` as compute authority
+
 ### Gate C5
-Real Grok Bot can pair → status → exec → read/write file through the public endpoint.
+
+A real Grok Bot can pair → status → exec → read/write file through the public endpoint.
+
+**Status:** IMPLEMENTED (2026-08-22) for the unpaid protocol + capability gate (FakeProvider, in-process / loopback HTTP). Real Grok Bot through a public HTTPS URL remains **manual** and is **not** claimed here. Do not merge until explicit approval.
+
+**Evidence**
+- Branch: `feat/c5-mcp-gateway`
+- Base: `main` after [Adaptive-Liquidity/floks-pc#6](https://github.com/Adaptive-Liquidity/floks-pc/pull/6) (`1fcedac`)
+- Unpaid: `npm run typecheck` + `npm test` + `npm run build` + `npm run verify` — **155 pass / 0 fail** (22 C5)
+- Paid Runloop: **not required** and **not run**
+- Isolation: zero writes under Floks-main
+- Nexus / graph flags remain false
+- C3B preserved: `computerUse: true`, `accessibility: false`, `vnc: false`, `pauseMemory: false`
+- Docs: `docs/computers/MCP.md`
+
+**Known limitations (not unpaid C5 blockers)**
+- In-memory ComputerService store (persistence later)
+- Handoffs are C9 (`PHASE_NOT_STARTED`)
+- Official MCP SDK not vendored; tools-only JSON-RPC Streamable HTTP is implemented in-tree
+- Real Grok Bot requires an approved public HTTPS `POST /mcp` URL (`FLOK_MCP_PUBLIC_URL`) plus a pair code issued for that Bot
+- Wrapper `FLOK_MCP_AUTH_TOKEN` is connection auth, not Bot identity
 
 ---
 
