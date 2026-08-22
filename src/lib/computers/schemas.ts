@@ -35,7 +35,7 @@ export const ComputerSchema = z.object({
   id: z.string().min(1),
   birdId: z.string().min(1),
   flockId: z.string().min(1),
-  provider: z.enum(["fake", "docker-dev", "daytona"]),
+  provider: z.enum(["fake", "docker-dev", "runloop"]),
   providerRef: z.string().nullable(),
   state: ComputerStateSchema,
   osType: OsTypeSchema,

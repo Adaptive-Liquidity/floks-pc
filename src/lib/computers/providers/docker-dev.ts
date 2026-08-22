@@ -2,7 +2,7 @@
  * DockerDevProvider — local-integration ComputerProvider.
  * One container + one named volume per Node. DEV ONLY.
  * Forbidden when NODE_ENV=production. Not a production isolation boundary
- * (shared kernel). Production isolation is a VM (Daytona / later Kata).
+ * (shared kernel). Production isolation is a VM (Runloop Devboxes / later Kata).
  *
  * Zero extra deps: docker CLI via argv[] only. No shell interpolation.
  */

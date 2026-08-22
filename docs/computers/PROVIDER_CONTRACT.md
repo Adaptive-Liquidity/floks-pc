@@ -9,7 +9,7 @@ ComputerService
       ↓
 ComputerProvider   ← only interface that talks to compute
       ↓
-Fake | DockerDev | Daytona | Kata
+Fake | DockerDev | Runloop | Kata
 ```
 
 No route or MCP tool may import or call a concrete provider.
@@ -18,7 +18,7 @@ No route or MCP tool may import or call a concrete provider.
 
 ```ts
 interface ComputerProvider {
-  readonly name: ComputerProviderName; // "fake" | "docker-dev" | "daytona" (C3)
+  readonly name: ComputerProviderName; // "fake" | "docker-dev" | "runloop" (C3)
 
   capabilities(): ProviderCapabilities;
 
@@ -69,18 +69,21 @@ interface ProviderCapabilities {
 |--------------|-----------------------|--------------------|--------------|-----------|--------------------------------|
 | Fake         | Unit / contract tests | In-memory          | Simulated    | Simulated | Injectable failures            |
 | DockerDev    | Local integration     | Container + volume | No           | Volume    | Forbidden when NODE_ENV=production |
-| Daytona      | Production v1         | Linux VM           | Yes          | Yes       | Official `@daytona/sdk`        |
+| Runloop      | Production v1         | Devbox (C3A)       | Disk only    | Yes       | Official `@runloop/api-client` 1.28.0 |
 | Kata         | Self-host (Phase 13)  | Kata + Firecracker | Yes          | Yes       | High density                   |
 
-## Daytona notes (for Phase 3)
+## Runloop notes (Phase 3 / C3A)
 
-- Package: `@daytona/sdk`
-- Prefer **Linux VM** class (not basic container) for memory-preserving pause/resume, hot snapshots, and forks.
-- Computer Use: `computer_use.start()`, mouse/keyboard/screenshot, accessibility tree (AT-SPI).
-- VNC / noVNC for human takeover.
-- Control plane for lifecycle; Toolbox API inside the sandbox for fs/process/computer_use.
-- Constraint: VM sandboxes are currently created from existing VM snapshots → base-image / snapshot pipeline is required before live tests.
-- Auth: `DAYTONA_API_KEY`. Never place the key inside a Node or log it.
+- Package: `@runloop/api-client@1.28.0` via **RunloopSDK** (not the legacy client).
+- Default blueprint: `runloop/universal-ubuntu-24.04-x86_64-dnd`, architecture `x86_64`.
+- Workspace jail: `/home/user/flok`.
+- `pause` is `suspend` — **disk** is preserved, in-memory process state is not (`pauseMemory: false`).
+- `checkpoint` is `snapshotDisk`; restore creates a **new** Devbox from that snapshot (forks supported).
+- argv exec: serialize `{argv,cwd,env}` JSON → base64 → Python `os.execvp`. `mode: "shell"` rejected.
+- Native Computer Use / VNC / accessibility are **C3B**, not claimed on C3A.
+- Auth: `RUNLOOP_API_KEY`. Never place the key inside a Devbox, exec env, log, or MCP response.
+- Do **not** use `runloopai/deploy-agent`. C3 tests Devboxes, not Runloop Agents.
+- Live lifetime: `keep_alive_time_seconds=900`. Do not combine with `lifecycle.after_idle`.
 
 ## MCP notes (for Phase 5)
 

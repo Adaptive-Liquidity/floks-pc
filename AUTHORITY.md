@@ -66,7 +66,7 @@ It provides:
            ┌───────────────────┼────────────────────┐
            │                   │                    │
            ▼                   ▼                    ▼
-     Fake / DockerDev       Daytona VM       Kata / Firecracker
+     Fake / DockerDev       Runloop Devbox    Kata / Firecracker
           DEV              PRODUCTION V1       OWN COMPUTE
                                │
                          one VM per Node
@@ -108,10 +108,10 @@ ComputerService
         ↓
 ComputerProvider   ← only interface that talks to compute
         ↓
-Fake | DockerDev | Daytona | Kata
+Fake | DockerDev | Runloop | Kata
 ```
 
-No route or MCP tool may call Daytona (or any provider) directly.
+No route or MCP tool may call Runloop (or any provider) directly.
 
 ## 6. Feature flags (defaults)
 

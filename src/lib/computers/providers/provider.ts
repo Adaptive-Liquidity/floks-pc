@@ -4,7 +4,7 @@
  * Routes and MCP tools must never call a concrete provider directly.
  * They call ComputerService, which calls this interface.
  *
- * Implementations: Fake (tests), DockerDev (local), Daytona (prod v1),
+ * Implementations: Fake (tests), DockerDev (local), Runloop (prod v1),
  * Kata (self-host later).
  */
 

@@ -39,7 +39,7 @@ Work only on the currently open phase. Nexus-IQ / AEON / Graphiti are **forbidde
 - Domain unit tests under `tests/domain/` (state-machine, service, fake-provider, pairing, path)
 
 ### Non-goals (do not invent)
-- Real network, Docker, Daytona client, MCP server, worker process, S3, Kysely wiring
+- Real network, Docker, paid provider clients, MCP server, worker process, S3, Kysely wiring
 
 ### Gate C1
 - [x] state helpers + tests (legal succeed, illegal throw, deleted terminal) — files present
@@ -90,29 +90,40 @@ Work only on the currently open phase. Nexus-IQ / AEON / Graphiti are **forbidde
 
 ---
 
-## Phase 3 — Daytona production provider  ← CURRENT
+## Phase 3 — Runloop production provider  ← CURRENT
 
-**Goal:** Linux VM class, real lifecycle + exec + fs + observe + act + VNC + checkpoint.
+**Goal:** Runloop Devboxes as production-v1 ComputerProvider. C3A is the compute substrate. C3B (interactive computer / browser / noVNC) is deferred until C3A is green.
 
-### Implement
-- `providers/daytona.ts` — DaytonaProvider (`name: "daytona"`)
-- Linux **VM** snapshot only (not the default container class)
-- Official `@daytona/sdk` (`new Daytona({ apiKey })` → `create()` / `get()`)
-- `DAYTONA_API_KEY` stays in the control plane; never in Node env, workspace, exec env, MCP, or audit
-- argv[] exec (shell mode rejected); path jail at `/home/flok`
-- observe / act via Computer Use; takeover via signed noVNC preview URL
-- checkpoint via `createSnapshot`; restore from snapshot
+### Implement (C3A)
+- `providers/runloop.ts` — RunloopProvider (`name: "runloop"`)
+- Official `@runloop/api-client` **1.28.0** via `RunloopSDK` (not the legacy client, not `runloopai/deploy-agent`)
+- Default blueprint `FLOK_RUNLOOP_BLUEPRINT=runloop/universal-ubuntu-24.04-x86_64-dnd`, arch `x86_64`
+- Workspace jail `/home/user/flok`
+- `RUNLOOP_API_KEY` stays in the control plane; never in Devbox env, workspace, exec env, MCP, or audit
+- argv[] exec (shell mode rejected) via JSON/base64 → Python `os.execvp` wrapper
+- `pause` → `suspend` + `awaitSuspended` (disk preserved, **not** RAM)
+- `wake` → `resume` + `awaitRunning`
+- `stop` / `destroy` → idempotent `shutdown`
+- `checkpoint` → `snapshotDisk`; `restore` creates a new Devbox from the snapshot (forks allowed)
 - Non-live tests with an injected control-plane fake (zero network)
-- Live tests opt-in: `FLOK_LIVE_COMPUTER_TEST=1` — missing key/snapshot **FAILS**, never silent skip
+- Live tests opt-in: `FLOK_LIVE_RUNLOOP_TEST=1` — missing key/blueprint **FAILS**, never silent skip
+
+### C3B (do not implement until C3A is green)
+Chromium + display + noVNC / Browserbase-or-Kernel. Authenticated Runloop tunnels later. Do not add those dependencies now.
 
 ### Non-goals (do not invent)
 - Provider factory, MCP gateway, pairing/capability wiring, worker, Kysely, Nexus/AEON/Graphiti
+- Daytona (removed from the active C3 path)
 
-### Gate C3
-Two live Linux VMs prove different provider IDs, filesystems, browser profiles, process namespaces, independent lifecycle.  
-Live tests are **opt-in only** (`FLOK_LIVE_COMPUTER_TEST=1`). Not part of required PR CI.
+### Gate C3A
+Two live Devboxes prove different provider IDs, isolated filesystems, distinct `boot_id`, independent lifecycle, suspend/resume disk persist, snapshot → forked Devbox with independent mutation, and shutdown of every paid Devbox.
+
+Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` workflow). Not part of required PR CI.
 
 **Status:** OPEN
+
+### Gate C3B
+Deferred. Interactive computer layer after C3A PASS.
 
 ---
 
@@ -223,7 +234,7 @@ All of the following must PASS:
 ## Phase 13 — Self-hosted high-performance compute (optional optimization)
 
 KataProvider + containerd + Kata 4 + Firecracker.  
-Provider parity tests against Fake / DockerDev / Daytona / Kata.
+Provider parity tests against Fake / DockerDev / Runloop / Kata.
 
 ---
 
@@ -260,7 +271,7 @@ memory_context
 memory_remember
 ```
 
-Infrastructure tools (daytona_*, firecracker_*, nexus_*, graphiti_*, postgres_*) remain internal.
+Infrastructure tools (runloop_*, firecracker_*, nexus_*, graphiti_*, postgres_*) remain internal.
 
 ---
 

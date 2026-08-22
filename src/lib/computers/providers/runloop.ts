@@ -1,9 +1,12 @@
 /**
- * DaytonaProvider — production v1 ComputerProvider.
- * Linux VM class only. Official @daytona/sdk behind DaytonaControlPlane.
+ * RunloopProvider — production v1 ComputerProvider (C3A compute substrate).
+ * Official @runloop/api-client RunloopSDK behind RunloopControlPlane.
  *
- * Control-plane secrets (DAYTONA_API_KEY) never enter the guest.
- * Shell mode is rejected. Filesystem is jailed to /home/flok.
+ * Control-plane secrets (RUNLOOP_API_KEY) never enter the guest.
+ * Shell mode is rejected. Filesystem is jailed to /home/user/flok.
+ *
+ * Suspend preserves disk, not RAM (pauseMemory: false).
+ * Native Computer Use / VNC are C3B — not claimed here.
  */
 
 import { posix as pathPosix } from "node:path";
@@ -29,81 +32,97 @@ import { ComputerError, PathEscape, ProviderUnavailable } from "../errors.js";
 import { assertInsideRoot } from "../path.js";
 import {
   assertNoControlPlaneSecrets,
-  DAYTONA_WORKSPACE_ROOT,
-  type DaytonaControlPlane,
-  type DaytonaCreateParams,
-  type DaytonaSandboxSession,
-} from "./daytona-client.js";
-import { MemoryDaytonaControlPlane } from "./daytona-memory.js";
+  DEFAULT_RUNLOOP_ARCH,
+  DEFAULT_RUNLOOP_BLUEPRINT,
+  LIVE_KEEP_ALIVE_SECONDS,
+  RUNLOOP_PROVIDER_NAME,
+  RUNLOOP_WORKSPACE_ROOT,
+  type RunloopControlPlane,
+  type RunloopCreateParams,
+  type RunloopDevboxSession,
+} from "./runloop-client.js";
+import { MemoryRunloopControlPlane } from "./runloop-memory.js";
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const MAX_OUTPUT = 1_000_000;
 
-export const DAYTONA_PROVIDER_NAME = "daytona" as const;
-
-export class DaytonaLinuxVmRequired extends ComputerError {
+export class RunloopBlueprintRequired extends ComputerError {
   constructor(detail: string) {
-    super("DAYTONA_LINUX_VM_REQUIRED", detail);
-    this.name = "DaytonaLinuxVmRequired";
+    super("RUNLOOP_BLUEPRINT_REQUIRED", detail);
+    this.name = "RunloopBlueprintRequired";
   }
 }
 
-export class DaytonaProvider implements ComputerProvider {
-  readonly name = DAYTONA_PROVIDER_NAME;
-  private readonly plane: DaytonaControlPlane;
-  private readonly snapshot: string;
-  private readonly sessions = new Map<string, DaytonaSandboxSession>();
+export class ComputerUseNotAvailable extends ComputerError {
+  constructor() {
+    super(
+      "C3B_NOT_IMPLEMENTED",
+      "Interactive computer layer is C3B; Runloop C3A has no native Computer Use/VNC",
+    );
+    this.name = "ComputerUseNotAvailable";
+  }
+}
+
+export class RunloopProvider implements ComputerProvider {
+  readonly name = RUNLOOP_PROVIDER_NAME;
+  private readonly plane: RunloopControlPlane;
+  private readonly blueprint: string;
+  private readonly keepAliveSeconds: number;
+  private readonly sessions = new Map<string, RunloopDevboxSession>();
 
   constructor(opts?: {
-    client?: DaytonaControlPlane;
-    snapshot?: string;
+    client?: RunloopControlPlane;
+    blueprint?: string;
     apiKey?: string;
+    keepAliveSeconds?: number;
   }) {
-    this.snapshot =
-      opts?.snapshot ?? process.env.FLOK_DAYTONA_SNAPSHOT ?? "";
+    this.blueprint =
+      opts?.blueprint ?? process.env.FLOK_RUNLOOP_BLUEPRINT ?? DEFAULT_RUNLOOP_BLUEPRINT;
+    this.keepAliveSeconds = opts?.keepAliveSeconds ?? LIVE_KEEP_ALIVE_SECONDS;
     if (opts?.client) {
       this.plane = opts.client;
       return;
     }
-    const apiKey = opts?.apiKey ?? process.env.DAYTONA_API_KEY ?? "";
+    const apiKey = opts?.apiKey ?? process.env.RUNLOOP_API_KEY ?? "";
     if (!apiKey) {
-      throw new ProviderUnavailable("daytona", "DAYTONA_API_KEY is required");
+      throw new ProviderUnavailable("runloop", "RUNLOOP_API_KEY is required");
     }
-    if (!this.snapshot) {
-      throw new DaytonaLinuxVmRequired(
-        "FLOK_DAYTONA_SNAPSHOT must name a Linux VM snapshot (not the default container class)",
-      );
+    if (!this.blueprint) {
+      throw new RunloopBlueprintRequired("FLOK_RUNLOOP_BLUEPRINT is required");
     }
     throw new ProviderUnavailable(
-      "daytona",
-      "use DaytonaProvider.fromEnv() to load @daytona/sdk, or inject { client }",
+      "runloop",
+      "use RunloopProvider.fromEnv() to load @runloop/api-client, or inject { client }",
     );
   }
 
-  /** Production/live constructor. Loads official @daytona/sdk. */
-  static async fromEnv(): Promise<DaytonaProvider> {
-    const apiKey = process.env.DAYTONA_API_KEY ?? "";
-    const snapshot = process.env.FLOK_DAYTONA_SNAPSHOT ?? "";
+  static async fromEnv(): Promise<RunloopProvider> {
+    const apiKey = process.env.RUNLOOP_API_KEY ?? "";
+    const blueprint =
+      process.env.FLOK_RUNLOOP_BLUEPRINT ?? DEFAULT_RUNLOOP_BLUEPRINT;
     if (!apiKey) {
-      throw new ProviderUnavailable("daytona", "DAYTONA_API_KEY is required");
+      throw new ProviderUnavailable("runloop", "RUNLOOP_API_KEY is required");
     }
-    if (!snapshot) {
-      throw new DaytonaLinuxVmRequired(
-        "FLOK_DAYTONA_SNAPSHOT must name a Linux VM snapshot (not the default container class)",
-      );
+    if (!blueprint) {
+      throw new RunloopBlueprintRequired("FLOK_RUNLOOP_BLUEPRINT is required");
     }
-    const { createSdkDaytonaPlane } = await import("./daytona-sdk.js");
-    const client = await createSdkDaytonaPlane({ apiKey, snapshot });
-    return new DaytonaProvider({ client, snapshot, apiKey });
+    const { createSdkRunloopPlane } = await import("./runloop-sdk.js");
+    const client = await createSdkRunloopPlane({
+      apiKey,
+      blueprint,
+      keepAliveSeconds: LIVE_KEEP_ALIVE_SECONDS,
+    });
+    return new RunloopProvider({ client, blueprint, apiKey });
   }
 
   capabilities(): ProviderCapabilities {
     return {
       linuxVm: true,
       windowsVm: false,
-      computerUse: true,
-      accessibility: true,
-      vnc: true,
-      pauseMemory: true,
+      computerUse: false,
+      accessibility: false,
+      vnc: false,
+      pauseMemory: false,
       snapshots: true,
       forks: true,
       customImages: true,
@@ -113,12 +132,12 @@ export class DaytonaProvider implements ComputerProvider {
 
   async provision(spec: ComputerSpec): Promise<ProviderComputer> {
     if (spec.osType === "windows") {
-      throw new ProviderUnavailable("daytona", "linux VM only");
+      throw new ProviderUnavailable("runloop", "linux only");
     }
     const params = this.createParams(spec);
     const session = await this.plane.create(params);
     this.sessions.set(session.id, session);
-    await session.fsMkdir(DAYTONA_WORKSPACE_ROOT).catch(() => undefined);
+    await session.fsMkdir(RUNLOOP_WORKSPACE_ROOT).catch(() => undefined);
     return { providerRef: session.id, status: "ready" };
   }
 
@@ -126,33 +145,34 @@ export class DaytonaProvider implements ComputerProvider {
     const s = await this.requireSession(ref);
     const st = await s.state();
     let state: ComputerStatus["state"];
-    if (st === "started") state = "running";
+    if (st === "running") state = "running";
     else if (st === "paused") state = "paused";
-    else if (st === "stopped" || st === "archived") state = "stopped";
-    else if (st === "destroyed") state = "deleted";
+    else if (st === "stopped") state = "stopped";
+    else if (st === "deleted") state = "deleted";
+    else if (st === "provisioning") state = "provisioning";
     else state = "error";
-    return { state, providerDetail: `daytona:${s.birdId}` };
+    return { state, providerDetail: `runloop:${s.birdId}` };
   }
 
   async wake(ref: string): Promise<void> {
     const s = await this.requireSession(ref);
-    await s.start();
+    await s.resume();
   }
 
   async pause(ref: string): Promise<void> {
     const s = await this.requireSession(ref);
-    await s.pause();
+    await s.suspend();
   }
 
   async stop(ref: string): Promise<void> {
     const s = await this.requireSession(ref);
-    await s.stop();
+    await s.shutdown();
   }
 
   async destroy(ref: string): Promise<void> {
     const s = await this.requireSession(ref).catch(() => null);
     if (s) {
-      await s.delete().catch(() => undefined);
+      await s.shutdown().catch(() => undefined);
     }
     this.sessions.delete(ref);
   }
@@ -196,8 +216,8 @@ export class DaytonaProvider implements ComputerProvider {
     let cwd: string;
     try {
       cwd = request.cwd
-        ? assertInsideRoot(request.cwd, DAYTONA_WORKSPACE_ROOT)
-        : DAYTONA_WORKSPACE_ROOT;
+        ? assertInsideRoot(request.cwd, RUNLOOP_WORKSPACE_ROOT)
+        : RUNLOOP_WORKSPACE_ROOT;
     } catch (e) {
       if (e instanceof PathEscape) {
         return {
@@ -226,13 +246,13 @@ export class DaytonaProvider implements ComputerProvider {
       const result = await s.exec(execReq);
       return {
         exitCode: result.exitCode,
-        stdout: result.stdout,
-        stderr: result.stderr,
+        stdout: result.stdout.slice(0, MAX_OUTPUT),
+        stderr: result.stderr.slice(0, MAX_OUTPUT),
         timedOut: result.timedOut,
       };
     } catch (e) {
       throw new ProviderUnavailable(
-        "daytona",
+        "runloop",
         e instanceof Error ? e.message : "exec failed",
       );
     }
@@ -242,7 +262,7 @@ export class DaytonaProvider implements ComputerProvider {
     const s = await this.requireSession(ref);
     let canonical: string;
     try {
-      canonical = assertInsideRoot(request.path, DAYTONA_WORKSPACE_ROOT);
+      canonical = assertInsideRoot(request.path, RUNLOOP_WORKSPACE_ROOT);
     } catch (e) {
       if (e instanceof PathEscape) return { ok: false, errorCode: "PATH_ESCAPE" };
       throw e;
@@ -285,7 +305,7 @@ export class DaytonaProvider implements ComputerProvider {
         return { ok: true };
       }
       case "delete": {
-        if (canonical === DAYTONA_WORKSPACE_ROOT) {
+        if (canonical === RUNLOOP_WORKSPACE_ROOT) {
           return { ok: false, errorCode: "PATH_ESCAPE" };
         }
         const r = await s.fsDelete(canonical);
@@ -299,7 +319,7 @@ export class DaytonaProvider implements ComputerProvider {
         }
         let dest: string;
         try {
-          dest = assertInsideRoot(request.destination, DAYTONA_WORKSPACE_ROOT);
+          dest = assertInsideRoot(request.destination, RUNLOOP_WORKSPACE_ROOT);
         } catch {
           return { ok: false, errorCode: "PATH_ESCAPE" };
         }
@@ -315,41 +335,40 @@ export class DaytonaProvider implements ComputerProvider {
     }
   }
 
-  async observe(ref: string, request: ObserveRequest): Promise<Observation> {
-    const s = await this.requireSession(ref);
-    return s.observe(request);
+  async observe(_ref: string, _request: ObserveRequest): Promise<Observation> {
+    throw new ComputerUseNotAvailable();
   }
 
-  async act(ref: string, request: ActionBatch): Promise<ActionResult> {
-    const s = await this.requireSession(ref);
-    return s.act(request);
+  async act(_ref: string, _request: ActionBatch): Promise<ActionResult> {
+    throw new ComputerUseNotAvailable();
   }
 
-  async takeover(ref: string): Promise<TakeoverGrant> {
-    const s = await this.requireSession(ref);
-    return s.takeover();
+  async takeover(_ref: string): Promise<TakeoverGrant> {
+    throw new ComputerUseNotAvailable();
   }
 
   async checkpoint(ref: string): Promise<ProviderCheckpoint> {
     const s = await this.requireSession(ref);
     const name = `flok-${ref}-${Date.now()}`;
-    const snap = await s.checkpoint(name);
+    const snap = await s.snapshotDisk(name);
     return { providerSnapshotRef: snap };
   }
 
   async restore(request: RestoreRequest): Promise<ProviderComputer> {
     if (!request.providerSnapshotRef) {
-      throw new ProviderUnavailable("daytona", "providerSnapshotRef required");
+      throw new ProviderUnavailable("runloop", "providerSnapshotRef required");
     }
     const existing = request.computerId
       ? this.sessions.get(request.computerId)
       : undefined;
-    const params: DaytonaCreateParams = {
+    const params: RunloopCreateParams = {
       birdId: existing?.birdId ?? "restore",
       flockId: existing?.flockId ?? "restore",
-      snapshot: this.snapshot || request.providerSnapshotRef,
+      blueprint: this.blueprint,
+      architecture: DEFAULT_RUNLOOP_ARCH,
+      keepAliveSeconds: this.keepAliveSeconds,
       labels: {
-        "flok.provider": "daytona",
+        "flok.provider": "runloop",
         "flok.isolation": "linux-vm",
       },
       envVars: {},
@@ -359,33 +378,26 @@ export class DaytonaProvider implements ComputerProvider {
     return { providerRef: session.id, status: "ready" };
   }
 
-  private createParams(spec: ComputerSpec): DaytonaCreateParams {
-    if (!this.snapshot && !(this.plane instanceof MemoryDaytonaControlPlane)) {
-      throw new DaytonaLinuxVmRequired(
-        "FLOK_DAYTONA_SNAPSHOT must name a Linux VM snapshot",
-      );
-    }
+  private createParams(spec: ComputerSpec): RunloopCreateParams {
     const envVars: Record<string, string> = {};
     assertNoControlPlaneSecrets(envVars);
-    const params: DaytonaCreateParams = {
+    return {
       birdId: spec.birdId,
       flockId: spec.flockId,
-      snapshot: this.snapshot || "memory-linux-vm",
+      blueprint: this.blueprint || DEFAULT_RUNLOOP_BLUEPRINT,
+      architecture: DEFAULT_RUNLOOP_ARCH,
+      keepAliveSeconds: this.keepAliveSeconds,
       labels: {
-        "flok.provider": "daytona",
+        "flok.provider": "runloop",
         "flok.bird_id": spec.birdId,
         "flok.flock_id": spec.flockId,
         "flok.isolation": "linux-vm",
       },
       envVars,
     };
-    if (spec.cpu !== undefined) params.cpu = spec.cpu;
-    if (spec.memoryMb !== undefined) params.memoryGb = Math.max(1, Math.ceil(spec.memoryMb / 1024));
-    if (spec.diskGb !== undefined) params.diskGb = spec.diskGb;
-    return params;
   }
 
-  private async requireSession(ref: string): Promise<DaytonaSandboxSession> {
+  private async requireSession(ref: string): Promise<RunloopDevboxSession> {
     const cached = this.sessions.get(ref);
     if (cached) return cached;
     try {
@@ -394,16 +406,20 @@ export class DaytonaProvider implements ComputerProvider {
       return s;
     } catch (e) {
       throw new ProviderUnavailable(
-        "daytona",
-        e instanceof Error ? e.message : `sandbox ${ref} not found`,
+        "runloop",
+        e instanceof Error ? e.message : `devbox ${ref} not found`,
       );
     }
   }
 }
 
-/** Join a path under the Daytona workspace (exported for tests). */
-export function daytonaJoin(rel: string): string {
-  return pathPosix.normalize(pathPosix.join(DAYTONA_WORKSPACE_ROOT, rel));
+export function runloopJoin(rel: string): string {
+  return pathPosix.normalize(pathPosix.join(RUNLOOP_WORKSPACE_ROOT, rel));
 }
 
-export { MemoryDaytonaControlPlane, DAYTONA_WORKSPACE_ROOT };
+export {
+  MemoryRunloopControlPlane,
+  RUNLOOP_WORKSPACE_ROOT,
+  RUNLOOP_PROVIDER_NAME,
+  DEFAULT_RUNLOOP_BLUEPRINT,
+};

@@ -12,7 +12,7 @@ export const FLAGS = {
   /** Master switch for the computer system */
   FLOK_COMPUTERS_ENABLED: false,
 
-  /** Active provider. C3 implements fake + docker-dev + daytona. */
+  /** Active provider. C3 implements fake + docker-dev + runloop. */
   FLOK_COMPUTER_PROVIDER: "fake" as ComputerProviderName,
 
   /** Whether the MCP computer tools are registered */

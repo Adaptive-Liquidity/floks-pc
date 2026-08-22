@@ -1,28 +1,22 @@
 /**
- * In-memory Daytona control plane for unit/contract tests.
+ * In-memory Runloop control plane for unit/contract tests.
  * Zero network. Two sessions have independent filesystems, boot IDs,
- * browser-profile markers, and lifecycle.
+ * and lifecycle. Suspend preserves disk, not RAM.
  */
 
 import { randomBytes } from "node:crypto";
 import { posix as pathPosix } from "node:path";
 import { PathEscape } from "../errors.js";
-import type {
-  ActionBatch,
-  ActionResult,
-  Observation,
-  ObserveRequest,
-  TakeoverGrant,
-} from "../types.js";
 import {
   assertNoControlPlaneSecrets,
-  DAYTONA_WORKSPACE_ROOT,
-  type DaytonaControlPlane,
-  type DaytonaCreateParams,
-  type DaytonaExecResult,
-  type DaytonaFsResult,
-  type DaytonaSandboxSession,
-} from "./daytona-client.js";
+  RUNLOOP_WORKSPACE_ROOT,
+  type RunloopControlPlane,
+  type RunloopCreateParams,
+  type RunloopDevboxSession,
+  type RunloopDevboxState,
+  type RunloopExecResult,
+  type RunloopFsResult,
+} from "./runloop-client.js";
 
 interface MemFile {
   isDir: boolean;
@@ -33,102 +27,85 @@ function newId(prefix: string): string {
   return `${prefix}-${randomBytes(6).toString("hex")}`;
 }
 
-export class MemoryDaytonaControlPlane implements DaytonaControlPlane {
-  private readonly sessions = new Map<string, MemoryDaytonaSandbox>();
-  /** Snapshots: name → cloned filesystem. */
+export class MemoryRunloopControlPlane implements RunloopControlPlane {
+  private readonly sessions = new Map<string, MemoryRunloopDevbox>();
   private readonly snapshots = new Map<string, Map<string, MemFile>>();
 
-  async create(params: DaytonaCreateParams): Promise<DaytonaSandboxSession> {
+  async create(params: RunloopCreateParams): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
-    const id = newId("dton");
-    const session = new MemoryDaytonaSandbox(id, params, this.snapshots);
+    const id = newId("rlbox");
+    const session = new MemoryRunloopDevbox(id, params, this.snapshots);
     this.sessions.set(id, session);
     return session;
   }
 
-  async get(id: string): Promise<DaytonaSandboxSession> {
+  async get(id: string): Promise<RunloopDevboxSession> {
     const s = this.sessions.get(id);
     if (!s || s.destroyed) {
-      throw new Error(`daytona sandbox ${id} not found`);
+      throw new Error(`runloop devbox ${id} not found`);
     }
     return s;
   }
 
-  async restore(snapshotRef: string, params: DaytonaCreateParams): Promise<DaytonaSandboxSession> {
+  async restore(
+    snapshotRef: string,
+    params: RunloopCreateParams,
+  ): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
     const snap = this.snapshots.get(snapshotRef);
     if (!snap) throw new Error(`snapshot ${snapshotRef} not found`);
-    const session = (await this.create(params)) as MemoryDaytonaSandbox;
+    const session = (await this.create(params)) as MemoryRunloopDevbox;
     session.replaceFs(cloneFs(snap));
     return session;
   }
 }
 
-class MemoryDaytonaSandbox implements DaytonaSandboxSession {
+class MemoryRunloopDevbox implements RunloopDevboxSession {
   readonly id: string;
   readonly birdId: string;
   readonly flockId: string;
   readonly bootId: string;
-  readonly browserProfileId: string;
   destroyed = false;
-  private current: "started" | "stopped" | "paused" | "archived" | "destroyed" | "error" =
-    "started";
+  private current: RunloopDevboxState = "running";
   private fs: Map<string, MemFile>;
   private readonly snapshots: Map<string, Map<string, MemFile>>;
 
   constructor(
     id: string,
-    params: DaytonaCreateParams,
+    params: RunloopCreateParams,
     snapshots: Map<string, Map<string, MemFile>>,
   ) {
     this.id = id;
     this.birdId = params.birdId;
     this.flockId = params.flockId;
     this.bootId = randomBytes(16).toString("hex");
-    this.browserProfileId = `profile-${randomBytes(8).toString("hex")}`;
     this.snapshots = snapshots;
     this.fs = new Map();
-    this.fs.set(DAYTONA_WORKSPACE_ROOT, { isDir: true, content: Buffer.alloc(0) });
-    this.fs.set(`${DAYTONA_WORKSPACE_ROOT}/.flok-browser-profile`, {
-      isDir: true,
-      content: Buffer.alloc(0),
-    });
-    this.fs.set(`${DAYTONA_WORKSPACE_ROOT}/.flok-browser-profile/id`, {
-      isDir: false,
-      content: Buffer.from(this.browserProfileId, "utf8"),
-    });
+    this.fs.set(RUNLOOP_WORKSPACE_ROOT, { isDir: true, content: Buffer.alloc(0) });
   }
 
   replaceFs(fs: Map<string, MemFile>): void {
     this.fs = fs;
   }
 
-  async state() {
+  async state(): Promise<RunloopDevboxState> {
     return this.current;
   }
 
-  async start(): Promise<void> {
+  async suspend(): Promise<void> {
     this.assertAlive();
-    if (this.current === "paused" || this.current === "stopped") {
-      this.current = "started";
-    }
-  }
-
-  async stop(): Promise<void> {
-    this.assertAlive();
-    this.current = "stopped";
-  }
-
-  async pause(): Promise<void> {
-    this.assertAlive();
-    if (this.current !== "started") {
-      throw new Error("pause requires a running Linux VM");
-    }
     this.current = "paused";
   }
 
-  async delete(): Promise<void> {
-    this.current = "destroyed";
+  async resume(): Promise<void> {
+    this.assertAlive();
+    if (this.current === "paused" || this.current === "stopped") {
+      this.current = "running";
+    }
+  }
+
+  async shutdown(): Promise<void> {
+    this.current = "deleted";
     this.destroyed = true;
   }
 
@@ -137,7 +114,7 @@ class MemoryDaytonaSandbox implements DaytonaSandboxSession {
     cwd: string;
     env?: Record<string, string>;
     timeoutMs: number;
-  }): Promise<DaytonaExecResult> {
+  }): Promise<RunloopExecResult> {
     this.assertRunning();
     assertNoControlPlaneSecrets(req.env);
     const argv = req.argv;
@@ -176,21 +153,21 @@ class MemoryDaytonaSandbox implements DaytonaSandboxSession {
     return {
       exitCode: 127,
       stdout: "",
-      stderr: `memory-daytona: unsupported argv ${JSON.stringify(argv)}`,
+      stderr: `memory-runloop: unsupported argv ${JSON.stringify(argv)}`,
       timedOut: false,
     };
   }
 
   async fsStat(
     path: string,
-  ): Promise<DaytonaFsResult<{ path: string; isDir: boolean; size: number }>> {
+  ): Promise<RunloopFsResult<{ path: string; isDir: boolean; size: number }>> {
     this.assertRunning();
     const file = this.fs.get(path);
     if (!file) return { ok: false, errorCode: "NOT_FOUND" };
     return { ok: true, data: { path, isDir: file.isDir, size: file.content.length } };
   }
 
-  async fsList(path: string): Promise<DaytonaFsResult<string[]>> {
+  async fsList(path: string): Promise<RunloopFsResult<string[]>> {
     this.assertRunning();
     const dir = this.fs.get(path);
     if (!dir) return { ok: false, errorCode: "NOT_FOUND" };
@@ -206,14 +183,14 @@ class MemoryDaytonaSandbox implements DaytonaSandboxSession {
     return { ok: true, data: [...children].sort() };
   }
 
-  async fsRead(path: string): Promise<DaytonaFsResult<Buffer>> {
+  async fsRead(path: string): Promise<RunloopFsResult<Buffer>> {
     this.assertRunning();
     const file = this.fs.get(path);
     if (!file || file.isDir) return { ok: false, errorCode: "NOT_FOUND" };
     return { ok: true, data: file.content };
   }
 
-  async fsWrite(path: string, body: Buffer): Promise<DaytonaFsResult> {
+  async fsWrite(path: string, body: Buffer): Promise<RunloopFsResult> {
     this.assertRunning();
     const parent = pathPosix.dirname(path);
     if (parent !== path && !this.fs.get(parent)?.isDir) {
@@ -223,7 +200,7 @@ class MemoryDaytonaSandbox implements DaytonaSandboxSession {
     return { ok: true };
   }
 
-  async fsMkdir(path: string): Promise<DaytonaFsResult> {
+  async fsMkdir(path: string): Promise<RunloopFsResult> {
     this.assertRunning();
     const parts = path.split("/").filter(Boolean);
     let acc = "";
@@ -236,9 +213,9 @@ class MemoryDaytonaSandbox implements DaytonaSandboxSession {
     return { ok: true };
   }
 
-  async fsDelete(path: string): Promise<DaytonaFsResult> {
+  async fsDelete(path: string): Promise<RunloopFsResult> {
     this.assertRunning();
-    if (path === DAYTONA_WORKSPACE_ROOT) return { ok: false, errorCode: "PATH_ESCAPE" };
+    if (path === RUNLOOP_WORKSPACE_ROOT) return { ok: false, errorCode: "PATH_ESCAPE" };
     if (!this.fs.has(path)) return { ok: false, errorCode: "NOT_FOUND" };
     for (const key of [...this.fs.keys()]) {
       if (key === path || key.startsWith(`${path}/`)) this.fs.delete(key);
@@ -246,7 +223,7 @@ class MemoryDaytonaSandbox implements DaytonaSandboxSession {
     return { ok: true };
   }
 
-  async fsMove(from: string, to: string): Promise<DaytonaFsResult> {
+  async fsMove(from: string, to: string): Promise<RunloopFsResult> {
     this.assertRunning();
     const src = this.fs.get(from);
     if (!src) return { ok: false, errorCode: "NOT_FOUND" };
@@ -255,7 +232,7 @@ class MemoryDaytonaSandbox implements DaytonaSandboxSession {
     return { ok: true };
   }
 
-  async fsCopy(from: string, to: string): Promise<DaytonaFsResult> {
+  async fsCopy(from: string, to: string): Promise<RunloopFsResult> {
     this.assertRunning();
     const src = this.fs.get(from);
     if (!src) return { ok: false, errorCode: "NOT_FOUND" };
@@ -263,56 +240,22 @@ class MemoryDaytonaSandbox implements DaytonaSandboxSession {
     return { ok: true };
   }
 
-  async observe(request: ObserveRequest): Promise<Observation> {
-    this.assertRunning();
-    const obs: Observation = {
-      screenWidth: 1280,
-      screenHeight: 720,
-      activeWindow: `flok-${this.birdId}`,
-    };
-    if (request.includeScreenshot) {
-      obs.screenshotBase64 = Buffer.from(`screen-${this.id}`).toString("base64");
-    }
-    if (request.includeAccessibility) {
-      obs.accessibilitySummary = { profile: this.browserProfileId, birdId: this.birdId };
-    }
-    return obs;
-  }
-
-  async act(request: ActionBatch): Promise<ActionResult> {
-    this.assertRunning();
-    return {
-      ok: true,
-      results: request.actions.map((action) => ({ action, success: true })),
-    };
-  }
-
-  async takeover(): Promise<TakeoverGrant> {
-    this.assertRunning();
-    const expiresAt = new Date(Date.now() + 60_000);
-    return {
-      url: `https://novnc.example.invalid/${this.id}?token=${randomBytes(8).toString("hex")}`,
-      expiresAt,
-      singleUse: true,
-    };
-  }
-
-  async checkpoint(name: string): Promise<string> {
+  async snapshotDisk(name: string): Promise<string> {
     this.assertAlive();
     this.snapshots.set(name, cloneFs(this.fs));
     return name;
   }
 
   private assertAlive(): void {
-    if (this.destroyed || this.current === "destroyed") {
-      throw new Error(`daytona sandbox ${this.id} destroyed`);
+    if (this.destroyed || this.current === "deleted") {
+      throw new Error(`runloop devbox ${this.id} destroyed`);
     }
   }
 
   private assertRunning(): void {
     this.assertAlive();
-    if (this.current !== "started") {
-      throw new Error(`daytona sandbox ${this.id} is ${this.current}`);
+    if (this.current !== "running") {
+      throw new Error(`runloop devbox ${this.id} is ${this.current}`);
     }
   }
 }
