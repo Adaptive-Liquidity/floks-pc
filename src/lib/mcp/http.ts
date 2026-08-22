@@ -10,6 +10,7 @@ import {
   MCP_MAX_BODY_BYTES,
   MCP_PATH,
   MCP_PREFERRED_PROTOCOL,
+  MCP_SUPPORTED_PROTOCOLS,
   type McpGatewayConfig,
 } from "./config.js";
 import { JSONRPC_INTERNAL, jsonRpcError } from "./errors.js";
@@ -120,7 +121,17 @@ async function handleMcpHttpInner(
   let body: string;
   try {
     body = await readBody(req, MCP_MAX_BODY_BYTES);
-  } catch {
+  } catch (err) {
+    if (isAbortError(err)) {
+      if (!res.writableEnded) {
+        try {
+          res.end();
+        } catch {
+          /* client already gone */
+        }
+      }
+      return;
+    }
     res.statusCode = 413;
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({ error: { code: "PAYLOAD_TOO_LARGE", message: "body too large" } }));
@@ -164,12 +175,18 @@ async function handleMcpHttpInner(
     res.end();
     return;
   }
-  const negotiated = protocolFromRpc(result) ?? MCP_PREFERRED_PROTOCOL;
+  const negotiated =
+    protocolFromRpc(result) ?? supportedRequestProtocol(protocol) ?? MCP_PREFERRED_PROTOCOL;
 
   res.statusCode = 200;
   res.setHeader("content-type", "application/json");
   res.setHeader("mcp-protocol-version", negotiated);
   res.end(JSON.stringify(result));
+}
+
+function supportedRequestProtocol(presented: string | undefined): string | undefined {
+  if (!presented) return undefined;
+  return MCP_SUPPORTED_PROTOCOLS.includes(presented) ? presented : undefined;
 }
 
 function jsonRpcIdOf(parsed: unknown): string | number | undefined {
@@ -182,12 +199,22 @@ function jsonRpcIdOf(parsed: unknown): string | number | undefined {
 function protocolFromRpc(
   result: Record<string, unknown> | Record<string, unknown>[],
 ): string | undefined {
-  const rec = Array.isArray(result) ? result[0] : result;
-  if (!rec) return undefined;
-  const meta = rec._meta;
-  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return undefined;
-  const version = (meta as Record<string, unknown>)["io.modelcontextprotocol/protocolVersion"];
-  return typeof version === "string" && version.length > 0 ? version : undefined;
+  const recs = Array.isArray(result) ? result : [result];
+  for (const rec of recs) {
+    if (!rec || typeof rec !== "object") continue;
+    const meta = rec._meta;
+    if (!meta || typeof meta !== "object" || Array.isArray(meta)) continue;
+    const version = (meta as Record<string, unknown>)["io.modelcontextprotocol/protocolVersion"];
+    if (typeof version === "string" && version.length > 0) return version;
+  }
+  return undefined;
+}
+
+const BODY_TOO_LARGE = "PAYLOAD_TOO_LARGE";
+const BODY_ABORTED = "ABORTED";
+
+function isAbortError(err: unknown): boolean {
+  return Boolean(err && typeof err === "object" && "code" in err && err.code === BODY_ABORTED);
 }
 
 function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
@@ -200,17 +227,23 @@ function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
       settled = true;
       fn();
     };
+    const abort = (): void =>
+      finish(() => reject(Object.assign(new Error("aborted"), { code: BODY_ABORTED })));
     req.on("data", (chunk: Buffer) => {
       if (settled) return;
       size += chunk.length;
       if (size > maxBytes) {
         req.resume();
-        finish(() => reject(new Error("too large")));
+        finish(() => reject(Object.assign(new Error("too large"), { code: BODY_TOO_LARGE })));
         return;
       }
       chunks.push(chunk);
     });
     req.on("end", () => finish(() => resolve(Buffer.concat(chunks).toString("utf8"))));
     req.on("error", (err: Error) => finish(() => reject(err)));
+    req.on("aborted", abort);
+    req.on("close", () => {
+      if (!req.complete) abort();
+    });
   });
 }

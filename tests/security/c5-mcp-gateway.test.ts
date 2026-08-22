@@ -6,7 +6,7 @@
 
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import {
   ComputerService,
   FLAGS,
@@ -806,6 +806,95 @@ describe("C5 MCP gateway", () => {
       assert.equal(listed.status, 200);
       assert.equal(listed.headers.get("mcp-protocol-version"), MCP_PREFERRED_PROTOCOL);
       assert.equal(listedJson.error?.code, -32022);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+    }
+  });
+
+  it("legacy protocol errors and mixed batches keep the supported request version in the header", async () => {
+    const legacy = "2025-11-25";
+    const server = createServer((req, res) => {
+      void handleMcpHttp(req, res, { gateway, path: MCP_PATH });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address();
+    assert.ok(addr && typeof addr === "object");
+    const base = `http://127.0.0.1:${addr.port}${MCP_PATH}`;
+    try {
+      const unknown = await fetch(base, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "mcp-protocol-version": legacy,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "nope" }),
+      });
+      assert.equal(unknown.status, 200);
+      assert.equal(unknown.headers.get("mcp-protocol-version"), legacy);
+      const unknownJson = (await unknown.json()) as { error?: { code: number } };
+      assert.equal(unknownJson.error?.code, -32601);
+
+      const mixed = await fetch(base, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "mcp-protocol-version": legacy,
+        },
+        body: JSON.stringify([
+          { jsonrpc: "2.0", id: 1 },
+          { jsonrpc: "2.0", id: 2, method: "ping" },
+        ]),
+      });
+      assert.equal(mixed.status, 200);
+      assert.equal(mixed.headers.get("mcp-protocol-version"), legacy);
+      const mixedJson = (await mixed.json()) as Array<{
+        id?: number;
+        error?: unknown;
+        _meta?: { "io.modelcontextprotocol/protocolVersion"?: string };
+      }>;
+      assert.equal(Array.isArray(mixedJson), true);
+      const ping = mixedJson.find((item) => item.id === 2);
+      assert.equal(ping?._meta?.["io.modelcontextprotocol/protocolVersion"], legacy);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+    }
+  });
+
+  it("client abort while uploading does not hang the HTTP handler", async () => {
+    let handled: Promise<void> | undefined;
+    const server = createServer((req, res) => {
+      handled = handleMcpHttp(req, res, { gateway, path: MCP_PATH });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address();
+    assert.ok(addr && typeof addr === "object");
+    try {
+      const req = httpRequest({
+        hostname: "127.0.0.1",
+        port: addr.port,
+        path: MCP_PATH,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": 64,
+        },
+      });
+      req.on("error", () => {
+        /* destroyed before complete */
+      });
+      req.write("{");
+      const started = Date.now();
+      while (handled === undefined && Date.now() - started < 1000) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      assert.ok(handled, "server never saw the aborted request");
+      req.destroy();
+      await Promise.race([
+        handled,
+        new Promise<void>((_, reject) => {
+          setTimeout(() => reject(new Error("handler hung after client abort")), 1000);
+        }),
+      ]);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
     }
