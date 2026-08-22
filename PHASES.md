@@ -24,7 +24,7 @@ Work only on the currently open phase. Nexus-IQ / AEON / Graphiti are **forbidde
 
 ---
 
-## Phase 1 — Computer domain  ← CURRENT
+## Phase 1 — Computer domain
 
 **Goal:** Full domain contracts, state machine validation, ComputerService skeleton, FakeProvider (in-memory, injectable failures), pairing/capability/path pure helpers, own migration schema stub, unit tests with **zero** real provider calls / zero network / zero Docker.
 
@@ -47,14 +47,14 @@ Work only on the currently open phase. Nexus-IQ / AEON / Graphiti are **forbidde
 - [x] ComputerService enforces one-computer-per-birdId + LEGAL_TRANSITIONS — files present
 - [x] pairing + path pure helpers + tests — files present
 - [x] migrations/0001 schema stub present
-- [ ] domain test suite green with zero external side-effects (run `npm install && npm run test:domain` in clean Node 22 env)
+- [x] domain test suite green with zero external side-effects (run `npm install && npm run test:domain` in clean Node 22 env)
 - [x] Zero files modified under Floks-main
 
-**Status:** IMPLEMENTATION COMPLETE — awaiting mechanical test run to close Gate C1
+**Status:** CLOSED / PASSED (2026-08-21)
 
 ---
 
-## Phase 2 — Fake + Docker development providers
+## Phase 2 — Fake + Docker development providers  ← CURRENT
 
 **Goal:** Deterministic FakeProvider + DockerDevProvider for local isolation proof.
 

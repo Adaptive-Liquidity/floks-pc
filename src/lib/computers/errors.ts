@@ -10,7 +10,9 @@ export class ComputerError extends Error {
     super(message);
     this.name = "ComputerError";
     this.code = code;
-    this.details = details;
+    if (details !== undefined) {
+      this.details = details;
+    }
   }
 }
 

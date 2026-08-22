@@ -24,26 +24,22 @@ export function assertInsideRoot(
     throw new PathEscape(userPath);
   }
 
-  // Normalize separators and resolve relative to root
   const normalizedRoot = pathPosix.normalize(root);
-  // If userPath is absolute, treat it as relative to / for joining under root
-  const candidate = userPath.startsWith("/")
-    ? pathPosix.join(normalizedRoot, userPath.slice(1))
-    : pathPosix.join(normalizedRoot, userPath);
-
-  const resolved = pathPosix.normalize(candidate);
-
-  // Must still start with the root (with trailing slash protection)
   const rootWithSep = normalizedRoot.endsWith("/")
     ? normalizedRoot
     : normalizedRoot + "/";
 
-  if (resolved !== normalizedRoot && !resolved.startsWith(rootWithSep)) {
+  // Relative paths join under root. Absolute paths must already be inside root.
+  const candidate = userPath.startsWith("/")
+    ? pathPosix.normalize(userPath)
+    : pathPosix.normalize(pathPosix.join(normalizedRoot, userPath));
+
+  if (candidate !== normalizedRoot && !candidate.startsWith(rootWithSep)) {
     throw new PathEscape(userPath);
   }
 
   // Reject device / proc / sys style paths even if somehow under root
-  const lower = resolved.toLowerCase();
+  const lower = candidate.toLowerCase();
   if (
     lower.includes("/proc/") ||
     lower.includes("/sys/") ||
@@ -55,7 +51,7 @@ export function assertInsideRoot(
     throw new PathEscape(userPath);
   }
 
-  return resolved;
+  return candidate;
 }
 
 export function getDefaultWorkspaceRoot(): string {

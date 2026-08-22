@@ -337,7 +337,7 @@ export class FakeProvider implements ComputerProvider {
     };
   }
 
-  async restore(request: RestoreRequest): Promise<ProviderComputer> {
+  async restore(_request: RestoreRequest): Promise<ProviderComputer> {
     this.maybeFail("restore");
     // Simple restore: re-provision a ready machine under a new ref
     const ref = `fake-restored-${randomBytes(4).toString("hex")}`;
