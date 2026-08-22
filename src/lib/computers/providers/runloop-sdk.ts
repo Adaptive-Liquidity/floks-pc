@@ -7,6 +7,22 @@ import { RunloopSDK } from "@runloop/api-client";
 import { posix as pathPosix } from "node:path";
 import { ProviderUnavailable } from "../errors.js";
 import { assertInsideRoot } from "../path.js";
+import type { Action } from "../types.js";
+import {
+  BROWSER_PROFILE_DIR,
+  ENSURE_INTERACTIVE_SH,
+  ENSURE_SCRIPT_PATH,
+  FIXTURE_HTML,
+  FIXTURE_PATH,
+  FLOK_DISPLAY,
+  FLOK_UI_USER,
+  INTERACTIVE_DIR,
+  argvAsUiUser,
+  chromeLaunchArgv,
+  pngDimensions,
+  uniqueObsShotPath,
+  CHROME_LOG_PATH,
+} from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
   DEFAULT_RUNLOOP_ARCH,
@@ -140,6 +156,8 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   readonly birdId: string;
   readonly flockId: string;
   bootId = "";
+  private interactiveStackUp = false;
+  private graphicalStack = false;
 
   constructor(
     private readonly box: SdkDevbox,
@@ -154,6 +172,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   async ensureWorkspace(): Promise<void> {
     await this.box.cmd.exec(`mkdir -p ${shellSingle(RUNLOOP_WORKSPACE_ROOT + "/.flok")}`);
     await this.box.file.write({ file_path: EXECVP_PATH, contents: EXECVP_PY });
+    await this.lockRootExecutedAssets();
     const boot = await this.box.cmd.exec("cat /proc/sys/kernel/random/boot_id");
     this.bootId = ((await boot.stdout()) ?? "").trim();
   }
@@ -164,11 +183,13 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   }
 
   async suspend(): Promise<void> {
+    this.interactiveStackUp = false;
     await this.box.suspend();
     await this.box.awaitSuspended();
   }
 
   async resume(): Promise<void> {
+    this.interactiveStackUp = false;
     await this.box.resume();
     await this.box.awaitRunning();
   }
@@ -325,6 +346,228 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   async snapshotDisk(name: string): Promise<string> {
     const snap = await this.box.snapshotDisk({ name });
     return snap.id;
+  }
+
+  async ensureInteractiveStack(): Promise<void> {
+    if (this.interactiveStackUp) {
+      if (!this.graphicalStack || (await this.xvfbAlive())) return;
+      this.interactiveStackUp = false;
+    }
+    this.requireFs(
+      await this.fsMkdir(pathPosix.dirname(ENSURE_SCRIPT_PATH)),
+      "ensureInteractiveStack mkdir",
+    );
+    // Take .flok away from flok-ui before writing helpers root will execute.
+    await this.lockRootExecutedAssets();
+    this.requireFs(
+      await this.fsWrite(ENSURE_SCRIPT_PATH, Buffer.from(ENSURE_INTERACTIVE_SH, "utf8")),
+      "ensureInteractiveStack write script",
+    );
+    this.requireFs(
+      await this.fsWrite(FIXTURE_PATH, Buffer.from(FIXTURE_HTML, "utf8")),
+      "ensureInteractiveStack write fixture",
+    );
+    this.requireFs(await this.fsMkdir(BROWSER_PROFILE_DIR), "ensureInteractiveStack mkdir profile");
+    await this.lockRootExecutedAssets();
+    const r = await this.exec({
+      argv: ["bash", ENSURE_SCRIPT_PATH],
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      timeoutMs: 30_000,
+    });
+    if (r.exitCode !== 0) {
+      throw new ProviderUnavailable(
+        "runloop",
+        `ensureInteractiveStack failed: ${r.stderr || r.stdout}`,
+      );
+    }
+    this.graphicalStack = !r.stdout.includes("missing-xvfb");
+    this.interactiveStackUp = true;
+  }
+
+  async screenshot(): Promise<{
+    width: number;
+    height: number;
+    png: Buffer;
+    activeWindow?: string;
+  }> {
+    const shotPath = uniqueObsShotPath();
+    this.requireFs(await this.fsMkdir(pathPosix.dirname(shotPath)), "screenshot dir");
+    const shot = await this.exec({
+      argv: argvAsUiUser(["import", "-display", FLOK_DISPLAY, "-window", "root", shotPath]),
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      env: { DISPLAY: FLOK_DISPLAY },
+      timeoutMs: 15_000,
+    });
+    if (shot.exitCode !== 0) {
+      await this.fsDelete(shotPath).catch(() => undefined);
+      throw new ProviderUnavailable("runloop", `screenshot failed: ${shot.stderr}`);
+    }
+    try {
+      const file = await this.fsRead(shotPath);
+      if (!file.ok || !file.data) {
+        throw new ProviderUnavailable("runloop", "screenshot read failed");
+      }
+      const dims = pngDimensions(file.data);
+      if (!dims) {
+        throw new ProviderUnavailable("runloop", "screenshot is not a valid PNG");
+      }
+      let activeWindow: string | undefined;
+      const win = await this.exec({
+        argv: argvAsUiUser(["xdotool", "getactivewindow", "getwindowname"]),
+        cwd: RUNLOOP_WORKSPACE_ROOT,
+        env: { DISPLAY: FLOK_DISPLAY },
+        timeoutMs: 5_000,
+      });
+      if (win.exitCode === 0 && win.stdout.trim()) activeWindow = win.stdout.trim();
+      const out: { width: number; height: number; png: Buffer; activeWindow?: string } = {
+        width: dims.width,
+        height: dims.height,
+        png: file.data,
+      };
+      if (activeWindow) out.activeWindow = activeWindow;
+      return out;
+    } finally {
+      await this.fsDelete(shotPath).catch(() => undefined);
+    }
+  }
+
+  async novncLocalOk(): Promise<boolean> {
+    const r = await this.exec({
+      argv: [
+        "python3",
+        "-c",
+        "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6080/', timeout=2); print('ok')",
+      ],
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      timeoutMs: 5_000,
+    });
+    return r.exitCode === 0 && r.stdout.includes("ok");
+  }
+
+  async uiAction(action: Action): Promise<void> {
+    const env = { DISPLAY: FLOK_DISPLAY };
+    let argv: string[];
+    switch (action.type) {
+      case "click_coordinates":
+        argv = argvAsUiUser([
+          "xdotool",
+          "mousemove",
+          String(action.x),
+          String(action.y),
+          "click",
+          "1",
+        ]);
+        break;
+      case "type":
+        argv = argvAsUiUser(["xdotool", "type", "--", action.text ?? ""]);
+        break;
+      case "key":
+        argv = argvAsUiUser(["xdotool", "key", "--", action.key ?? ""]);
+        break;
+      case "scroll": {
+        if (typeof action.x === "number" && action.x !== 0) {
+          throw new Error("horizontal scroll unsupported");
+        }
+        const dy = action.y ?? 0;
+        if (!Number.isInteger(dy) || dy === 0) {
+          throw new Error("scroll requires non-zero integer y delta");
+        }
+        const button = dy < 0 ? "4" : "5";
+        const n = Math.min(20, Math.abs(dy));
+        argv = argvAsUiUser(["xdotool", "click", "--repeat", String(n), button]);
+        break;
+      }
+      case "wait":
+        argv = ["sleep", String((action.durationMs ?? 100) / 1000)];
+        break;
+      case "open_url":
+      case "launch_application": {
+        const url =
+          action.type === "open_url"
+            ? (action.url ?? `file://${FIXTURE_PATH}`)
+            : `file://${FIXTURE_PATH}`;
+        // Detach so exec returning does not SIGHUP Chrome. No --no-sandbox.
+        // Launch accepted ≠ Chrome ready; live gate polls readiness separately.
+        // runuser drops to flok-ui; python launcher stays the Devbox user (root on DnD).
+        // Startup stderr goes to a guest tmp log (not FLOKS audit).
+        const chromeCode = [
+          "import subprocess,sys",
+          `log=open(${JSON.stringify(CHROME_LOG_PATH)},"ab",buffering=0)`,
+          "subprocess.Popen(sys.argv[1:], start_new_session=True, stdout=log, stderr=subprocess.STDOUT)",
+          "print('launched')",
+          "",
+        ].join("\n");
+        argv = ["python3", "-c", chromeCode, ...chromeLaunchArgv(url)];
+        break;
+      }
+      default:
+        throw new Error(`unsupported action ${action.type}`);
+    }
+    const r = await this.exec({
+      argv,
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      env,
+      timeoutMs: 20_000,
+    });
+    if (action.type === "open_url" || action.type === "launch_application") {
+      // Python Popen returns immediately; non-zero means spawn failed (missing binary, etc.).
+      if (r.exitCode !== 0) {
+        throw new ProviderUnavailable(
+          "runloop",
+          r.stderr || r.stdout || "chrome launch failed",
+        );
+      }
+      return;
+    }
+    if (r.exitCode !== 0 && !r.timedOut) {
+      throw new ProviderUnavailable("runloop", r.stderr || `uiAction ${action.type} failed`);
+    }
+  }
+
+  private requireFs(r: RunloopFsResult, what: string): void {
+    if (!r.ok) {
+      throw new ProviderUnavailable("runloop", `${what} failed: ${r.errorCode}`);
+    }
+  }
+
+  /** Cheap Xvfb liveness probe. Full ensure only re-runs if this fails. */
+  private async xvfbAlive(): Promise<boolean> {
+    try {
+      const r = await this.exec({
+        argv: ["pgrep", "-u", FLOK_UI_USER, "-f", `Xvfb ${FLOK_DISPLAY}`],
+        cwd: RUNLOOP_WORKSPACE_ROOT,
+        timeoutMs: 5_000,
+      });
+      return r.exitCode === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Lock root-executed guest helpers via Devbox-root cmd.exec (not execvp.py).
+   * flok-ui must not be able to replace anything root later runs.
+   */
+  private async lockRootExecutedAssets(): Promise<void> {
+    const dir = shellSingle(INTERACTIVE_DIR);
+    const execvp = shellSingle(EXECVP_PATH);
+    const script = shellSingle(ENSURE_SCRIPT_PATH);
+    const fixture = shellSingle(FIXTURE_PATH);
+    const lock = await this.box.cmd.exec(
+      [
+        `chown root:root ${dir}`,
+        `chmod 755 ${dir}`,
+        `if [ -f ${execvp} ]; then chown root:root ${execvp} && chmod 755 ${execvp}; fi`,
+        `if [ -f ${script} ]; then chown root:root ${script} && chmod 755 ${script}; fi`,
+        `if [ -f ${fixture} ]; then chown root:root ${fixture} && chmod 644 ${fixture}; fi`,
+      ].join(" && "),
+    );
+    if ((lock.exitCode ?? 1) !== 0) {
+      throw new ProviderUnavailable(
+        "runloop",
+        `lock root-executed assets failed: ${await lock.stderr()}`,
+      );
+    }
   }
 
   private async enforceResolved(path: string): Promise<RunloopFsResult> {

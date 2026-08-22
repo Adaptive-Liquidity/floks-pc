@@ -7,6 +7,13 @@
 import { randomBytes } from "node:crypto";
 import { posix as pathPosix } from "node:path";
 import { PathEscape } from "../errors.js";
+import type { Action } from "../types.js";
+import {
+  BROWSER_PROFILE_DIR,
+  DISPLAY_HEIGHT,
+  DISPLAY_WIDTH,
+  INTERACTIVE_DIR,
+} from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
   RUNLOOP_WORKSPACE_ROOT,
@@ -30,11 +37,19 @@ function newId(prefix: string): string {
 export class MemoryRunloopControlPlane implements RunloopControlPlane {
   private readonly sessions = new Map<string, MemoryRunloopDevbox>();
   private readonly snapshots = new Map<string, Map<string, MemFile>>();
+  /** Test hook: next create/restore session fails its first ensureInteractiveStack. */
+  failNextEnsure = false;
+  lastCreatedId: string | null = null;
 
   async create(params: RunloopCreateParams): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
     const id = newId("rlbox");
     const session = new MemoryRunloopDevbox(id, params, this.snapshots);
+    if (this.failNextEnsure) {
+      session.failEnsureOnce = true;
+      this.failNextEnsure = false;
+    }
+    this.lastCreatedId = id;
     this.sessions.set(id, session);
     return session;
   }
@@ -66,6 +81,10 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
   readonly flockId: string;
   readonly bootId: string;
   destroyed = false;
+  /** How many times ensureInteractiveStack actually (re)started. */
+  stackStarts = 0;
+  failEnsureOnce = false;
+  private stackUp = false;
   private current: RunloopDevboxState = "running";
   private fs: Map<string, MemFile>;
   private readonly snapshots: Map<string, Map<string, MemFile>>;
@@ -95,6 +114,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
   async suspend(): Promise<void> {
     this.assertAlive();
     this.current = "paused";
+    this.stackUp = false;
   }
 
   async resume(): Promise<void> {
@@ -246,6 +266,68 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     return name;
   }
 
+  async ensureInteractiveStack(): Promise<void> {
+    this.assertAlive();
+    if (this.failEnsureOnce) {
+      this.failEnsureOnce = false;
+      throw new Error("ensureInteractiveStack failed");
+    }
+    if (this.current !== "running") {
+      throw new Error(`runloop devbox ${this.id} is ${this.current}`);
+    }
+    if (!this.stackUp) {
+      this.stackStarts += 1;
+      this.stackUp = true;
+    }
+    await this.fsMkdir(BROWSER_PROFILE_DIR);
+    await this.fsMkdir(INTERACTIVE_DIR);
+  }
+
+  async screenshot(): Promise<{
+    width: number;
+    height: number;
+    png: Buffer;
+    activeWindow?: string;
+  }> {
+    this.assertRunning();
+    if (!this.stackUp) await this.ensureInteractiveStack();
+    return {
+      width: DISPLAY_WIDTH,
+      height: DISPLAY_HEIGHT,
+      png: MIN_PNG,
+      activeWindow: `flok-${this.birdId}`,
+    };
+  }
+
+  async novncLocalOk(): Promise<boolean> {
+    this.assertRunning();
+    return this.stackUp;
+  }
+
+  async uiAction(action: Action): Promise<void> {
+    this.assertRunning();
+    if (!this.stackUp) await this.ensureInteractiveStack();
+    if (action.type === "open_url" && action.url) {
+      await this.fsMkdir(BROWSER_PROFILE_DIR);
+      await this.fsWrite(
+        `${BROWSER_PROFILE_DIR}/last-url`,
+        Buffer.from(action.url, "utf8"),
+      );
+    }
+    if (action.type === "launch_application") {
+      await this.fsMkdir(BROWSER_PROFILE_DIR);
+      await this.fsWrite(
+        `${BROWSER_PROFILE_DIR}/launched`,
+        Buffer.from("1", "utf8"),
+      );
+    }
+  }
+
+  /** Test helper: simulate suspend discarding RAM daemons. */
+  markStackDown(): void {
+    this.stackUp = false;
+  }
+
   private assertAlive(): void {
     if (this.destroyed || this.current === "deleted") {
       throw new Error(`runloop devbox ${this.id} destroyed`);
@@ -273,3 +355,10 @@ function resolveArgPath(userPath: string | undefined, cwd: string): string {
   if (userPath.startsWith("/")) return pathPosix.normalize(userPath);
   return pathPosix.normalize(pathPosix.join(cwd, userPath));
 }
+
+/** 1×1 PNG. Memory-plane screenshot stub — not a real display capture. */
+const MIN_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+

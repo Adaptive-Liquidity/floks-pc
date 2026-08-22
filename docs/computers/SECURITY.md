@@ -5,8 +5,9 @@
 1. **Private by default, explicit sharing by design.**
 2. **Capability-based access.** Account-level MCP authentication cannot identify which Grok Bot is calling (xAI team deployments share MCP auth). Pairing + capability tokens are mandatory.
 3. **Fail closed.** Illegal state transitions, expired codes, revoked capabilities, path escapes, and cross-Node access all reject.
-4. **No secrets in the guest.** Provider API keys, long-lived credentials, and Flok capability tokens never enter a Node VM or appear in MCP responses / audit content.
-5. **Metadata-only audit.** Terminal output, screenshots, cookies, and page contents are not persisted by default.
+4. **No secrets in the guest.** Provider API keys (`RUNLOOP_API_KEY`), long-lived credentials, and Flok capability tokens never enter a Node VM or appear in MCP responses / audit content.
+5. **Metadata-only audit.** Terminal output, screenshots, cookies, and page contents are not persisted by default. C3B temporary screenshot files are deleted after collection.
+6. **Browser profiles are Node-private.** `/home/user/flok/.browser/profile` is guest state in the workspace jail. Never copy it between Nodes. Never put control-plane secrets in it.
 
 ## Pairing
 
@@ -52,13 +53,25 @@ Never automatically transferred: browser profiles, cookies, SSH keys, `.env`, cr
 
 ## Takeover (VNC)
 
-- Single-use, short-lived signed URL.
-- Never exposes provider credentials.
-- Expires quickly.
+C3B installs localhost-only x11vnc + noVNC (`127.0.0.1:6080`). That is **not** a public takeover URL.
+
+- `takeover()` stays fail-closed until an authenticated Runloop tunnel exists.
+- `vnc` capability stays `false` until that contract is actually satisfied.
+- Never use `auth_mode=open` as the production takeover mechanism.
+- Tunnel URLs/credentials are sensitive; do not log them.
+
+C3B Chrome runs as dedicated non-root user `flok-ui` (uid 1500). The DnD
+Devbox remains root so Docker-in-Docker still works. `--no-sandbox` is not
+used. Browser profile `/home/user/flok/.browser/profile` is `700` and owned by
+`flok-ui`. x11vnc/noVNC bind `127.0.0.1` only.
+
+Later (C7): single-use, short-lived signed URL. Never exposes provider credentials.
 
 ## Provider secrets
 
-`DAYTONA_API_KEY` (and future Kata/Firecracker credentials) live only in the control-plane environment.  
+`RUNLOOP_API_KEY` (and future Kata/Firecracker credentials) live only in the control-plane environment.  
+Never print the key or metadata about it (including length) in CI logs.
+
 Secret scanning (Gate C10) must prove they never appear in:
 
 - Node environment

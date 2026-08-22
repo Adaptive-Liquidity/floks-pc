@@ -90,46 +90,106 @@ Work only on the currently open phase. Nexus-IQ / AEON / Graphiti are **forbidde
 
 ---
 
-## Phase 3 — Runloop production provider  ← CURRENT
+## Phase 3 — Runloop production provider
 
-**Goal:** Runloop Devboxes as production-v1 ComputerProvider. C3A is the compute substrate. C3B (interactive computer / browser / noVNC) is deferred until C3A is green.
+**Goal:** Runloop Devboxes as production-v1 ComputerProvider. C3A is the compute substrate. C3B is the interactive computer / browser layer.
 
-### Implement (C3A)
-- `providers/runloop.ts` — RunloopProvider (`name: "runloop"`)
-- Official `@runloop/api-client` **1.28.0** via `RunloopSDK` (not the legacy client, not `runloopai/deploy-agent`)
-- Default blueprint `FLOK_RUNLOOP_BLUEPRINT=runloop/universal-ubuntu-24.04-x86_64-dnd`, arch `x86_64`
-- Workspace jail `/home/user/flok`
-- `RUNLOOP_API_KEY` stays in the control plane; never in Devbox env, workspace, exec env, MCP, or audit
-- argv[] exec (shell mode rejected) via JSON/base64 → Python `os.execvp` wrapper
-- `pause` → `suspend` + `awaitSuspended` (disk preserved, **not** RAM)
-- `wake` → `resume` + `awaitRunning`
-- `stop` / `destroy` → idempotent `shutdown`
-- `checkpoint` → `snapshotDisk`; `restore` creates a new Devbox from the snapshot (forks allowed)
-- Non-live tests with an injected control-plane fake (zero network)
-- Live tests opt-in: `FLOK_LIVE_RUNLOOP_TEST=1` — missing key/blueprint **FAILS**, never silent skip
-
-### C3B (do not implement until C3A is green)
-Chromium + display + noVNC / Browserbase-or-Kernel. Authenticated Runloop tunnels later. Do not add those dependencies now.
-
-### Non-goals (do not invent)
-- Provider factory, MCP gateway, pairing/capability wiring, worker, Kysely, Nexus/AEON/Graphiti
-- Daytona (removed from the active C3 path)
-
-### Gate C3A
+### Gate C3A — Runloop compute substrate
 Two live Devboxes prove different provider IDs, isolated filesystems, distinct `boot_id`, independent lifecycle, suspend/resume disk persist, snapshot → forked Devbox with independent mutation, and shutdown of every paid Devbox.
 
 Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` workflow). Not part of required PR CI.
 
-**Status:** OPEN
+**Status:** CLOSED / PASSED (2026-08-22)
 
-### Gate C3B
-Deferred. Interactive computer layer after C3A PASS.
+**Evidence**
+- Merge: [Adaptive-Liquidity/floks-pc#4](https://github.com/Adaptive-Liquidity/floks-pc/pull/4) → `292d4ff5c1a3dd569d581e4c5ac13c4562f7d454`
+- Integrated provider head: `bf9e6c1252236a5b5a2ff5a75321aed469d7284d`
+- Live workflow: `runloop-c3` run `32554469979` on `ubuntu-24.04` / Node 22.16
+  - URL: https://github.com/Adaptive-Liquidity/floks-pc/actions/runs/32554469979
+  - Job `Runloop Devbox live test` (`96986381570`): **success**
+  - SHA under test: `6cad86630621b287400993b48403fec2dbccccc8` (workflow-only follow-up; provider code identical to `bf9e6c1`)
+  - `FLOK_LIVE_RUNLOOP_TEST=1 npm run test:live:runloop`
+  - 6 pass / 0 fail / 0 skip
+  - Live case `two live Devboxes prove isolation, suspend, snapshot fork, then shutdown` **21.2s, not skipped**
+- Live proofs encoded in `tests/providers/runloop.isolation.test.ts` (all asserted; suite would fail otherwise):
+  - Devbox A + B created; provider IDs distinct
+  - A writes `/home/user/flok/A.txt`; B cannot read it; B writes its own file
+  - distinct `/proc/sys/kernel/random/boot_id`
+  - suspend A; B remains running
+  - resume A; A disk file survives
+  - snapshot A; Devbox C restored/forked; C inherits `A.txt`; mutate C does not change A
+  - `finally` destroy C, B, A (shutdown)
+- Isolation: zero writes under Floks-main
+- Nexus / graph flags remain false
+
+**Known limitations (not C3A blockers)**
+- Independent Runloop inventory of leftover Devboxes was not queried from this session (no control-plane key here). Cleanup is the live test `finally` destroy path, which ran because the test passed.
+- Runloop `optimistic_timeout` first-wait hint remains capped at 25s; `timedOut` is reported when exitCode is null.
+- `vars.FLOK_RUNLOOP_BLUEPRINT` was empty; the passing live run resolved the blueprint from a repository **secret** of the same name.
+
+### Gate C3B — interactive computer
+
+**Goal:** Browser + private display + screenshot + bounded input + persistent profile inside each Runloop Devbox. Grok remains the intelligence. Runloop remains the computer.
+
+### Implement
+- Reproducible interactive Blueprint under `blueprints/runloop-interactive/` based on `FROM runloop:runloop/universal-ubuntu-24.04-x86_64-dnd`
+- Graphical stack as non-root `flok-ui`; Chrome without `--no-sandbox`
+- Persistent profile `/home/user/flok/.browser/profile`
+- `ensureInteractiveStack()` after provision, restore, and resume (disk survives suspend; RAM/processes do not)
+- `observe()` screenshot from `:99`
+- Bounded `act()`: click_coordinates, type, key, scroll, open_url, wait; `click_element` fail-closed
+- Local noVNC on localhost only; `takeover()` remains fail-closed; `vnc: false`
+- `computerUse: true` after paid C3B live gate; `accessibility: false`, `vnc: false`, `pauseMemory: false`
+- Manual `runloop-c3` phase `c3b-live` (GitHub only lists workflows that exist on main; `runloop-c3b.yml` is not dispatchable)
+
+### Non-goals (do not invent)
+- Browserbase, Kernel, Runloop Agents, MCP, pairing, Grok Bot connection, Nexus/AEON/Graphiti
+- Public VNC URL
+- `mode: "shell"`
+- Chromium `--no-sandbox` unless a verified Runloop incompatibility is documented
+
+**Status:** CLOSED / PASSED (2026-08-22)
+
+**Evidence**
+- Interactive Blueprint: `bpt_34BQTBwmrCLxEQkEMjQKm` / `flok-runloop-interactive` `build_complete` (~106s). Workflow run `32557645663`.
+- Prior FAIL (not closeable): `runloop-c3` phase `c3b-live` run [`32557742597`](https://github.com/Adaptive-Liquidity/floks-pc/actions/runs/32557742597) job `96994511350` SHA `3efa97f` — empty Chrome profile 2.5s after `open_url` Popen. Unpaid fix `b892978` added bounded `pollUntilChromeReady` (~20s / 500ms) with classified failures.
+- Live: `runloop-c3` phase `c3b-live` run [`32559415086`](https://github.com/Adaptive-Liquidity/floks-pc/actions/runs/32559415086) job `96998605345` SHA `b892978a575b273631e32018d61467884ef04124`
+  - URL: https://github.com/Adaptive-Liquidity/floks-pc/actions/runs/32559415086
+  - Job `Runloop interactive live test`: **success**
+  - `FLOK_LIVE_RUNLOOP_C3B_TEST=1 npm run test:live:runloop-c3b`
+  - 1 pass / 0 fail / 0 skip
+  - Live case `one Devbox: stack, fixture, observe, input, profile, suspend/resume, local noVNC, cleanup` **64.1s, not skipped**
+  - Chrome 151.0.7922.173; blueprint default `flok-runloop-interactive`
+- Live proofs encoded in `tests/live/runloop.c3b.live.test.ts` (all asserted; suite would fail otherwise):
+  - Chrome readiness / profile initialization (`pollUntilChromeReady`, `requireProfile: true`; `filesystem.list` of `/home/user/flok/.browser/profile` non-empty)
+  - Real screenshot (`observe` 1440×900 PNG IHDR; no accessibility fabrications)
+  - `click_coordinates` / `type` / `key` / `scroll` all `success: true`
+  - Localhost noVNC (`http://127.0.0.1:6080/`)
+  - No public VNC (ports 5900 and 6080 listen on loopback only)
+  - Suspend / resume: profile marker `c3b-marker` survived disk suspend
+  - Graphical stack recovery: Xvfb `:99` + Openbox + Chrome-ready after resume; screenshot after resume
+  - Profile persistence: Chrome `--user-data-dir=/home/user/flok/.browser/profile` without `--no-sandbox`
+  - Devbox cleanup: `finally` `destroy` (no `destroy failed` log)
+- Isolation: zero writes under Floks-main
+- Nexus / graph flags remain false
+- Capabilities after this close: `computerUse: true`, `accessibility: false`, `vnc: false`, `pauseMemory: false`
+- C4 is **not started**. Do not begin pairing / MCP / Grok Bot work until explicit approval.
+
+**Known limitations (not C3B close criteria)**
+- Chrome `.deb` is unpinned stable (151.0.7922.173 recorded live)
+- Horizontal scroll not implemented
+- WM chrome can offset clicks
+- Memory-plane screenshots stub a 1×1 PNG advertised as 1440×900
+- `/run/user/1500` is tmpfs and is recreated after resume
+- If user namespaces are disabled **and** `chrome-sandbox` sits on a `nosuid` mount, live Chrome will fail closed. That evidence is required before considering `--no-sandbox`, which remains forbidden.
 
 ---
 
 ## Phase 4 — Node pairing and capability security
 
 **Goal:** Pair codes + capability tokens. MCP auth alone cannot identify a Bot.
+
+**Status:** NOT STARTED. Do not begin C4 until explicit approval.
 
 ### Gate C4
 Valid NOEMA capability cannot access Code’s machine even when both Bots share the same account-level MCP connection.

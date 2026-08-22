@@ -1,14 +1,29 @@
-# Manual Runloop Devbox live tests (C3A).
-# Not on pull_request. Not on push. Burns trial credits.
+# Manual Runloop paid jobs. workflow_dispatch only. Burns trial credits.
+# Not on pull_request. Not on push.
 # Do NOT use runloopai/deploy-agent — FLOKS tests Devboxes, not Runloop Agents.
 # RUNLOOP_API_KEY stays in GitHub secrets; never in git, guest env, or logs.
+#
+# phase:
+#   c3a            — original C3A live Devbox isolation (default)
+#   c3b-blueprint  — bash blueprints/runloop-interactive/build.sh
+#   c3b-live       — C3B interactive live test (only after build_complete)
 name: runloop-c3
 
 on:
   workflow_dispatch:
+    inputs:
+      phase:
+        description: "Which paid Runloop job to run"
+        required: true
+        type: choice
+        default: c3a
+        options:
+          - c3a
+          - c3b-blueprint
+          - c3b-live
 
 concurrency:
-  group: runloop-c3
+  group: runloop-c3-${{ github.event.inputs.phase || 'c3a' }}
   cancel-in-progress: false
 
 permissions:
@@ -17,11 +32,12 @@ permissions:
 jobs:
   runloop-live:
     name: Runloop Devbox live test
+    if: ${{ github.event.inputs.phase == 'c3a' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       RUNLOOP_API_KEY: ${{ secrets.RUNLOOP_API_KEY }}
-      FLOK_RUNLOOP_BLUEPRINT: ${{ vars.FLOK_RUNLOOP_BLUEPRINT }}
+      FLOK_RUNLOOP_BLUEPRINT: ${{ vars.FLOK_RUNLOOP_BLUEPRINT || secrets.FLOK_RUNLOOP_BLUEPRINT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,11 +49,81 @@ jobs:
       - run: npm ci
       - name: Verify Runloop configuration
         run: |
-          test -n "$RUNLOOP_API_KEY"
-          test -n "$FLOK_RUNLOOP_BLUEPRINT"
-          echo "Runloop blueprint: $FLOK_RUNLOOP_BLUEPRINT"
-          echo "RUNLOOP_API_KEY length=${#RUNLOOP_API_KEY}"
+          if [ -z "$RUNLOOP_API_KEY" ]; then
+            echo "RUNLOOP_API_KEY is missing (must FAIL, not skip)"
+            exit 1
+          fi
+          if [ -z "$FLOK_RUNLOOP_BLUEPRINT" ]; then
+            FLOK_RUNLOOP_BLUEPRINT="runloop/universal-ubuntu-24.04-x86_64-dnd"
+            echo "FLOK_RUNLOOP_BLUEPRINT unset; using documented default"
+            echo "FLOK_RUNLOOP_BLUEPRINT=$FLOK_RUNLOOP_BLUEPRINT" >> "$GITHUB_ENV"
+          fi
+          echo "Runloop blueprint configured"
       - name: Run Runloop live tests
         env:
           FLOK_LIVE_RUNLOOP_TEST: "1"
         run: npm run test:live:runloop
+
+  build-interactive-blueprint:
+    name: Build interactive Blueprint
+    if: ${{ github.event.inputs.phase == 'c3b-blueprint' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUNLOOP_API_KEY: ${{ secrets.RUNLOOP_API_KEY }}
+      FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT: flok-runloop-interactive
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22.16"
+          cache: npm
+      - run: npm ci
+      - name: Verify Runloop configuration
+        run: |
+          if [ -z "$RUNLOOP_API_KEY" ]; then
+            echo "RUNLOOP_API_KEY is missing (must FAIL, not skip)"
+            exit 1
+          fi
+          echo "Blueprint name flok-runloop-interactive"
+      - name: Build interactive Blueprint
+        run: bash blueprints/runloop-interactive/build.sh
+
+  runloop-c3b-live:
+    name: Runloop interactive live test
+    if: ${{ github.event.inputs.phase == 'c3b-live' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      RUNLOOP_API_KEY: ${{ secrets.RUNLOOP_API_KEY }}
+      FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT: ${{ vars.FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT || secrets.FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT }}
+      FLOK_RUNLOOP_BLUEPRINT: ${{ vars.FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT || secrets.FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22.16"
+          cache: npm
+      - run: npm ci
+      - name: Verify Runloop configuration
+        run: |
+          if [ -z "$RUNLOOP_API_KEY" ]; then
+            echo "RUNLOOP_API_KEY is missing (must FAIL, not skip)"
+            exit 1
+          fi
+          if [ -z "$FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT" ] && [ -z "$FLOK_RUNLOOP_BLUEPRINT" ]; then
+            FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT="flok-runloop-interactive"
+            FLOK_RUNLOOP_BLUEPRINT="flok-runloop-interactive"
+            echo "FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT unset; using documented default"
+            echo "FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT=$FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT" >> "$GITHUB_ENV"
+            echo "FLOK_RUNLOOP_BLUEPRINT=$FLOK_RUNLOOP_BLUEPRINT" >> "$GITHUB_ENV"
+          fi
+          echo "C3B blueprint configured"
+      - name: Run C3B live tests
+        env:
+          FLOK_LIVE_RUNLOOP_C3B_TEST: "1"
+        run: npm run test:live:runloop-c3b

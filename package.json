@@ -15,6 +15,7 @@
     "test:live": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/live/**/*.test.ts",
     "test:live:docker": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/providers/docker-dev.isolation.test.ts",
     "test:live:runloop": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/providers/runloop.isolation.test.ts tests/live/runloop.live.test.ts",
+    "test:live:runloop-c3b": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/live/runloop.c3b.live.test.ts",
     "build": "tsc",
     "verify": "npm run typecheck && npm test && npm run build"
   },

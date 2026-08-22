@@ -16,6 +16,7 @@ Flok Node Runtime (this package)
   │     ├─ FakeProvider          (unit / contract tests)
   │     ├─ DockerDevProvider     (local integration only)
   │     ├─ RunloopProvider       (production v1 — Devboxes)
+  │     │     filesystem, terminal, private display, in-Devbox browser
   │     └─ KataProvider          (self-host, Phase 13)
   ├─ MCP Gateway (eight tools)
   ├─ Checkpoints → S3-compatible object storage
@@ -30,7 +31,7 @@ This runtime owns the isolated-computer substrate. After Gate G0 it can be impor
 ## Control plane vs compute plane
 
 - **Control plane** (this package): pairing, capabilities, jobs, policies, audit, MCP endpoint.
-- **Compute plane**: one VM (or later microVM) per Node. Filesystem, processes, browser, VNC live only there.
+- **Compute plane**: one VM (or later microVM) per Node. Filesystem, processes, browser, and the private display live only there. C3B extends `runloop/universal-ubuntu-24.04-x86_64-dnd` so Docker/Node/Python/Git stay available; Chrome and the X stack run as `flok-ui`, not root. Grok remains the intelligence; Runloop is not the agent runtime.
 
 No route or MCP tool may call a concrete provider. Everything goes through `ComputerService` → `ComputerProvider`.
 

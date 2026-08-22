@@ -19,8 +19,9 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 | **C0** — scaffold, authority, domain types, ComputerProvider interface | **CLOSED / PASSED** |
 | **C1** — domain logic, FakeProvider, ComputerService, unit tests | **CLOSED / PASSED** |
 | **C2** — DockerDevProvider + isolation/persistence | **CLOSED / PASSED** |
-| **C3** — Runloop Devbox provider (C3A compute substrate) | CURRENT |
-| C4+ | Not started (Nexus-IQ remains hard-locked until G0) |
+| **C3A** — Runloop Devbox compute substrate | **CLOSED / PASSED** |
+| **C3B** — interactive computer (display, browser, screenshot, bounded input) | **CLOSED / PASSED** |
+| C4+ | Not started (do not begin C4; Nexus-IQ remains hard-locked until G0) |
 
 ## Authority files (read in this order)
 
@@ -60,23 +61,26 @@ FLOK_LIVE_RUNLOOP_TEST=1 npm run test:live:runloop
 
 When the flag is set, missing credentials **fail** the suite. Live Runloop is **not** part of `npm run verify` or required PR CI.
 
+C3B interactive live tests are a separate manual workflow (`runloop-c3` phase `c3b-live`; `runloop-c3b.yml` is not registered on main). They need the custom interactive Blueprint (built from the DnD base; not bare Ubuntu) and `FLOK_LIVE_RUNLOOP_C3B_TEST=1`. Paid live gate **passed** on run `32559415086` (SHA `b892978`). `computerUse` is **true**. `accessibility` / `vnc` / `pauseMemory` stay **false**.
+
 Store production credentials in GitHub Actions only (never in git, `.env` committed to the repo, or a Node VM / Devbox):
 
 | Name | Where | Purpose |
 |------|--------|---------|
 | `RUNLOOP_API_KEY` | Repository **secret** | Runloop control-plane API key |
-| `FLOK_RUNLOOP_BLUEPRINT` | Repository **variable** | Blueprint name (e.g. `runloop/universal-ubuntu-24.04-x86_64-dnd`) |
+| `FLOK_RUNLOOP_BLUEPRINT` | Repository **variable or secret** | C3A generic Ubuntu Blueprint name |
+| `FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT` | Repository **variable or secret** | C3B interactive Blueprint name (after `bash blueprints/runloop-interactive/build.sh`) |
+
+GitHub **Variables** and **Secrets** are different stores. A value saved only as a Secret is not visible as `vars.FLOK_*`. Workflows accept either.
 
 ```text
 PR
 ├─ verify        ← every PR (free)
 ├─ docker-c2     ← every PR (GitHub-hosted Docker)
-└─ runloop-live  ← manual workflow_dispatch only
-       ├─ secrets.RUNLOOP_API_KEY
-       └─ vars.FLOK_RUNLOOP_BLUEPRINT
+└─ runloop-c3    ← manual workflow_dispatch only (phase c3a / c3b-blueprint / c3b-live)
 ```
 
-Run it from Actions → **runloop-c3** → Run workflow. Do not use `runloopai/deploy-agent`. Do not make it a required status check.
+Run C3A from Actions → **runloop-c3** → Run workflow. Do not use `runloopai/deploy-agent`. Do not make paid jobs required status checks. Never log the API key or its length.
 
 Do **not** enable Nexus, AEON, or Graphiti until Gate G0 is marked PASSED in `PHASES.md`.
 
