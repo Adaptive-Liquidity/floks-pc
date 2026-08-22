@@ -24,6 +24,7 @@ jobs:
     env:
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       FLOK_DAYTONA_SNAPSHOT: ${{ vars.FLOK_DAYTONA_SNAPSHOT }}
+      DAYTONA_TARGET: ${{ vars.DAYTONA_TARGET }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -38,6 +39,7 @@ jobs:
           test -n "$DAYTONA_API_KEY"
           test -n "$FLOK_DAYTONA_SNAPSHOT"
           echo "Daytona snapshot: $FLOK_DAYTONA_SNAPSHOT"
+          echo "DAYTONA_TARGET: ${DAYTONA_TARGET:-<sdk default>}"
           echo "DAYTONA_API_KEY length=${#DAYTONA_API_KEY}"
       - name: Run Daytona live tests
         env:

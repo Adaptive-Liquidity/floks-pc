@@ -88,10 +88,13 @@ export async function createSdkDaytonaPlane(opts: {
   apiKey: string;
   snapshot: string;
   apiUrl?: string;
+  target?: string;
 }): Promise<DaytonaControlPlane> {
-  const config: { apiKey: string; apiUrl?: string } = { apiKey: opts.apiKey };
+  const config: { apiKey: string; apiUrl?: string; target?: string } = { apiKey: opts.apiKey };
   const apiUrl = opts.apiUrl ?? process.env.DAYTONA_API_URL;
   if (apiUrl) config.apiUrl = apiUrl;
+  const target = opts.target ?? process.env.DAYTONA_TARGET;
+  if (target) config.target = target;
   const daytona = new Daytona(config);
   return new SdkDaytonaControlPlane(daytona, opts.snapshot);
 }
@@ -131,13 +134,22 @@ class SdkDaytonaControlPlane implements DaytonaControlPlane {
       if (params.diskGb !== undefined) resources.disk = params.diskGb;
       createArgs.resources = resources;
     }
-    const sandbox = (await this.daytona.create(
-      createArgs,
-      { timeout: 180 },
-    )) as unknown as SdkSandbox;
-    const session = new SdkDaytonaSandbox(sandbox, params.birdId, params.flockId);
-    await session.ensureWorkspace();
-    return session;
+    try {
+      const sandbox = (await this.daytona.create(
+        createArgs,
+        { timeout: 180 },
+      )) as unknown as SdkSandbox;
+      const session = new SdkDaytonaSandbox(sandbox, params.birdId, params.flockId);
+      await session.ensureWorkspace();
+      return session;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const available = await describeAvailableSnapshots(this.daytona);
+      throw new ProviderUnavailable(
+        "daytona",
+        `${msg} (requested snapshot=${snapshot}; available=${available})`,
+      );
+    }
   }
 
   async get(id: string): Promise<DaytonaSandboxSession> {
@@ -414,6 +426,18 @@ function classifyFs(err: unknown): string {
     return "NOT_FOUND";
   }
   return "IO_ERROR";
+}
+
+async function describeAvailableSnapshots(daytona: Daytona): Promise<string> {
+  try {
+    const page = await daytona.snapshot.list({ page: 1, limit: 50 });
+    if (!page.items.length) return "none";
+    return page.items
+      .map((s) => `${s.name}[state=${String(s.state ?? "")}]`)
+      .join(",");
+  } catch (e) {
+    return `list-failed:${e instanceof Error ? e.message : String(e)}`;
+  }
 }
 
 /** Resolve a guest path inside /home/flok; used by live jail tests. */
