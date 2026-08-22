@@ -43,6 +43,60 @@ export class CapabilityRevoked extends ComputerError {
   }
 }
 
+export class CapabilityExpired extends ComputerError {
+  constructor(capabilityId?: string) {
+    super("CAPABILITY_EXPIRED", "Capability has expired", { capabilityId });
+    this.name = "CapabilityExpired";
+  }
+}
+
+export class CapabilityInvalid extends ComputerError {
+  constructor(reason: string) {
+    super("CAPABILITY_INVALID", `Capability invalid: ${reason}`, { reason });
+    this.name = "CapabilityInvalid";
+  }
+}
+
+export class CapabilityMissing extends ComputerError {
+  constructor(reason = "capability required") {
+    super(
+      "CAPABILITY_MISSING",
+      `Computer operation requires a valid capability token; ${reason}`,
+      { reason },
+    );
+    this.name = "CapabilityMissing";
+  }
+}
+
+export class InsufficientScope extends ComputerError {
+  constructor(required: string, have: readonly string[]) {
+    super(
+      "INSUFFICIENT_SCOPE",
+      `Capability is missing required scope "${required}"`,
+      { required, have: [...have] },
+    );
+    this.name = "InsufficientScope";
+  }
+}
+
+export class InvalidScope extends ComputerError {
+  constructor(scope: string) {
+    super("INVALID_SCOPE", `Unknown capability scope: ${scope}`, { scope });
+    this.name = "InvalidScope";
+  }
+}
+
+export class CrossNodeDenied extends ComputerError {
+  constructor(fromComputerId: string, toComputerId: string) {
+    super(
+      "CROSS_NODE_DENIED",
+      "Capability is bound to a different computer/bird/flock",
+      { fromComputerId, toComputerId },
+    );
+    this.name = "CrossNodeDenied";
+  }
+}
+
 export class PairCodeInvalid extends ComputerError {
   constructor(reason: string) {
     super("PAIR_CODE_INVALID", `Pair code invalid: ${reason}`, { reason });

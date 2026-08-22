@@ -1,17 +1,20 @@
 /**
  * Pair-code helpers.
  * Codes are one-use, short-TTL, and only digests are stored.
- * Format recommendation from plan: ABCD-EFGH-JK (≥ 50 bits entropy).
+ * Format: ABCD-EFGH-JK (≥ 50 bits entropy). Independent of Flok join codes.
  */
 
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { PairCodeInvalid } from "./errors.js";
+import { digestEquals, sha256Hex } from "./digest.js";
 
-const PAIR_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const PAIR_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I
+export const PAIR_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+export const PAIR_CODE_MAX_ATTEMPTS = 5;
+export const PAIR_CODE_CHAR_COUNT = 10;
+const PAIR_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 32 chars; no 0/O/1/I
 
 export interface PairCodeMaterial {
-  /** Human-readable code shown to the user / Bot */
+  /** Human-readable code shown to the user / Bot — never persist this */
   code: string;
   /** SHA-256 hex digest — the only thing that should be persisted */
   digest: string;
@@ -19,15 +22,26 @@ export interface PairCodeMaterial {
   expiresAt: Date;
 }
 
+function randomAlphabetChars(count: number): string {
+  const alphabetLen = PAIR_CODE_ALPHABET.length;
+  const limit = 256 - (256 % alphabetLen);
+  const chars: string[] = [];
+  while (chars.length < count) {
+    const buf = randomBytes(count);
+    for (const byte of buf) {
+      if (byte < limit) {
+        chars.push(PAIR_CODE_ALPHABET[byte % alphabetLen]!);
+        if (chars.length === count) break;
+      }
+    }
+  }
+  return chars.join("");
+}
+
 /** Generate a fresh one-use pair code + its digest + expiry. */
 export function generatePairCode(ttlMs: number = PAIR_CODE_TTL_MS): PairCodeMaterial {
-  // ~52 bits of entropy in a readable form
-  const raw = randomBytes(8);
-  const chars: string[] = [];
-  for (let i = 0; i < 10; i++) {
-    chars.push(PAIR_CODE_ALPHABET[raw[i % 8]! % PAIR_CODE_ALPHABET.length]!);
-  }
-  const code = `${chars.slice(0, 4).join("")}-${chars.slice(4, 8).join("")}-${chars.slice(8, 10).join("")}`;
+  const raw = randomAlphabetChars(PAIR_CODE_CHAR_COUNT);
+  const code = `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 10)}`;
   const digest = hashPairCode(code);
   const expiresAt = new Date(Date.now() + ttlMs);
   return { code, digest, expiresAt };
@@ -36,7 +50,7 @@ export function generatePairCode(ttlMs: number = PAIR_CODE_TTL_MS): PairCodeMate
 /** SHA-256 hex digest of a normalized pair code. */
 export function hashPairCode(code: string): string {
   const normalized = code.trim().toUpperCase().replace(/\s+/g, "");
-  return createHash("sha256").update(normalized, "utf8").digest("hex");
+  return sha256Hex(normalized);
 }
 
 export interface PairCodeRecord {
@@ -49,12 +63,12 @@ export interface PairCodeRecord {
 /**
  * Validate a presented code against a stored record.
  * Throws PairCodeInvalid on any failure (expired, already used, mismatch, too many attempts).
- * On success the caller should mark usedAt = now and persist.
+ * On success the caller must mark usedAt = now and persist — codes are one-time-use.
  */
 export function validatePairCode(
   presentedCode: string,
   record: PairCodeRecord,
-  maxAttempts: number = 5,
+  maxAttempts: number = PAIR_CODE_MAX_ATTEMPTS,
 ): void {
   if (record.usedAt !== null) {
     throw new PairCodeInvalid("already used");
@@ -66,7 +80,7 @@ export function validatePairCode(
     throw new PairCodeInvalid("expired");
   }
   const presentedDigest = hashPairCode(presentedCode);
-  if (presentedDigest !== record.digest) {
+  if (!digestEquals(presentedDigest, record.digest)) {
     throw new PairCodeInvalid("mismatch");
   }
 }
