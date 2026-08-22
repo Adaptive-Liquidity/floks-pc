@@ -158,7 +158,11 @@ async function handleMcpHttpInner(
   if (parsedId !== undefined) noteId(parsedId);
 
   const ctx: McpRequestContext = {};
-  if (authorization) ctx.authorization = authorization;
+  // Only use bearer-keyed identity when wrapper auth is configured and the
+  // bearer was already validated above. Forwarding an unvalidated caller-
+  // supplied bearer as an authenticated identity would let attackers saturate
+  // the throttle map with arbitrary tokens when auth is disabled.
+  if (config.authToken && authorization) ctx.authorization = authorization;
   if (req.socket.remoteAddress) ctx.remoteAddress = req.socket.remoteAddress;
   const protocol = header(req.headers, "mcp-protocol-version");
   if (protocol) ctx.protocolVersionHeader = protocol;
