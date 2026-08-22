@@ -9,6 +9,12 @@ import { posix as pathPosix } from "node:path";
 import { PathEscape } from "../errors.js";
 import type { Action } from "../types.js";
 import {
+  BROWSER_PROFILE_DIR,
+  DISPLAY_HEIGHT,
+  DISPLAY_WIDTH,
+  INTERACTIVE_DIR,
+} from "./runloop-interactive.js";
+import {
   assertNoControlPlaneSecrets,
   RUNLOOP_WORKSPACE_ROOT,
   type RunloopControlPlane,
@@ -260,8 +266,8 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
       this.stackStarts += 1;
       this.stackUp = true;
     }
-    await this.fsMkdir("/home/user/flok/.browser/profile");
-    await this.fsMkdir("/home/user/flok/.flok");
+    await this.fsMkdir(BROWSER_PROFILE_DIR);
+    await this.fsMkdir(INTERACTIVE_DIR);
   }
 
   async screenshot(): Promise<{
@@ -273,8 +279,8 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     this.assertRunning();
     if (!this.stackUp) await this.ensureInteractiveStack();
     return {
-      width: 1440,
-      height: 900,
+      width: DISPLAY_WIDTH,
+      height: DISPLAY_HEIGHT,
       png: MIN_PNG,
       activeWindow: `flok-${this.birdId}`,
     };
@@ -289,16 +295,16 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     this.assertRunning();
     if (!this.stackUp) await this.ensureInteractiveStack();
     if (action.type === "open_url" && action.url) {
-      await this.fsMkdir("/home/user/flok/.browser/profile");
+      await this.fsMkdir(BROWSER_PROFILE_DIR);
       await this.fsWrite(
-        "/home/user/flok/.browser/profile/last-url",
+        `${BROWSER_PROFILE_DIR}/last-url`,
         Buffer.from(action.url, "utf8"),
       );
     }
     if (action.type === "launch_application") {
-      await this.fsMkdir("/home/user/flok/.browser/profile");
+      await this.fsMkdir(BROWSER_PROFILE_DIR);
       await this.fsWrite(
-        "/home/user/flok/.browser/profile/launched",
+        `${BROWSER_PROFILE_DIR}/launched`,
         Buffer.from("1", "utf8"),
       );
     }

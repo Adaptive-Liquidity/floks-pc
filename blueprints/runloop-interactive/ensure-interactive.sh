@@ -38,10 +38,25 @@ chown "$UI_USER:$UI_USER" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 chmod 1777 /tmp/.X11-unix || true
 chown "$UI_USER:$UI_USER" "$RUNDIR" || true
-chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser /home/user/flok/.flok
+# Root-executed helpers live in .flok; never hand that directory to flok-ui.
+chown root:root /home/user/flok/.flok
+chmod 755 /home/user/flok/.flok
+if [ -f /home/user/flok/.flok/execvp.py ]; then
+  chown root:root /home/user/flok/.flok/execvp.py
+  chmod 755 /home/user/flok/.flok/execvp.py
+fi
+if [ -f /home/user/flok/.flok/ensure-interactive.sh ]; then
+  chown root:root /home/user/flok/.flok/ensure-interactive.sh
+  chmod 755 /home/user/flok/.flok/ensure-interactive.sh
+fi
+if [ -f /home/user/flok/.flok/fixture.html ]; then
+  chown root:root /home/user/flok/.flok/fixture.html
+  chmod 644 /home/user/flok/.flok/fixture.html
+fi
+chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser
 chmod 700 /home/user/flok/.browser
 chmod 700 "$PROFILE" || true
-chmod 775 /home/user/flok/.flok /home/user/flok || true
+chmod 775 /home/user/flok || true
 touch /tmp/flok-chrome.log
 chown "$UI_USER:$UI_USER" /tmp/flok-chrome.log
 chmod 644 /tmp/flok-chrome.log

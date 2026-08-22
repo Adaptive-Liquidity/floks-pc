@@ -20,6 +20,10 @@ import {
   CONTROL_PLANE_SECRET_ENV_KEYS,
   RUNLOOP_WORKSPACE_ROOT,
 } from "../../src/lib/computers/providers/index.js";
+import {
+  DISPLAY_HEIGHT,
+  DISPLAY_WIDTH,
+} from "../../src/lib/computers/providers/runloop-interactive.js";
 
 function provider(): RunloopProvider {
   return new RunloopProvider({
@@ -181,8 +185,8 @@ describe("RunloopProvider (no network)", () => {
     const p = provider();
     const a = await p.provision({ birdId: "c3b", flockId: "f" });
     const obs = await p.observe(a.providerRef, { includeScreenshot: true });
-    assert.equal(obs.screenWidth, 1440);
-    assert.equal(obs.screenHeight, 900);
+    assert.equal(obs.screenWidth, DISPLAY_WIDTH);
+    assert.equal(obs.screenHeight, DISPLAY_HEIGHT);
     assert.ok(obs.screenshotBase64 && obs.screenshotBase64.length > 10);
     await assert.rejects(
       () => p.takeover(a.providerRef),

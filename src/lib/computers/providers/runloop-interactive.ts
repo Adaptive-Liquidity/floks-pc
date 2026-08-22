@@ -3,9 +3,10 @@
  * Pure validation + constants. No network.
  *
  * Suspend preserves disk, not RAM. Graphical daemons and Chromium must be
- * restarted after resume via ensureInteractiveStack().
+ * restarted after provision, restore, and resume via ensureInteractiveStack().
  */
 
+import { randomUUID } from "node:crypto";
 import { posix as pathPosix } from "node:path";
 import type { Action } from "../types.js";
 import { RUNLOOP_WORKSPACE_ROOT } from "./runloop-client.js";
@@ -17,7 +18,11 @@ export const DISPLAY_DEPTH = 24;
 export const BROWSER_PROFILE_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser/profile`;
 export const INTERACTIVE_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.flok`;
 export const FIXTURE_PATH = `${INTERACTIVE_DIR}/fixture.html`;
-export const OBS_SHOT_PATH = `${INTERACTIVE_DIR}/obs.png`;
+/** Unique PNG path under the flok-ui-writable browser dir (not root-locked .flok). */
+export const OBS_SHOT_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser`;
+export function uniqueObsShotPath(): string {
+  return `${OBS_SHOT_DIR}/obs-${randomUUID()}.png`;
+}
 export const ENSURE_SCRIPT_PATH = `${INTERACTIVE_DIR}/ensure-interactive.sh`;
 export const LOCAL_NOVNC_URL = "http://127.0.0.1:6080/";
 export const MAX_TYPE_CHARS = 2000;
@@ -111,11 +116,12 @@ export function validateAction(action: Action): string | null {
       return null;
     }
     case "scroll": {
-      if (typeof action.y !== "number" && typeof action.x !== "number") {
-        return "scroll requires x or y delta";
+      if (action.x !== undefined && action.x !== 0) {
+        return "horizontal scroll unsupported";
       }
-      if (action.x !== undefined && !Number.isFinite(action.x)) return "scroll x must be finite";
-      if (action.y !== undefined && !Number.isFinite(action.y)) return "scroll y must be finite";
+      if (!Number.isInteger(action.y) || action.y === 0) {
+        return "scroll requires non-zero integer y delta";
+      }
       return null;
     }
     case "open_url": {
@@ -419,12 +425,6 @@ export async function pollUntilChromeReady(
     const timedOut = now() >= deadline;
     const result = classifyChromeReadiness(evidence, { timedOut, requireProfile });
     if (result.ready || result.terminal) return { result, evidence };
-    if (timedOut) {
-      return {
-        result: classifyChromeReadiness(evidence, { timedOut: true, requireProfile }),
-        evidence,
-      };
-    }
     await sleep(intervalMs);
     evidence = await probe();
   }
@@ -660,10 +660,25 @@ chown "$UI_USER:$UI_USER" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 chmod 1777 /tmp/.X11-unix || true
 chown "$UI_USER:$UI_USER" "$RUNDIR" || true
-chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser /home/user/flok/.flok
+# Root-executed helpers live in .flok; never hand that directory to flok-ui.
+chown root:root /home/user/flok/.flok
+chmod 755 /home/user/flok/.flok
+if [ -f /home/user/flok/.flok/execvp.py ]; then
+  chown root:root /home/user/flok/.flok/execvp.py
+  chmod 755 /home/user/flok/.flok/execvp.py
+fi
+if [ -f /home/user/flok/.flok/ensure-interactive.sh ]; then
+  chown root:root /home/user/flok/.flok/ensure-interactive.sh
+  chmod 755 /home/user/flok/.flok/ensure-interactive.sh
+fi
+if [ -f /home/user/flok/.flok/fixture.html ]; then
+  chown root:root /home/user/flok/.flok/fixture.html
+  chmod 644 /home/user/flok/.flok/fixture.html
+fi
+chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser
 chmod 700 /home/user/flok/.browser
 chmod 700 "$PROFILE" || true
-chmod 775 /home/user/flok/.flok /home/user/flok || true
+chmod 775 /home/user/flok || true
 touch /tmp/flok-chrome.log
 chown "$UI_USER:$UI_USER" /tmp/flok-chrome.log
 chmod 644 /tmp/flok-chrome.log
@@ -701,6 +716,7 @@ start_ui() {
   echo "$pid" > "$pidfile"
 }
 
+# Suspend kills Chrome but leaves SingletonLock on disk.
 if ! pgrep -u "$UI_USER" -f -- "--user-data-dir=\${PROFILE}" >/dev/null 2>&1; then
   rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonSocket" "$PROFILE/SingletonCookie"
 fi

@@ -24,6 +24,8 @@ import {
   DISPLAY_WIDTH,
   DISPLAY_HEIGHT,
   BROWSER_PROFILE_DIR,
+  OBS_SHOT_DIR,
+  uniqueObsShotPath,
   FLOK_UI_USER,
   FLOK_UI_UID,
   CHROME_LOG_PATH,
@@ -89,6 +91,13 @@ describe("C3B action validation", () => {
     assert.ok(validateAction({ type: "wait", durationMs: 99_000 }));
     assert.ok(validateAction({ type: "wait", durationMs: 0 }));
     assert.ok(validateAction({ type: "scroll" }));
+    assert.ok(validateAction({ type: "scroll", x: 5 }));
+    assert.ok(validateAction({ type: "scroll", y: 0 }));
+    assert.ok(validateAction({ type: "scroll", x: 1, y: 3 }));
+    assert.match(validateAction({ type: "scroll", x: 5 }) ?? "", /horizontal/);
+    assert.equal(validateAction({ type: "scroll", y: 3 }), null);
+    assert.equal(validateAction({ type: "scroll", y: -2 }), null);
+    assert.equal(validateAction({ type: "scroll", x: 0, y: 3 }), null);
     assert.equal(validateAction({ type: "type", text: "hello" }), null);
     assert.equal(validateAction({ type: "key", key: "Return" }), null);
   });
@@ -158,6 +167,8 @@ describe("C3B Dockerfile and ensure contract", () => {
       /chmod 700 \/home\/user\/flok\/\.browser \/home\/user\/flok\/\.browser\/profile/,
     );
     assert.equal(/^(RUN|CMD|ENTRYPOINT).*(--no-sandbox)/m.test(dockerfile), false);
+    assert.match(dockerfile, /chown root:root \/home\/user\/flok\/\.flok/);
+    assert.doesNotMatch(dockerfile, /chown -R flok-ui:flok-ui[^\n]*\.flok/);
   });
 
   it("ensure script is localhost-only, flok-ui only, and restarts X after resume", () => {
@@ -169,10 +180,22 @@ describe("C3B Dockerfile and ensure contract", () => {
       assert.match(src, /chmod 700 "\$PROFILE"/);
       assert.match(src, /\/tmp\/flok-chrome\.log/);
       assert.match(src, /test -w "\$PROFILE"/);
+      assert.match(src, /chown root:root \/home\/user\/flok\/\.flok/);
+      assert.match(src, /chown -R "\$UI_USER:\$UI_USER" \/home\/user\/flok\/\.browser/);
+      assert.doesNotMatch(src, /chown -R .* \/home\/user\/flok\/\.browser \/home\/user\/flok\/\.flok/);
       assert.doesNotMatch(src, /--no-sandbox/);
       assert.doesNotMatch(src, /chmod 777/);
       assert.doesNotMatch(src, /--disable-setuid-sandbox/);
     }
+  });
+
+  it("ENSURE_INTERACTIVE_SH matches ensure-interactive.sh from set -euo pipefail", () => {
+    const body = (src: string): string => {
+      const i = src.indexOf("set -euo pipefail");
+      assert.ok(i >= 0, "missing set -euo pipefail");
+      return src.slice(i).replace(/\s+$/, "");
+    };
+    assert.equal(body(ENSURE_INTERACTIVE_SH), body(ensureFile));
   });
 });
 
@@ -251,12 +274,52 @@ describe("C3B RunloopProvider (memory)", () => {
   });
 
   it("does not shell-inject via type text", async () => {
+    const text = "$(reboot); rm -rf /";
+    const argv = argvAsUiUser(["xdotool", "type", "--", text]);
+    assert.equal(argv[argv.length - 1], text);
+    assert.equal(argv.includes("--"), true);
+    assert.equal(argv.filter((a) => a === text).length, 1);
+    assert.equal(argv.includes("sh"), false);
+    assert.equal(argv.includes("-c"), false);
+    assert.equal(argv.includes(`/bin/sh -c ${text}`), false);
     const p = provider();
     const a = await p.provision({ birdId: "inj", flockId: "f" });
     const r = await p.act(a.providerRef, {
-      actions: [{ type: "type", text: "$(reboot); rm -rf /" }],
+      actions: [{ type: "type", text }],
     });
     assert.equal(r.ok, true);
+  });
+
+  it("stops the act batch after the first failure and does not send later input", async () => {
+    const p = provider();
+    const a = await p.provision({ birdId: "batch-stop", flockId: "f" });
+    const r = await p.act(a.providerRef, {
+      actions: [
+        { type: "click_coordinates", x: 10, y: 10 },
+        { type: "click_element", elementId: "nope" },
+        { type: "type", text: "should-not-run" },
+        { type: "key", key: "Return" },
+      ],
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.results.length, 4);
+    assert.equal(r.results[0]?.success, true);
+    assert.equal(r.results[1]?.success, false);
+    assert.match(r.results[1]?.error ?? "", /unsupported/);
+    assert.equal(r.results[2]?.success, false);
+    assert.equal(r.results[2]?.error, "not executed");
+    assert.equal(r.results[3]?.success, false);
+    assert.equal(r.results[3]?.error, "not executed");
+  });
+
+  it("uniqueObsShotPath is under .browser and unique per call", () => {
+    const a = uniqueObsShotPath();
+    const b = uniqueObsShotPath();
+    assert.notEqual(a, b);
+    assert.equal(a.startsWith(`${OBS_SHOT_DIR}/obs-`), true);
+    assert.equal(b.startsWith(`${OBS_SHOT_DIR}/obs-`), true);
+    assert.equal(a.endsWith(".png"), true);
+    assert.equal(a.includes("/.flok/"), false);
   });
 
   it("browser profile lives under the workspace jail", async () => {

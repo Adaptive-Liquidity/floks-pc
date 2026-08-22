@@ -78,7 +78,7 @@ interface ProviderCapabilities {
 - C3A default blueprint: `runloop/universal-ubuntu-24.04-x86_64-dnd`, architecture `x86_64`.
 - C3B interactive blueprint: source under `blueprints/runloop-interactive/`. Base `FROM runloop:runloop/universal-ubuntu-24.04-x86_64-dnd` so Docker/Node/Python/Git remain. Graphical stack (Xvfb `:99` 1440×900×24, Openbox, Chrome, xdotool, ImageMagick `import`, localhost x11vnc/noVNC) runs as non-root `flok-ui` (uid 1500). Browserbase and Kernel are not used.
 - Workspace jail: `/home/user/flok`.
-- `pause` is `suspend` — **disk** is preserved, in-memory process state is not (`pauseMemory: false`). Graphical daemons and Chromium must be restarted after resume via `ensureInteractiveStack()`.
+- `pause` is `suspend` — **disk** is preserved, in-memory process state is not (`pauseMemory: false`). Graphical daemons and Chromium must be restarted after provision, restore, and resume via `ensureInteractiveStack()`.
 - `checkpoint` is `snapshotDisk`; restore creates a **new** Devbox from that snapshot (forks supported).
 - argv exec: serialize `{argv,cwd,env}` JSON → base64 → Python `os.execvp`. `mode: "shell"` rejected.
 - C3B `observe()` screenshots the private display (PNG, temp file deleted). Accessibility is not implemented (`accessibility: false`).

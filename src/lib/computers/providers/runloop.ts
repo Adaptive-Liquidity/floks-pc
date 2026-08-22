@@ -361,12 +361,16 @@ export class RunloopProvider implements ComputerProvider {
     await s.ensureInteractiveStack();
     const results: ActionResult["results"] = [];
     let ok = true;
-    for (const action of request.actions) {
+    for (let i = 0; i < request.actions.length; i++) {
+      const action = request.actions[i]!;
       const err = validateAction(action);
       if (err) {
         ok = false;
         results.push({ action, success: false, error: err });
-        continue;
+        for (const rest of request.actions.slice(i + 1)) {
+          results.push({ action: rest, success: false, error: "not executed" });
+        }
+        break;
       }
       try {
         await s.uiAction(action);
@@ -378,6 +382,10 @@ export class RunloopProvider implements ComputerProvider {
           success: false,
           error: e instanceof Error ? e.message : "action failed",
         });
+        for (const rest of request.actions.slice(i + 1)) {
+          results.push({ action: rest, success: false, error: "not executed" });
+        }
+        break;
       }
     }
     return { ok, results };
