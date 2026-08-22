@@ -6,6 +6,7 @@ export {
   MCP_LEGACY_PROTOCOLS,
   MCP_MAX_BODY_BYTES,
   MCP_MAX_EXEC_OUTPUT_CHARS,
+  MCP_MAX_JSONRPC_BATCH,
   MCP_PAIR_CONNECTION_FAILURE_LIMIT,
   MCP_PATH,
   MCP_PREFERRED_PROTOCOL,
@@ -25,7 +26,7 @@ export type { McpHttpOptions } from "./http.js";
 export { MCP_TOOL_NAMES, MCP_TOOLS, toolsListResult } from "./tools.js";
 export type { McpToolDefinition, McpToolName } from "./tools.js";
 
-export { RecordingLogger, silentLogger, blobContainsSecret } from "./log.js";
+export { silentLogger } from "./log.js";
 export type { McpLogger } from "./log.js";
 
 export {

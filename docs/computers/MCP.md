@@ -4,7 +4,7 @@ Public Bot surface for Flok Computers. **ComputerService** is the only path to c
 
 ## Endpoint
 
-```
+```text
 POST /mcp
 ```
 
@@ -32,7 +32,7 @@ Real Grok Bot pairing through a public URL is a **manual** gate. This package do
 
 ## Auth / capability flow
 
-```
+```text
 Grok Bot
   │  Authorization: Bearer <wrapper>     ← optional, connection identity only
   │  POST /mcp  tools/call computer_pair { pair_code, bird_id, flock_id }

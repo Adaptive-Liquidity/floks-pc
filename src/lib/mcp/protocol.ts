@@ -64,12 +64,18 @@ export function parseJsonRpc(raw: unknown): JsonRpcRequest | JsonRpcNotification
   return req;
 }
 
-export function negotiateProtocol(presented: string | undefined): string {
+export function negotiateProtocol(
+  presented: string | undefined,
+  opts: { fallbackOnUnknown?: boolean } = {},
+): string {
   if (presented === undefined || presented.length === 0) {
     return MCP_PREFERRED_PROTOCOL;
   }
   if (MCP_SUPPORTED_PROTOCOLS.includes(presented)) {
     return presented;
+  }
+  if (opts.fallbackOnUnknown === true) {
+    return MCP_PREFERRED_PROTOCOL;
   }
   throw new McpProtocolError(
     JSONRPC_UNSUPPORTED_PROTOCOL,

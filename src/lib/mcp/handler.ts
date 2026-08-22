@@ -4,7 +4,7 @@
  */
 
 import { capabilityAuth, sharedAccountAuth } from "../computers/capabilities.js";
-import { CapabilityMissing, ComputerError, PairCodeInvalid } from "../computers/errors.js";
+import { CapabilityMissing, PairCodeInvalid } from "../computers/errors.js";
 import type { ComputerService } from "../computers/service.js";
 import type {
   Action,
@@ -16,10 +16,12 @@ import type {
 import {
   MCP_MAX_ENV_KEYS,
   MCP_MAX_EXEC_OUTPUT_CHARS,
+  MCP_MAX_JSONRPC_BATCH,
 } from "./config.js";
 import {
   JSONRPC_INTERNAL,
   JSONRPC_INVALID_PARAMS,
+  JSONRPC_INVALID_REQUEST,
   JSONRPC_METHOD_NOT_FOUND,
   jsonRpcError,
   McpProtocolError,
@@ -102,7 +104,10 @@ export class McpGateway {
   ): Promise<Record<string, unknown> | Record<string, unknown>[] | null> {
     if (Array.isArray(raw)) {
       if (raw.length === 0) {
-        return jsonRpcError(null, JSONRPC_INVALID_PARAMS, "empty batch", "INVALID_REQUEST");
+        return jsonRpcError(null, JSONRPC_INVALID_REQUEST, "empty batch", "INVALID_REQUEST");
+      }
+      if (raw.length > MCP_MAX_JSONRPC_BATCH) {
+        return jsonRpcError(null, JSONRPC_INVALID_PARAMS, "batch too large", "INVALID_PARAMS");
       }
       const out: Record<string, unknown>[] = [];
       for (const item of raw) {
@@ -162,9 +167,11 @@ export class McpGateway {
     params: unknown,
     ctx: McpRequestContext,
   ): Promise<Record<string, unknown>> {
-    const protocolVersion = negotiateProtocol(
-      protocolVersionFrom(params) ?? ctx.protocolVersionHeader,
-    );
+    const presented = protocolVersionFrom(params) ?? ctx.protocolVersionHeader;
+    const protocolVersion =
+      method === "initialize"
+        ? negotiateProtocol(presented, { fallbackOnUnknown: true })
+        : negotiateProtocol(presented);
 
     switch (method) {
       case "initialize":
@@ -238,6 +245,11 @@ export class McpGateway {
                 "Handoffs are not implemented. Explicit Node file sharing is Gate C9. Browser profiles, cookies, keys, .env, and capability tokens are never transferred.",
             },
           };
+        }
+        default: {
+          const _never: never = name;
+          void _never;
+          return { isError: true, payload: { code: "UNKNOWN_TOOL", message: "unknown tool" } };
         }
       }
     } catch (err) {
@@ -317,12 +329,16 @@ export class McpGateway {
       parsed.computer_handle,
       request,
     );
+    const stdout = clip(result.stdout);
+    const stderr = clip(result.stderr);
     return {
       isError: false,
       payload: {
         exit_code: result.exitCode,
-        stdout: clip(result.stdout),
-        stderr: clip(result.stderr),
+        stdout: stdout.text,
+        stderr: stderr.text,
+        stdout_truncated: stdout.truncated,
+        stderr_truncated: stderr.truncated,
         timed_out: result.timedOut,
       },
     };
@@ -383,7 +399,7 @@ export class McpGateway {
     const result = await this.service.act(
       cap(requireToken(parsed.capability_token)),
       parsed.computer_handle,
-      { actions: parsed.actions as Action[] },
+      { actions: parsed.actions.map(toAction) },
     );
     return {
       isError: false,
@@ -402,15 +418,11 @@ export class McpGateway {
   }
 
   private toolFailure(err: unknown): ToolErr {
-    if (err && typeof err === "object" && "name" in err && err.name === "ZodError") {
-      return { isError: true, payload: { code: "INVALID_PARAMS", message: "invalid tool arguments" } };
+    const pub = publicErrorFromUnknown(err);
+    if (pub.code === "INTERNAL") {
+      this.logger.error("mcp.tool_internal", {});
     }
-    if (err instanceof ComputerError || err instanceof McpProtocolError) {
-      const pub = publicErrorFromUnknown(err);
-      return { isError: true, payload: { code: pub.code, message: pub.message } };
-    }
-    this.logger.error("mcp.tool_internal", {});
-    return { isError: true, payload: { code: "INTERNAL", message: "internal error" } };
+    return { isError: true, payload: { code: pub.code, message: pub.message } };
   }
 
   private connectionIdentity(ctx: McpRequestContext): ConnectionIdentity {
@@ -429,9 +441,32 @@ function requireToken(token: string | undefined): string {
   return token;
 }
 
-function clip(text: string): string {
-  if (text.length <= MCP_MAX_EXEC_OUTPUT_CHARS) return text;
-  return text.slice(0, MCP_MAX_EXEC_OUTPUT_CHARS);
+function clip(text: string): { text: string; truncated: boolean } {
+  if (text.length <= MCP_MAX_EXEC_OUTPUT_CHARS) return { text, truncated: false };
+  return { text: text.slice(0, MCP_MAX_EXEC_OUTPUT_CHARS), truncated: true };
+}
+
+function toAction(item: {
+  type: Action["type"];
+  elementId?: string | undefined;
+  x?: number | undefined;
+  y?: number | undefined;
+  text?: string | undefined;
+  key?: string | undefined;
+  url?: string | undefined;
+  application?: string | undefined;
+  durationMs?: number | undefined;
+}): Action {
+  const action: Action = { type: item.type };
+  if (item.elementId !== undefined) action.elementId = item.elementId;
+  if (item.x !== undefined) action.x = item.x;
+  if (item.y !== undefined) action.y = item.y;
+  if (item.text !== undefined) action.text = item.text;
+  if (item.key !== undefined) action.key = item.key;
+  if (item.url !== undefined) action.url = item.url;
+  if (item.application !== undefined) action.application = item.application;
+  if (item.durationMs !== undefined) action.durationMs = item.durationMs;
+  return action;
 }
 
 function toolEnvelope(isError: boolean, payload: Record<string, unknown>): Record<string, unknown> {

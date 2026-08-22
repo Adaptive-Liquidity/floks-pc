@@ -3,6 +3,7 @@
  * stacks, or raw secrets.
  */
 
+import { z } from "zod";
 import { ComputerError } from "../computers/errors.js";
 
 export const JSONRPC_PARSE = -32700;
@@ -38,13 +39,13 @@ export function publicErrorFromUnknown(err: unknown): PublicError {
   if (err instanceof ComputerError) {
     return { code: err.code, message: sanitizeMessage(err.message) };
   }
-  if (err && typeof err === "object" && "name" in err && err.name === "ZodError") {
+  if (err instanceof z.core.$ZodError) {
     return { code: "INVALID_PARAMS", message: "invalid tool arguments" };
   }
   return { code: "INTERNAL", message: "internal error" };
 }
 
-function sanitizeMessage(message: string): string {
+export function sanitizeMessage(message: string): string {
   // Drop anything that looks like a digest or bearer.
   return message.replace(/[A-Za-z0-9_-]{32,}/g, "[redacted]");
 }

@@ -3,6 +3,8 @@
  * and provider API keys must never appear in MCP logs.
  */
 
+import { sanitizeMessage } from "./errors.js";
+
 const SECRET_KEY =
   /^(capability_token|capabilityToken|pair_code|pairCode|authorization|token|code|bearer|api[_-]?key|runloop_api_key|authToken|account_id)$/i;
 
@@ -38,7 +40,7 @@ export const silentLogger: McpLogger = {
 
 export function redactValue(value: unknown): unknown {
   if (value === null || value === undefined) return value;
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return sanitizeMessage(value);
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (Array.isArray(value)) return value.map(redactValue);
   if (typeof value === "object") {

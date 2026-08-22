@@ -28,10 +28,12 @@ export const MCP_MAX_EXEC_OUTPUT_CHARS = 64_000;
 export const MCP_MAX_ARGV = 64;
 export const MCP_MAX_ARG_CHARS = 8_192;
 export const MCP_MAX_ENV_KEYS = 32;
+export const MCP_MAX_JSONRPC_BATCH = 32;
 
 /** Per authenticated (or unauthenticated) MCP connection, not per Bot identity. */
 export const MCP_PAIR_CONNECTION_FAILURE_LIMIT = 20;
 export const MCP_PAIR_CONNECTION_WINDOW_MS = 10 * 60 * 1000;
+export const MCP_PAIR_THROTTLE_MAX_ENTRIES = 4_096;
 
 export interface McpGatewayConfig {
   /** Optional public base URL (documentation / Grok connector). */
@@ -59,9 +61,10 @@ export function loadMcpGatewayConfig(
   const portRaw = env.FLOK_MCP_LISTEN_PORT?.trim();
   if (portRaw) {
     const port = Number.parseInt(portRaw, 10);
-    if (Number.isInteger(port) && port > 0 && port < 65536) {
-      config.listenPort = port;
+    if (!/^\d+$/.test(portRaw) || !Number.isInteger(port) || port <= 0 || port >= 65536) {
+      throw new Error("FLOK_MCP_LISTEN_PORT must be an integer between 1 and 65535");
     }
+    config.listenPort = port;
   }
   return config;
 }

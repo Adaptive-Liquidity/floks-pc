@@ -16,14 +16,19 @@ import {
   assertNexusDisabled,
 } from "../../src/lib/computers/index.js";
 import {
+  MCP_MAX_BODY_BYTES,
+  MCP_MAX_EXEC_OUTPUT_CHARS,
+  MCP_MAX_JSONRPC_BATCH,
   MCP_PAIR_CONNECTION_FAILURE_LIMIT,
   MCP_PATH,
+  MCP_PREFERRED_PROTOCOL,
   MCP_TOOL_NAMES,
   McpGateway,
-  RecordingLogger,
-  blobContainsSecret,
   handleMcpHttp,
+  loadMcpGatewayConfig,
+  parseBearer,
 } from "../../src/lib/mcp/index.js";
+import { RecordingLogger, blobContainsSecret } from "../../src/lib/mcp/log.js";
 
 const FLOCK = "flock-adaptive";
 const SECRET_PATH = "/home/flok/workspace/secret.txt";
@@ -84,10 +89,23 @@ describe("C5 MCP gateway", () => {
 
   it("tool list exposes exactly the 8 allowed tools", async () => {
     const res = await rpc("tools/list");
-    const result = res.result as { tools: Array<{ name: string }> };
+    const result = res.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
     const names = result.tools.map((t) => t.name);
     assert.deepEqual(names, [...MCP_TOOL_NAMES]);
     assert.equal(names.length, 8);
+    const exec = result.tools.find((t) => t.name === "computer_exec");
+    assert.ok(exec);
+    const execSchema = exec.inputSchema;
+    const required = execSchema.required as string[];
+    assert.equal(required.includes("capability_token"), true);
+    const props = execSchema.properties as Record<string, Record<string, unknown>>;
+    assert.equal(props.argv.maxItems, 64);
+    const env = props.env as Record<string, unknown>;
+    assert.equal(env.maxProperties, 32);
+    const fs = result.tools.find((t) => t.name === "computer_fs");
+    assert.ok(fs);
+    const fsProps = (fs.inputSchema.properties as Record<string, Record<string, unknown>>);
+    assert.equal(fsProps.path.maxLength, 2048);
   });
 
   it("computer_pair redeems a valid pair code and returns a capability once", async () => {
@@ -388,6 +406,19 @@ describe("C5 MCP gateway", () => {
     assert.equal(initResult.protocolVersion, "2025-06-18");
     assert.ok(initResult.capabilities.tools);
 
+    const initUnknown = await rpc("initialize", {
+      protocolVersion: "2099-01-01",
+      capabilities: {},
+      clientInfo: { name: "test", version: "0" },
+    });
+    const unknownResult = initUnknown.result as { protocolVersion: string };
+    assert.equal(unknownResult.protocolVersion, MCP_PREFERRED_PROTOCOL);
+
+    const listedUnknown = await rpc("tools/list", {
+      _meta: { "io.modelcontextprotocol/protocolVersion": "2099-01-01" },
+    });
+    assert.equal((listedUnknown.error as { code: number }).code, -32022);
+
     const discover = await rpc("server/discover", {
       _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
     });
@@ -487,6 +518,13 @@ describe("C5 MCP gateway", () => {
       });
       const stJson = (await st.json()) as { result: { isError: boolean; structuredContent: { state: string } } };
       assert.equal(stJson.result.structuredContent.state, "ready");
+
+      const oversized = await fetch(base, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "x".repeat(MCP_MAX_BODY_BYTES + 1),
+      });
+      assert.equal(oversized.status, 413);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
     }
@@ -515,6 +553,26 @@ describe("C5 MCP gateway", () => {
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
       });
       assert.equal(denied.status, 401);
+
+      const raw = await fetch(base, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "wrapper-secret",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      });
+      assert.equal(raw.status, 401);
+
+      const basic = await fetch(base, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Basic wrapper-secret",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      });
+      assert.equal(basic.status, 401);
 
       const ok = await fetch(base, {
         method: "POST",
@@ -573,6 +631,80 @@ describe("C5 MCP gateway", () => {
       { remoteAddress: "10.0.0.2" },
     );
     assert.equal((other.result as { isError: boolean }).isError, false);
+  });
+
+  it("parseBearer accepts only the Bearer scheme", () => {
+    assert.equal(parseBearer(undefined), undefined);
+    assert.equal(parseBearer("wrapper-secret"), undefined);
+    assert.equal(parseBearer("Basic abc"), undefined);
+    assert.equal(parseBearer("Bearer tok"), "tok");
+  });
+
+  it("rejects invalid FLOK_MCP_LISTEN_PORT instead of silently defaulting", () => {
+    assert.throws(() => loadMcpGatewayConfig({ FLOK_MCP_LISTEN_PORT: "abc" }));
+    assert.throws(() => loadMcpGatewayConfig({ FLOK_MCP_LISTEN_PORT: "0" }));
+    assert.throws(() => loadMcpGatewayConfig({ FLOK_MCP_LISTEN_PORT: "70000" }));
+    assert.equal(loadMcpGatewayConfig({ FLOK_MCP_LISTEN_PORT: "8787" }).listenPort, 8787);
+  });
+
+  it("rejects oversized JSON-RPC batches", async () => {
+    const batch = Array.from({ length: MCP_MAX_JSONRPC_BATCH + 1 }, (_, i) => ({
+      jsonrpc: "2.0",
+      id: i,
+      method: "ping",
+    }));
+    const res = await gateway.handleJsonRpc(batch);
+    assert.ok(res && !Array.isArray(res));
+    assert.equal((res as { error: { code: number } }).error.code, -32602);
+  });
+
+  it("computer_exec reports stdout truncation", async () => {
+    class HugeExecProvider extends FakeProvider {
+      override async exec(): Promise<{ exitCode: number; stdout: string; stderr: string; timedOut: boolean }> {
+        return {
+          exitCode: 0,
+          stdout: "A".repeat(MCP_MAX_EXEC_OUTPUT_CHARS + 8),
+          stderr: "ok",
+          timedOut: false,
+        };
+      }
+    }
+    const hugeService = new ComputerService(new HugeExecProvider());
+    const hugeGateway = new McpGateway(hugeService, { logger });
+    const computer = await hugeService.requestComputer({ birdId: "bird-clip", flockId: FLOCK });
+    const issued = await hugeService.issuePairCode(computer.id);
+    const pairRes = await hugeGateway.handleJsonRpc({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "computer_pair",
+        arguments: { pair_code: issued.code, bird_id: "bird-clip", flock_id: FLOCK },
+      },
+    });
+    assert.ok(pairRes && !Array.isArray(pairRes));
+    const pairBody = (pairRes as { result: { structuredContent: { capability_token: string; computer_handle: string } } })
+      .result.structuredContent;
+    const execRes = await hugeGateway.handleJsonRpc({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "computer_exec",
+        arguments: {
+          capability_token: pairBody.capability_token,
+          computer_handle: pairBody.computer_handle,
+          argv: ["true"],
+        },
+      },
+    });
+    assert.ok(execRes && !Array.isArray(execRes));
+    const execBody = (execRes as {
+      result: { structuredContent: { stdout: string; stdout_truncated: boolean; stderr_truncated: boolean } };
+    }).result.structuredContent;
+    assert.equal(execBody.stdout.length, MCP_MAX_EXEC_OUTPUT_CHARS);
+    assert.equal(execBody.stdout_truncated, true);
+    assert.equal(execBody.stderr_truncated, false);
   });
 
   it("Nexus stays locked and C3B flags are preserved", () => {

@@ -5,7 +5,7 @@
 
 import { z } from "zod";
 import { ActionSchema, FsOperationSchema } from "../computers/schemas.js";
-import { MCP_MAX_ARG_CHARS, MCP_MAX_ARGV } from "./config.js";
+import { MCP_MAX_ARG_CHARS, MCP_MAX_ARGV, MCP_MAX_ENV_KEYS } from "./config.js";
 
 export const MCP_TOOL_NAMES = [
   "computer_pair",
@@ -26,14 +26,24 @@ export interface McpToolDefinition {
   inputSchema: Record<string, unknown>;
 }
 
-const capabilityToken = z.string().min(1).max(256).optional();
-const handle = z.string().min(1).max(128);
+const capabilityToken = z
+  .string()
+  .min(1)
+  .max(256)
+  .optional()
+  .describe("Capability secret from computer_pair. Never log it.");
+const handle = z.string().min(1).max(128).describe("computer_handle from computer_pair.");
 
 export const ComputerPairArgsSchema = z.object({
-  pair_code: z.string().min(1).max(32),
+  pair_code: z.string().min(1).max(32).describe("One-time pair code (ABCD-EFGH-JK)."),
   bird_id: z.string().min(1).max(128),
   flock_id: z.string().min(1).max(128),
-  account_id: z.string().min(1).max(128).optional(),
+  account_id: z
+    .string()
+    .min(1)
+    .max(128)
+    .optional()
+    .describe("Optional shared-account metadata. Never sufficient for access."),
 });
 
 export const ComputerStatusArgsSchema = z.object({
@@ -79,138 +89,98 @@ export const HandoffArgsSchema = z.object({
   filename: z.string().min(1).max(512).optional(),
 });
 
-function obj(
-  properties: Record<string, unknown>,
+function advertisedSchema(
+  schema: z.ZodType,
   required: string[],
+  patch?: (out: Record<string, unknown>) => void,
 ): Record<string, unknown> {
-  return { type: "object", properties, required, additionalProperties: false };
+  const generated = z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>;
+  const { $schema: _schema, ...rest } = generated;
+  void _schema;
+  const out: Record<string, unknown> = {
+    ...rest,
+    type: "object",
+    required,
+    additionalProperties: false,
+  };
+  if (patch) patch(out);
+  return out;
 }
 
-const tokenProp = {
-  type: "string",
-  minLength: 1,
-  description: "Capability secret from computer_pair. Never log it.",
-};
-const handleProp = {
-  type: "string",
-  minLength: 1,
-  description: "computer_handle from computer_pair.",
-};
+function objectProperties(schema: Record<string, unknown>): Record<string, unknown> | undefined {
+  const props = schema.properties;
+  if (props && typeof props === "object" && !Array.isArray(props)) {
+    return props as Record<string, unknown>;
+  }
+  return undefined;
+}
 
 export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "computer_pair",
     description:
       "Redeem a one-time pair code for a capability token bound to this Bot's computer/bird/flock. Account/MCP auth does not authorize pairing.",
-    inputSchema: obj(
-      {
-        pair_code: { type: "string", minLength: 1, description: "One-time pair code (ABCD-EFGH-JK)." },
-        bird_id: { type: "string", minLength: 1 },
-        flock_id: { type: "string", minLength: 1 },
-        account_id: {
-          type: "string",
-          description: "Optional shared-account metadata. Never sufficient for access.",
-        },
-      },
-      ["pair_code", "bird_id", "flock_id"],
-    ),
+    inputSchema: advertisedSchema(ComputerPairArgsSchema, ["pair_code", "bird_id", "flock_id"]),
   },
   {
     name: "computer_status",
     description: "Return computer lifecycle state. Requires a valid capability with status scope.",
-    inputSchema: obj(
-      { capability_token: tokenProp, computer_handle: handleProp },
-      ["capability_token", "computer_handle"],
-    ),
+    inputSchema: advertisedSchema(ComputerStatusArgsSchema, ["capability_token", "computer_handle"]),
   },
   {
     name: "computer_exec",
     description:
       "Run argv[] on the computer. Default mode is argv. mode=shell requires the shell scope (not granted by default pairing).",
-    inputSchema: obj(
-      {
-        capability_token: tokenProp,
-        computer_handle: handleProp,
-        argv: { type: "array", items: { type: "string" }, minItems: 1 },
-        cwd: { type: "string" },
-        env: { type: "object", additionalProperties: { type: "string" } },
-        timeout_ms: { type: "integer", minimum: 1, maximum: 600000 },
-        mode: { type: "string", enum: ["argv", "shell"] },
-      },
+    inputSchema: advertisedSchema(
+      ComputerExecArgsSchema,
       ["capability_token", "computer_handle", "argv"],
+      (schema) => {
+        const props = objectProperties(schema);
+        const env = props?.env;
+        if (env && typeof env === "object" && !Array.isArray(env)) {
+          (env as Record<string, unknown>).maxProperties = MCP_MAX_ENV_KEYS;
+        }
+      },
     ),
   },
   {
     name: "computer_fs",
     description:
       "Filesystem operation inside the workspace jail (stat/list/read/write/mkdir/move/copy/delete). Path escape is rejected.",
-    inputSchema: obj(
-      {
-        capability_token: tokenProp,
-        computer_handle: handleProp,
-        operation: {
-          type: "string",
-          enum: ["stat", "list", "read", "write", "mkdir", "move", "copy", "delete"],
-        },
-        path: { type: "string", minLength: 1 },
-        content: { type: "string" },
-        destination: { type: "string" },
-        encoding: { type: "string", enum: ["utf8", "base64"] },
-      },
-      ["capability_token", "computer_handle", "operation", "path"],
-    ),
+    inputSchema: advertisedSchema(ComputerFsArgsSchema, [
+      "capability_token",
+      "computer_handle",
+      "operation",
+      "path",
+    ]),
   },
   {
     name: "computer_observe",
     description:
       "Observe the computer display. Screenshot only when include_screenshot is true. Accessibility is not fabricated.",
-    inputSchema: obj(
-      {
-        capability_token: tokenProp,
-        computer_handle: handleProp,
-        include_screenshot: { type: "boolean" },
-      },
-      ["capability_token", "computer_handle"],
-    ),
+    inputSchema: advertisedSchema(ComputerObserveArgsSchema, ["capability_token", "computer_handle"]),
   },
   {
     name: "computer_act",
     description:
       "Apply a bounded action batch (click_coordinates/type/key/scroll/open_url/launch_application/wait). No public VNC/takeover.",
-    inputSchema: obj(
-      {
-        capability_token: tokenProp,
-        computer_handle: handleProp,
-        actions: { type: "array", minItems: 1, maxItems: 50, items: { type: "object" } },
-      },
-      ["capability_token", "computer_handle", "actions"],
-    ),
+    inputSchema: advertisedSchema(ComputerActArgsSchema, [
+      "capability_token",
+      "computer_handle",
+      "actions",
+    ]),
   },
   {
     name: "handoff_send",
     description:
       "Send an explicit file handoff to another Node. Not implemented in C5 (Gate C9). Fails closed.",
-    inputSchema: obj(
-      {
-        capability_token: tokenProp,
-        computer_handle: handleProp,
-        filename: { type: "string" },
-      },
-      ["capability_token", "computer_handle"],
-    ),
+    inputSchema: advertisedSchema(HandoffArgsSchema, ["capability_token", "computer_handle"]),
   },
   {
     name: "handoff_receive",
     description:
       "Receive an explicit file handoff. Not implemented in C5 (Gate C9). Fails closed.",
-    inputSchema: obj(
-      {
-        capability_token: tokenProp,
-        computer_handle: handleProp,
-        filename: { type: "string" },
-      },
-      ["capability_token", "computer_handle"],
-    ),
+    inputSchema: advertisedSchema(HandoffArgsSchema, ["capability_token", "computer_handle"]),
   },
 ];
 

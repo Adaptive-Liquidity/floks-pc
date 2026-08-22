@@ -123,16 +123,23 @@ function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    let settled = false;
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
     req.on("data", (chunk: Buffer) => {
+      if (settled) return;
       size += chunk.length;
       if (size > maxBytes) {
-        req.destroy();
-        reject(new Error("too large"));
+        req.resume();
+        finish(() => reject(new Error("too large")));
         return;
       }
       chunks.push(chunk);
     });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
+    req.on("end", () => finish(() => resolve(Buffer.concat(chunks).toString("utf8"))));
+    req.on("error", (err: Error) => finish(() => reject(err)));
   });
 }

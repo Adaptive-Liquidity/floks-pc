@@ -8,6 +8,7 @@ import { sha256Hex } from "../computers/digest.js";
 import {
   MCP_PAIR_CONNECTION_FAILURE_LIMIT,
   MCP_PAIR_CONNECTION_WINDOW_MS,
+  MCP_PAIR_THROTTLE_MAX_ENTRIES,
 } from "./config.js";
 
 export interface ConnectionIdentity {
@@ -28,12 +29,17 @@ export class PairConnectionThrottle {
   constructor(
     private readonly limit = MCP_PAIR_CONNECTION_FAILURE_LIMIT,
     private readonly windowMs = MCP_PAIR_CONNECTION_WINDOW_MS,
+    private readonly maxEntries = MCP_PAIR_THROTTLE_MAX_ENTRIES,
   ) {}
 
   assert(identity: ConnectionIdentity, now = Date.now()): void {
-    this.sweep(now);
     const cur = this.windows.get(identity.connectionId);
-    if (cur && now - cur.windowStart <= this.windowMs && cur.count >= this.limit) {
+    if (!cur) return;
+    if (now - cur.windowStart > this.windowMs) {
+      this.windows.delete(identity.connectionId);
+      return;
+    }
+    if (cur.count >= this.limit) {
       throw Object.assign(new Error("too many pair attempts"), {
         name: "PairThrottled",
         code: "PAIR_THROTTLED",
@@ -43,21 +49,30 @@ export class PairConnectionThrottle {
 
   noteFailure(identity: ConnectionIdentity, now = Date.now()): void {
     const cur = this.windows.get(identity.connectionId);
-    if (!cur || now - cur.windowStart > this.windowMs) {
-      this.windows.set(identity.connectionId, { count: 1, windowStart: now });
+    if (cur && now - cur.windowStart <= this.windowMs) {
+      cur.count += 1;
       return;
     }
-    cur.count += 1;
+    if (!cur && this.windows.size >= this.maxEntries) {
+      this.evictOldest();
+    }
+    this.windows.set(identity.connectionId, { count: 1, windowStart: now });
   }
 
   reset(): void {
     this.windows.clear();
   }
 
-  private sweep(now: number): void {
+  private evictOldest(): void {
+    let oldestKey: string | undefined;
+    let oldestStart = Number.POSITIVE_INFINITY;
     for (const [k, win] of this.windows) {
-      if (now - win.windowStart > this.windowMs) this.windows.delete(k);
+      if (win.windowStart < oldestStart) {
+        oldestStart = win.windowStart;
+        oldestKey = k;
+      }
     }
+    if (oldestKey !== undefined) this.windows.delete(oldestKey);
   }
 }
 
@@ -75,9 +90,7 @@ export function connectionIdentityFromAuth(
 
 export function parseBearer(authorization: string | undefined): string | undefined {
   if (!authorization) return undefined;
-  const trimmed = authorization.trim();
-  if (trimmed.length === 0) return undefined;
-  const match = /^Bearer\s+(.+)$/i.exec(trimmed);
-  const token = match?.[1]?.trim() ?? trimmed;
-  return token.length > 0 ? token : undefined;
+  const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim());
+  const token = match?.[1];
+  return token && token.length > 0 ? token : undefined;
 }
