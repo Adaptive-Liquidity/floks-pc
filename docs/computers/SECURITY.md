@@ -13,7 +13,9 @@
 
 - Separate from Flok’s existing six-character join code.
 - Format: `ABCD-EFGH-JK` (32-char alphabet, 10 chars, ≥ 50 bits entropy).
-- One-use, 10-minute TTL, per-code attempt limit, per-account failure window.
+- One-use, 10-minute TTL, per-code attempt limit.
+- Pairing failures (including digest misses and omitted `sharedAuth`) count against the presented Node identity (`bird_id`+`flock_id`), not against a shared MCP account id. A single shared-account key must not lock pairing for every Bot.
+- C4 does **not** deliver a verified-caller brute-force limiter. C5 must throttle `computer_pair` by authenticated connection/caller identity.
 - Bound to the computer’s exact `computer_id` + `bird_id` + `flock_id` at issue time.
 - Redeeming requires the presented Node identity to match that binding.
 - Only the digest is stored. The raw code is returned once from `issuePairCode`.

@@ -9,6 +9,13 @@
  * is never sufficient.
  *
  * C4 is in-memory; later phases replace the store with Kysely.
+ *
+ * Persistence (Kysely) must sweep used/expired pair codes and revoked/expired
+ * capabilities from both primary maps and digest indexes, and bound pairing
+ * failure windows. In-memory C4 lazily drops stale identity-failure windows
+ * and expired already-used pair codes; unused expired codes stay until redeem
+ * so the caller still sees PAIR_CODE_INVALID expired, and capability rows stay
+ * so revoke/expiry remain observable after possession is proven.
  */
 
 import { randomBytes } from "node:crypto";
@@ -37,27 +44,24 @@ import type {
   SharedAccountAuth,
 } from "./types.js";
 import {
-  CapabilityExpired,
   CapabilityInvalid,
-  CapabilityRevoked,
   ComputerNotFound,
-  CrossNodeDenied,
   DuplicateComputer,
   IllegalStateTransition,
-  InsufficientScope,
   PairCodeInvalid,
 } from "./errors.js";
 import { assertTransition } from "./state.js";
 import {
+  copyScopes,
   DEFAULT_CAPABILITY_TTL_MS,
   DEFAULT_PAIR_SCOPES,
   extractCapabilityToken,
   hashToken,
-  hasScope,
+  isCapabilityValid,
   issueCapability,
   parseScopes,
+  toCapabilityRecord,
 } from "./capabilities.js";
-import { digestEquals } from "./digest.js";
 import {
   generatePairCode,
   hashPairCode,
@@ -70,7 +74,8 @@ function newId(): string {
 }
 
 const PAIR_FAILURE_WINDOW_MS = PAIR_CODE_TTL_MS;
-const PAIR_FAILURES_PER_ACCOUNT = 10;
+/** Per presented Node identity, not per shared MCP account. */
+export const PAIR_IDENTITY_FAILURE_LIMIT = 10;
 
 interface PairIssueExtras {
   scopes: CapabilityScope[];
@@ -82,6 +87,10 @@ interface PairFailureWindow {
   windowStart: number;
 }
 
+function identityKey(identity: NodeIdentity): string {
+  return `${identity.birdId}\n${identity.flockId}`;
+}
+
 export class ComputerService {
   private computers = new Map<string, Computer>();
   private byBird = new Map<string, string>(); // birdId → computerId
@@ -90,7 +99,8 @@ export class ComputerService {
   private pairIssueExtras = new Map<string, PairIssueExtras>();
   private capabilities = new Map<string, ComputerCapability>();
   private capabilitiesByDigest = new Map<string, string>();
-  private pairFailuresByAccount = new Map<string, PairFailureWindow>();
+  /** Keyed by presented bird+flock, never by shared MCP account id. */
+  private pairFailuresByIdentity = new Map<string, PairFailureWindow>();
 
   constructor(private readonly provider: ComputerProvider) {}
 
@@ -103,7 +113,7 @@ export class ComputerService {
     this.pairIssueExtras.clear();
     this.capabilities.clear();
     this.capabilitiesByDigest.clear();
-    this.pairFailuresByAccount.clear();
+    this.pairFailuresByIdentity.clear();
   }
 
   /**
@@ -237,6 +247,12 @@ export class ComputerService {
       throw new ComputerNotFound(computerId);
     }
 
+    // Validate caller input before any state mutation.
+    const scopes = copyScopes(parseScopes(opts?.scopes ?? DEFAULT_PAIR_SCOPES));
+    const capabilityTtlMs = opts?.capabilityTtlMs ?? DEFAULT_CAPABILITY_TTL_MS;
+    const ttlMs = opts?.ttlMs ?? PAIR_CODE_TTL_MS;
+
+    this.sweepPairState();
     const now = new Date();
     for (const [id, rec] of this.pairCodes) {
       if (rec.computerId === computerId && rec.usedAt === null) {
@@ -244,7 +260,6 @@ export class ComputerService {
       }
     }
 
-    const ttlMs = opts?.ttlMs ?? PAIR_CODE_TTL_MS;
     const material = generatePairCode(ttlMs);
     const record: ComputerPairCode = {
       id: newId(),
@@ -259,17 +274,15 @@ export class ComputerService {
     };
     this.pairCodes.set(record.id, record);
     this.pairCodesByDigest.set(record.codeDigest, record.id);
-    this.pairIssueExtras.set(record.id, {
-      scopes: parseScopes(opts?.scopes ?? DEFAULT_PAIR_SCOPES),
-      capabilityTtlMs: opts?.capabilityTtlMs ?? DEFAULT_CAPABILITY_TTL_MS,
-    });
+    this.pairIssueExtras.set(record.id, { scopes, capabilityTtlMs });
 
     return { id: record.id, code: material.code, expiresAt: material.expiresAt };
   }
 
   /**
    * Redeem a pair code. Shared MCP auth may be attached (C5 will have it) but
-   * does not authorize issuance — the one-time pair code does.
+   * does not authorize issuance and is not a C4 rate-limit key — the one-time
+   * pair code does, and failures are counted against the presented Node identity.
    * Returns a capability secret once. Only the digest is stored.
    */
   async pair(
@@ -277,19 +290,22 @@ export class ComputerService {
     identity: NodeIdentity,
     sharedAuth?: SharedAccountAuth,
   ): Promise<PairResult> {
-    if (sharedAuth) {
-      this.assertPairRateLimit(sharedAuth.accountId);
-    }
+    // C5 may pass verified MCP auth later. C4 must not treat caller-supplied
+    // accountId as a limiter (bypass + shared-account DoS).
+    void sharedAuth;
+
+    this.sweepPairState();
+    this.assertPairRateLimit(identity);
 
     const digest = hashPairCode(presentedCode);
     const id = this.pairCodesByDigest.get(digest);
     if (!id) {
-      this.notePairFailure(sharedAuth?.accountId);
+      this.notePairFailure(identity);
       throw new PairCodeInvalid("mismatch");
     }
     const record = this.pairCodes.get(id);
     if (!record) {
-      this.notePairFailure(sharedAuth?.accountId);
+      this.notePairFailure(identity);
       throw new PairCodeInvalid("mismatch");
     }
 
@@ -302,13 +318,14 @@ export class ComputerService {
       });
     } catch (err) {
       this.pairCodes.set(id, { ...record, attemptCount: record.attemptCount + 1 });
-      this.notePairFailure(sharedAuth?.accountId);
+      this.notePairFailure(identity);
       throw err;
     }
 
     const computer = this.computers.get(record.computerId);
     if (!computer || computer.state === "deleted") {
       this.pairCodes.set(id, { ...record, attemptCount: record.attemptCount + 1 });
+      this.notePairFailure(identity);
       throw new PairCodeInvalid("computer gone");
     }
     if (
@@ -318,6 +335,7 @@ export class ComputerService {
       record.flockId !== identity.flockId
     ) {
       this.pairCodes.set(id, { ...record, attemptCount: record.attemptCount + 1 });
+      this.notePairFailure(identity);
       throw new PairCodeInvalid("identity mismatch");
     }
 
@@ -325,7 +343,7 @@ export class ComputerService {
     this.pairCodes.set(id, consumed);
 
     const extras = this.pairIssueExtras.get(id);
-    const scopes = extras?.scopes ?? parseScopes(DEFAULT_PAIR_SCOPES);
+    const scopes = copyScopes(extras?.scopes ?? parseScopes(DEFAULT_PAIR_SCOPES));
     const ttl = extras?.capabilityTtlMs ?? DEFAULT_CAPABILITY_TTL_MS;
     const minted = issueCapability(ttl);
     const cap: ComputerCapability = {
@@ -349,7 +367,7 @@ export class ComputerService {
       computerHandle: computer.id,
       nodeHandle: computer.birdId,
       flockId: computer.flockId,
-      scopes: [...scopes],
+      scopes: copyScopes(scopes),
       expiresAt: cap.expiresAt,
     };
   }
@@ -358,14 +376,18 @@ export class ComputerService {
     const cap = this.capabilities.get(capabilityId);
     if (!cap) throw new CapabilityInvalid("not found");
     if (cap.revokedAt !== null) return;
-    this.capabilities.set(capabilityId, { ...cap, revokedAt: new Date() });
+    this.capabilities.set(capabilityId, {
+      ...cap,
+      scopes: copyScopes(cap.scopes),
+      revokedAt: new Date(),
+    });
   }
 
   /** Stored capability (digest only). Never contains the raw token. */
   getCapability(capabilityId: string): ComputerCapability {
     const cap = this.capabilities.get(capabilityId);
     if (!cap) throw new CapabilityInvalid("not found");
-    return cap;
+    return { ...cap, scopes: copyScopes(cap.scopes) };
   }
 
   /** Stored pair-code record (digest only). Never contains the raw code. */
@@ -468,32 +490,32 @@ export class ComputerService {
       throw new CapabilityInvalid("mismatch");
     }
     const capability = this.capabilities.get(capId);
-    if (!capability || !digestEquals(capability.tokenDigest, digest)) {
+    if (!capability) {
       throw new CapabilityInvalid("mismatch");
     }
-    if (capability.revokedAt !== null) {
-      throw new CapabilityRevoked(capability.id);
-    }
-    if (Date.now() > capability.expiresAt.getTime()) {
-      throw new CapabilityExpired(capability.id);
-    }
-    if (capability.computerId !== computerId) {
-      throw new CrossNodeDenied(capability.computerId, computerId);
-    }
     const computer = this.computers.get(computerId);
+    const record = toCapabilityRecord(capability);
+    const expected = {
+      computerId,
+      birdId: computer?.birdId ?? capability.birdId,
+      flockId: computer?.flockId ?? capability.flockId,
+    };
+    const needed = typeof required === "string" ? [required] : [...required];
+    if (needed.length === 0) {
+      isCapabilityValid(token, record, expected);
+    } else {
+      for (const scope of needed) {
+        isCapabilityValid(token, record, { ...expected, scope });
+      }
+    }
     if (!computer || computer.state === "deleted") {
       throw new ComputerNotFound(computerId);
     }
-    if (capability.birdId !== computer.birdId || capability.flockId !== computer.flockId) {
-      throw new CrossNodeDenied(capability.computerId, computerId);
-    }
-    const needed = typeof required === "string" ? [required] : [...required];
-    for (const scope of needed) {
-      if (!hasScope(capability.scopes, scope)) {
-        throw new InsufficientScope(scope, capability.scopes);
-      }
-    }
-    const touched: ComputerCapability = { ...capability, lastUsedAt: new Date() };
+    const touched: ComputerCapability = {
+      ...capability,
+      scopes: copyScopes(capability.scopes),
+      lastUsedAt: new Date(),
+    };
     this.capabilities.set(capability.id, touched);
     return { computer, capability: touched };
   }
@@ -518,7 +540,11 @@ export class ComputerService {
     const now = new Date();
     for (const [id, cap] of this.capabilities) {
       if (cap.computerId === computerId && cap.revokedAt === null) {
-        this.capabilities.set(id, { ...cap, revokedAt: now });
+        this.capabilities.set(id, {
+          ...cap,
+          scopes: copyScopes(cap.scopes),
+          revokedAt: now,
+        });
       }
     }
     for (const [id, rec] of this.pairCodes) {
@@ -528,26 +554,41 @@ export class ComputerService {
     }
   }
 
-  private assertPairRateLimit(accountId: string): void {
-    const cur = this.pairFailuresByAccount.get(accountId);
+  private assertPairRateLimit(identity: NodeIdentity): void {
+    const cur = this.pairFailuresByIdentity.get(identityKey(identity));
     if (
       cur &&
       Date.now() - cur.windowStart <= PAIR_FAILURE_WINDOW_MS &&
-      cur.count >= PAIR_FAILURES_PER_ACCOUNT
+      cur.count >= PAIR_IDENTITY_FAILURE_LIMIT
     ) {
       throw new PairCodeInvalid("too many attempts");
     }
   }
 
-  private notePairFailure(accountId: string | undefined): void {
-    if (accountId === undefined) return;
+  private notePairFailure(identity: NodeIdentity): void {
+    const key = identityKey(identity);
     const now = Date.now();
-    const cur = this.pairFailuresByAccount.get(accountId);
+    const cur = this.pairFailuresByIdentity.get(key);
     if (!cur || now - cur.windowStart > PAIR_FAILURE_WINDOW_MS) {
-      this.pairFailuresByAccount.set(accountId, { count: 1, windowStart: now });
+      this.pairFailuresByIdentity.set(key, { count: 1, windowStart: now });
       return;
     }
     cur.count += 1;
+  }
+
+  private sweepPairState(now = Date.now()): void {
+    for (const [key, win] of this.pairFailuresByIdentity) {
+      if (now - win.windowStart > PAIR_FAILURE_WINDOW_MS) {
+        this.pairFailuresByIdentity.delete(key);
+      }
+    }
+    for (const [id, rec] of this.pairCodes) {
+      if (rec.usedAt !== null && rec.expiresAt.getTime() <= now) {
+        this.pairCodes.delete(id);
+        this.pairCodesByDigest.delete(rec.codeDigest);
+        this.pairIssueExtras.delete(id);
+      }
+    }
   }
 }
 

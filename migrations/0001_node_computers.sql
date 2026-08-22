@@ -32,8 +32,6 @@ CREATE INDEX IF NOT EXISTS idx_node_computers_provider_ref ON node_computers (pr
 CREATE TABLE IF NOT EXISTS computer_pair_codes (
   id            TEXT PRIMARY KEY,
   computer_id   TEXT NOT NULL REFERENCES node_computers (id) ON DELETE CASCADE,
-  bird_id       TEXT NOT NULL,
-  flock_id      TEXT NOT NULL,
   code_digest   TEXT NOT NULL,
   expires_at    TIMESTAMPTZ NOT NULL,
   used_at       TIMESTAMPTZ,
@@ -42,14 +40,12 @@ CREATE TABLE IF NOT EXISTS computer_pair_codes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pair_codes_computer ON computer_pair_codes (computer_id);
-CREATE INDEX IF NOT EXISTS idx_pair_codes_digest ON computer_pair_codes (code_digest);
 
 -- computer_capabilities
 CREATE TABLE IF NOT EXISTS computer_capabilities (
   id            TEXT PRIMARY KEY,
   computer_id   TEXT NOT NULL REFERENCES node_computers (id) ON DELETE CASCADE,
   bird_id       TEXT NOT NULL,
-  flock_id      TEXT NOT NULL,
   token_digest  TEXT NOT NULL,
   scopes        TEXT[] NOT NULL DEFAULT '{}',
   issued_at     TIMESTAMPTZ NOT NULL,
@@ -58,9 +54,8 @@ CREATE TABLE IF NOT EXISTS computer_capabilities (
   last_used_at  TIMESTAMPTZ
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_capabilities_token_digest ON computer_capabilities (token_digest);
+CREATE INDEX IF NOT EXISTS idx_capabilities_token_digest ON computer_capabilities (token_digest);
 CREATE INDEX IF NOT EXISTS idx_capabilities_computer ON computer_capabilities (computer_id);
-CREATE INDEX IF NOT EXISTS idx_capabilities_identity ON computer_capabilities (computer_id, bird_id, flock_id);
 
 -- computer_jobs
 CREATE TABLE IF NOT EXISTS computer_jobs (

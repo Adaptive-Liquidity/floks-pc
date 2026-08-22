@@ -129,7 +129,9 @@ export {
   hashToken,
   isCapabilityValid,
   parseScopes,
+  copyScopes,
   hasScope,
+  toCapabilityRecord,
   capabilityAuth,
   sharedAccountAuth,
   sharedOperationAuth,
@@ -147,4 +149,4 @@ export type {
 
 export { digestEquals, sha256Hex } from "./digest.js";
 
-export { ComputerService } from "./service.js";
+export { ComputerService, PAIR_IDENTITY_FAILURE_LIMIT } from "./service.js";

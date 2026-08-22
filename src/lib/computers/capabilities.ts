@@ -19,6 +19,7 @@ import {
 import { digestEquals, sha256Hex } from "./digest.js";
 import type {
   CapabilityScope,
+  ComputerCapability,
   ComputerOperationAuth,
   SharedAccountAuth,
 } from "./types.js";
@@ -75,6 +76,10 @@ export function parseScopes(scopes: readonly string[]): CapabilityScope[] {
   return out;
 }
 
+export function copyScopes(scopes: readonly CapabilityScope[]): CapabilityScope[] {
+  return [...scopes];
+}
+
 export function hasScope(
   scopes: readonly string[],
   required: CapabilityScope,
@@ -83,6 +88,7 @@ export function hasScope(
 }
 
 export interface CapabilityRecord {
+  capabilityId: string;
   digest: string;
   computerId: string;
   birdId: string;
@@ -95,44 +101,61 @@ export interface CapabilityRecord {
 }
 
 export interface CapabilityExpectation {
-  computerId?: string;
-  birdId?: string;
-  flockId?: string;
+  computerId: string;
+  birdId: string;
+  flockId: string;
   scope?: CapabilityScope;
+}
+
+export function toCapabilityRecord(cap: ComputerCapability): CapabilityRecord {
+  return {
+    capabilityId: cap.id,
+    digest: cap.tokenDigest,
+    computerId: cap.computerId,
+    birdId: cap.birdId,
+    flockId: cap.flockId,
+    scopes: copyScopes(cap.scopes),
+    issuedAt: cap.issuedAt,
+    expiresAt: cap.expiresAt,
+    revokedAt: cap.revokedAt,
+    lastUsedAt: cap.lastUsedAt,
+  };
 }
 
 /**
  * Validate a presented token against a stored capability record.
- * Fail-closed with a specific error. Caller updates lastUsedAt on success.
+ * Fail-closed with a specific error. Possession (digest) is checked before
+ * lifecycle state so callers without the token cannot probe revoked/expired.
+ * Binding (computer/bird/flock) is mandatory. Caller updates lastUsedAt on success.
  */
 export function isCapabilityValid(
   presentedToken: string,
   record: CapabilityRecord,
-  expected?: CapabilityExpectation,
+  expected: CapabilityExpectation,
 ): void {
   if (presentedToken.length === 0) {
     throw new CapabilityMissing("missing capability");
-  }
-  if (record.revokedAt !== null) {
-    throw new CapabilityRevoked(record.digest.slice(0, 8));
-  }
-  if (Date.now() > record.expiresAt.getTime()) {
-    throw new CapabilityExpired(record.digest.slice(0, 8));
   }
   const presentedDigest = hashToken(presentedToken);
   if (!digestEquals(presentedDigest, record.digest)) {
     throw new CapabilityInvalid("mismatch");
   }
-  if (expected?.computerId !== undefined && record.computerId !== expected.computerId) {
+  if (record.revokedAt !== null) {
+    throw new CapabilityRevoked(record.capabilityId);
+  }
+  if (Date.now() > record.expiresAt.getTime()) {
+    throw new CapabilityExpired(record.capabilityId);
+  }
+  if (record.computerId !== expected.computerId) {
     throw new CrossNodeDenied(record.computerId, expected.computerId);
   }
-  if (expected?.birdId !== undefined && record.birdId !== expected.birdId) {
-    throw new CrossNodeDenied(record.computerId, expected.computerId ?? record.computerId);
+  if (record.birdId !== expected.birdId) {
+    throw new CrossNodeDenied(record.computerId, expected.computerId);
   }
-  if (expected?.flockId !== undefined && record.flockId !== expected.flockId) {
-    throw new CrossNodeDenied(record.computerId, expected.computerId ?? record.computerId);
+  if (record.flockId !== expected.flockId) {
+    throw new CrossNodeDenied(record.computerId, expected.computerId);
   }
-  if (expected?.scope !== undefined && !hasScope(record.scopes, expected.scope)) {
+  if (expected.scope !== undefined && !hasScope(record.scopes, expected.scope)) {
     throw new InsufficientScope(expected.scope, record.scopes);
   }
 }

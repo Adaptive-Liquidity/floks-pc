@@ -21,7 +21,9 @@ import {
   FLAGS,
   FakeProvider,
   InsufficientScope,
+  InvalidScope,
   MemoryRunloopControlPlane,
+  PAIR_IDENTITY_FAILURE_LIMIT,
   PairCodeInvalid,
   RunloopProvider,
   assertNexusDisabled,
@@ -153,7 +155,9 @@ describe("C4 pairing + capability isolation", () => {
     const noema = await provisionAndPair("bird-noema", { capabilityTtlMs: -1000 });
     await assert.rejects(
       () => read(noema.auth, noema.computer.id),
-      (err: unknown) => err instanceof CapabilityExpired,
+      (err: unknown) =>
+        err instanceof CapabilityExpired &&
+        (err as CapabilityExpired).details?.capabilityId === noema.paired.capabilityId,
     );
   });
 
@@ -162,7 +166,9 @@ describe("C4 pairing + capability isolation", () => {
     await service.revokeCapability(noema.paired.capabilityId);
     await assert.rejects(
       () => read(noema.auth, noema.computer.id),
-      (err: unknown) => err instanceof CapabilityRevoked,
+      (err: unknown) =>
+        err instanceof CapabilityRevoked &&
+        (err as CapabilityRevoked).details?.capabilityId === noema.paired.capabilityId,
     );
     const stored = service.getCapability(noema.paired.capabilityId);
     assert.ok(stored.revokedAt);
@@ -333,6 +339,84 @@ describe("C4 pairing + capability isolation", () => {
       () => read(noema.auth, noema.computer.id),
       (err: unknown) => err instanceof CapabilityRevoked,
     );
+  });
+
+  it("omitted sharedAuth still counts digest misses against Node identity", async () => {
+    const identity = { birdId: "bird-noema", flockId: FLOCK };
+    await service.requestComputer(identity);
+    for (let i = 0; i < PAIR_IDENTITY_FAILURE_LIMIT; i += 1) {
+      await assert.rejects(
+        () => service.pair(`NOPE-MISS-${i}`, identity),
+        (err: unknown) => err instanceof PairCodeInvalid,
+      );
+    }
+    await assert.rejects(
+      () => service.pair("NOPE-LIMITED", identity),
+      (err: unknown) =>
+        err instanceof PairCodeInvalid && (err as PairCodeInvalid).details?.reason === "too many attempts",
+    );
+  });
+
+  it("digest misses do not DoS a different Bot on the same shared MCP account", async () => {
+    const noemaId = { birdId: "bird-noema", flockId: FLOCK };
+    const codeId = { birdId: "bird-code", flockId: FLOCK };
+    const noemaComputer = await service.requestComputer(noemaId);
+    const codeComputer = await service.requestComputer(codeId);
+    const codePair = await service.issuePairCode(codeComputer.id);
+
+    for (let i = 0; i < PAIR_IDENTITY_FAILURE_LIMIT; i += 1) {
+      await assert.rejects(
+        () => service.pair(`NOPE-NOEMA-${i}`, noemaId, SHARED),
+        (err: unknown) => err instanceof PairCodeInvalid,
+      );
+    }
+    await assert.rejects(
+      () => service.pair("NOPE-NOEMA-BLOCKED", noemaId, SHARED),
+      (err: unknown) =>
+        err instanceof PairCodeInvalid && (err as PairCodeInvalid).details?.reason === "too many attempts",
+    );
+
+    const paired = await service.pair(codePair.code, codeId, SHARED);
+    assert.equal(paired.computerHandle, codeComputer.id);
+    void noemaComputer;
+  });
+
+  it("getCapability scopes.push does not grant shell", async () => {
+    const noema = await provisionAndPair("bird-noema");
+    await service.status(noema.auth, noema.computer.id);
+    const leaked = service.getCapability(noema.paired.capabilityId);
+    leaked.scopes.push("shell");
+    await assert.rejects(
+      () =>
+        service.exec(noema.auth, noema.computer.id, {
+          argv: ["echo", "hi"],
+          mode: "shell",
+        }),
+      (err: unknown) => err instanceof InsufficientScope,
+    );
+    const stored = service.getCapability(noema.paired.capabilityId);
+    assert.equal(stored.scopes.includes("shell"), false);
+  });
+
+  it("invalid issuePairCode scopes leave the previous pair code usable", async () => {
+    const computer = await service.requestComputer({
+      birdId: "bird-noema",
+      flockId: FLOCK,
+    });
+    const first = await service.issuePairCode(computer.id);
+    await assert.rejects(
+      () =>
+        service.issuePairCode(computer.id, {
+          scopes: ["not-a-scope"] as unknown as typeof DEFAULT_PAIR_SCOPES,
+        }),
+      (err: unknown) => err instanceof InvalidScope,
+    );
+    const paired = await service.pair(
+      first.code,
+      { birdId: "bird-noema", flockId: FLOCK },
+    );
+    assert.ok(paired.token);
+    assert.equal(paired.computerHandle, computer.id);
   });
 
   it("Nexus/graph flags stay locked and C3B Runloop flags are preserved", () => {

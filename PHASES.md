@@ -192,6 +192,7 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
 C3B remains closed. C4 implements only the **internal** capability layer. Do not build the public MCP gateway (C5). Do not connect a real Grok Bot. Do not start C5/C6/C7. Do not add Nexus/AEON/Graphiti. Do not dispatch paid Runloop.
 
 ### Implement
+
 - Pair codes: short-lived (10 min), one-time-use, digest-only storage, identity-bound
 - Capability secrets: 256-bit random; store digest only
 - Capability bound to exact `computer_id` / `bird_id` / `flock_id`
@@ -200,6 +201,7 @@ C3B remains closed. C4 implements only the **internal** capability layer. Do not
 - Shared account / MCP auth alone must not authorize access
 
 ### Non-goals (do not invent)
+
 - Public MCP gateway / Streamable HTTP / `POST /mcp`
 - Real Grok Bot connection
 - Kysely/Postgres wiring (in-memory store; schema stub updated)
@@ -207,6 +209,7 @@ C3B remains closed. C4 implements only the **internal** capability layer. Do not
 - Paid Runloop live tests
 
 ### Gate C4
+
 Valid NOEMA capability cannot access Code’s machine even when both Bots share the same account-level MCP connection.
 
 **Status:** IMPLEMENTED (2026-08-22). Unpaid gate tests green. Do not merge until explicit approval.
@@ -224,6 +227,8 @@ Valid NOEMA capability cannot access Code’s machine even when both Bots share 
 - Store is in-memory (Kysely in a later persistence phase)
 - Public MCP gateway is C5
 - Pair-code possession is the identity proof at redeem time (MCP cannot identify the Bot). One-time + short TTL mitigate theft. After redeem, the capability binding is the authorization boundary.
+- Pairing failure throttle is keyed on presented `bird_id`+`flock_id`, not shared MCP `accountId`. C4 does not deliver a verified-caller brute-force limiter. C5 must throttle `computer_pair` by authenticated connection/caller identity. 50-bit pair-code entropy + 10-minute TTL remain the guessing cost against rotated identities.
+- Persistence must sweep used/expired pair codes and revoked/expired capabilities from both primary tables and digest indexes, and bound pairing-failure windows. In-memory C4 only lazily drops stale identity-failure windows and expired already-used pair codes.
 
 ---
 
