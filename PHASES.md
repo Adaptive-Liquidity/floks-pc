@@ -127,7 +127,7 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
 - Runloop `optimistic_timeout` first-wait hint remains capped at 25s; `timedOut` is reported when exitCode is null.
 - `vars.FLOK_RUNLOOP_BLUEPRINT` was empty; the passing live run resolved the blueprint from a repository **secret** of the same name.
 
-### Gate C3B — interactive computer  ← CURRENT / OPEN
+### Gate C3B — interactive computer
 
 **Goal:** Browser + private display + screenshot + bounded input + persistent profile inside each Runloop Devbox. Grok remains the intelligence. Runloop remains the computer.
 
@@ -139,8 +139,8 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
 - `observe()` screenshot from `:99`
 - Bounded `act()`: click_coordinates, type, key, scroll, open_url, wait; `click_element` fail-closed
 - Local noVNC on localhost only; `takeover()` remains fail-closed; `vnc: false`
-- `computerUse: false` until a real Runloop interactive Devbox passes the paid C3B live gate
-- Manual `runloop-c3b` workflow; **do not run paid live tests until approved**
+- `computerUse: true` after paid C3B live gate; `accessibility: false`, `vnc: false`, `pauseMemory: false`
+- Manual `runloop-c3` phase `c3b-live` (GitHub only lists workflows that exist on main; `runloop-c3b.yml` is not dispatchable)
 
 ### Non-goals (do not invent)
 - Browserbase, Kernel, Runloop Agents, MCP, pairing, Grok Bot connection, Nexus/AEON/Graphiti
@@ -148,17 +148,32 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
 - `mode: "shell"`
 - Chromium `--no-sandbox` unless a verified Runloop incompatibility is documented
 
-**Status:** OPEN
+**Status:** CLOSED / PASSED (2026-08-22)
 
-**Paid live evidence (FAIL — do not close)**
+**Evidence**
 - Interactive Blueprint: `bpt_34BQTBwmrCLxEQkEMjQKm` / `flok-runloop-interactive` `build_complete` (~106s). Workflow run `32557645663`.
-- Live: `runloop-c3` phase `c3b-live` run [`32557742597`](https://github.com/Adaptive-Liquidity/floks-pc/actions/runs/32557742597) job `96994511350` SHA `3efa97f94fad2e84fa76ff31e5e0fd8966e9beb3`
-  - 0 pass / 1 fail / 0 skip, 18.3s
-  - Provision, DnD tools, `flok-ui` uid 1500, Chrome 151.0.7922.173, Xvfb :99, Openbox, `open_url` launch-accepted, flok-ui Chrome with `--user-data-dir=/home/user/flok/.browser/profile` and without `--no-sandbox` all succeeded
-  - Failed at `tests/live/runloop.c3b.live.test.ts` `filesystem.list` of the profile: `ok: true` with an empty array (~2.5s after Popen)
-  - Screenshot, click/type/key/scroll, noVNC, suspend/resume were not reached
-- Diagnosis: `open_url` returns when the detached Python `Popen` starts (`runuser` → `google-chrome-stable`). That is launch-accepted, not Chrome-ready. Stderr was discarded (`DEVNULL`), so a stuck/sandbox/permissions failure was indistinguishable from a slow first-run. An empty profile at 2.5s is **not** treated as “needs a longer sleep”: a healthy Chrome typically writes `Default` / `Local State` / `SingletonLock` within hundreds of ms. Unpaid work cannot prove whether the process failed to write, wrote to `HOME` fallback `/home/flok-ui/.config/google-chrome`, or was still in zygote/sandbox setup.
-- Unpaid fix (this branch, still OPEN): bounded `pollUntilChromeReady` (~20s / 500ms) with classified failures; guest probe lists the profile as root and as `flok-ui`; Chrome startup captured at `/tmp/flok-chrome.log` (not FLOKS audit); ensure/Dockerfile verify the profile is writable by `flok-ui` (`chmod 700`, `test -w`). `open_url` stays launch-accepted. `computerUse` stays **false**. Do **not** dispatch another paid live run until approved.
+- Prior FAIL (not closeable): `runloop-c3` phase `c3b-live` run [`32557742597`](https://github.com/Adaptive-Liquidity/floks-pc/actions/runs/32557742597) job `96994511350` SHA `3efa97f` — empty Chrome profile 2.5s after `open_url` Popen. Unpaid fix `b892978` added bounded `pollUntilChromeReady` (~20s / 500ms) with classified failures.
+- Live: `runloop-c3` phase `c3b-live` run [`32559415086`](https://github.com/Adaptive-Liquidity/floks-pc/actions/runs/32559415086) job `96998605345` SHA `b892978a575b273631e32018d61467884ef04124`
+  - URL: https://github.com/Adaptive-Liquidity/floks-pc/actions/runs/32559415086
+  - Job `Runloop interactive live test`: **success**
+  - `FLOK_LIVE_RUNLOOP_C3B_TEST=1 npm run test:live:runloop-c3b`
+  - 1 pass / 0 fail / 0 skip
+  - Live case `one Devbox: stack, fixture, observe, input, profile, suspend/resume, local noVNC, cleanup` **64.1s, not skipped**
+  - Chrome 151.0.7922.173; blueprint default `flok-runloop-interactive`
+- Live proofs encoded in `tests/live/runloop.c3b.live.test.ts` (all asserted; suite would fail otherwise):
+  - Chrome readiness / profile initialization (`pollUntilChromeReady`, `requireProfile: true`; `filesystem.list` of `/home/user/flok/.browser/profile` non-empty)
+  - Real screenshot (`observe` 1440×900 PNG IHDR; no accessibility fabrications)
+  - `click_coordinates` / `type` / `key` / `scroll` all `success: true`
+  - Localhost noVNC (`http://127.0.0.1:6080/`)
+  - No public VNC (ports 5900 and 6080 listen on loopback only)
+  - Suspend / resume: profile marker `c3b-marker` survived disk suspend
+  - Graphical stack recovery: Xvfb `:99` + Openbox + Chrome-ready after resume; screenshot after resume
+  - Profile persistence: Chrome `--user-data-dir=/home/user/flok/.browser/profile` without `--no-sandbox`
+  - Devbox cleanup: `finally` `destroy` (no `destroy failed` log)
+- Isolation: zero writes under Floks-main
+- Nexus / graph flags remain false
+- Capabilities after this close: `computerUse: true`, `accessibility: false`, `vnc: false`, `pauseMemory: false`
+- C4 is **not started**. Do not begin pairing / MCP / Grok Bot work until explicit approval.
 
 **Known limitations (not C3B close criteria)**
 - Chrome `.deb` is unpinned stable (151.0.7922.173 recorded live)
@@ -173,6 +188,8 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
 ## Phase 4 — Node pairing and capability security
 
 **Goal:** Pair codes + capability tokens. MCP auth alone cannot identify a Bot.
+
+**Status:** NOT STARTED. Do not begin C4 until explicit approval.
 
 ### Gate C4
 Valid NOEMA capability cannot access Code’s machine even when both Bots share the same account-level MCP connection.

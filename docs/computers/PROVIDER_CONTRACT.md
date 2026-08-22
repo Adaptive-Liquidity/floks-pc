@@ -84,7 +84,7 @@ interface ProviderCapabilities {
 - C3B `observe()` screenshots the private display (PNG, temp file deleted). Accessibility is not implemented (`accessibility: false`).
 - C3B `act()` supports `click_coordinates`, `type`, `key`, `scroll`, `open_url`, `wait`, and allowlisted `launch_application` (browser). `click_element` is fail-closed.
 - `takeover()` stays fail-closed. Local noVNC is bound to `127.0.0.1:6080` only. Do not advertise `vnc: true` until authenticated tunnels exist. Never use `auth_mode=open`.
-- Capabilities: `computerUse: false` until the paid C3B live gate passes; `accessibility: false`, `vnc: false`, `pauseMemory: false`.
+- Capabilities: `computerUse: true` after paid C3B live gate `32559415086`; `accessibility: false`, `vnc: false`, `pauseMemory: false`.
 - Auth: `RUNLOOP_API_KEY`. Never place the key inside a Devbox, exec env, log, or MCP response.
 - Do **not** use `runloopai/deploy-agent`. C3 tests Devboxes, not Runloop Agents.
 - Live lifetime: `keep_alive_time_seconds=900`. Do not combine with `lifecycle.after_idle`.

@@ -153,7 +153,7 @@ describe("Runloop C3B live interactive Devbox", { skip: !LIVE }, () => {
     }
     const p = await RunloopProvider.fromEnv();
     const caps = p.capabilities();
-    assert.equal(caps.computerUse, false, "computerUse must stay false until this live gate passes");
+    assert.equal(caps.computerUse, true, "computerUse is true after the paid C3B live gate");
     assert.equal(caps.vnc, false);
     assert.equal(caps.accessibility, false);
     assert.equal(caps.pauseMemory, false);

@@ -7,7 +7,7 @@
  *
  * Suspend preserves disk, not RAM (pauseMemory: false).
  * C3B: screenshot + bounded input on a private display (as flok-ui).
- * takeover/vnc stay fail-closed. computerUse stays false until live C3B.
+ * takeover/vnc stay fail-closed. computerUse is true after paid C3B live.
  */
 
 import { posix as pathPosix } from "node:path";
@@ -120,7 +120,7 @@ export class RunloopProvider implements ComputerProvider {
     return {
       linuxVm: true,
       windowsVm: false,
-      computerUse: false, // true only after paid C3B live gate
+      computerUse: true,
       accessibility: false,
       vnc: false,
       pauseMemory: false,

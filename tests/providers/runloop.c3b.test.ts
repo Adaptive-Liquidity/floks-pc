@@ -182,9 +182,9 @@ describe("C3B RunloopProvider (memory)", () => {
     assertNexusDisabled();
   });
 
-  it("advertises computerUse false until the paid C3B live gate", () => {
+  it("advertises computerUse true after the paid C3B live gate", () => {
     const caps = provider().capabilities();
-    assert.equal(caps.computerUse, false);
+    assert.equal(caps.computerUse, true);
     assert.equal(caps.vnc, false);
     assert.equal(caps.accessibility, false);
     assert.equal(caps.pauseMemory, false);
