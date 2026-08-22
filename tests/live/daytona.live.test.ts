@@ -7,7 +7,9 @@
  */
 import { describe, it } from "node:test";
 
-const LIVE = process.env.FLOK_LIVE_COMPUTER_TEST === "1";
+const LIVE =
+  process.env.FLOK_LIVE_DAYTONA_TEST === "1" ||
+  process.env.FLOK_LIVE_COMPUTER_TEST === "1";
 
 describe("live Daytona entry (see tests/providers/daytona.isolation.test.ts)", { skip: !LIVE }, () => {
   it("is covered by daytona.isolation.test.ts live describe", () => {

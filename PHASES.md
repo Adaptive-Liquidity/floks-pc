@@ -103,14 +103,14 @@ Work only on the currently open phase. Nexus-IQ / AEON / Graphiti are **forbidde
 - observe / act via Computer Use; takeover via signed noVNC preview URL
 - checkpoint via `createSnapshot`; restore from snapshot
 - Non-live tests with an injected control-plane fake (zero network)
-- Live tests opt-in: `FLOK_LIVE_COMPUTER_TEST=1` — missing key/snapshot **FAILS**, never silent skip
+- Live tests opt-in: `FLOK_LIVE_DAYTONA_TEST=1` — missing key/snapshot **FAILS**, never silent skip
 
 ### Non-goals (do not invent)
 - Provider factory, MCP gateway, pairing/capability wiring, worker, Kysely, Nexus/AEON/Graphiti
 
 ### Gate C3
 Two live Linux VMs prove different provider IDs, filesystems, browser profiles, process namespaces, independent lifecycle.  
-Live tests are **opt-in only** (`FLOK_LIVE_COMPUTER_TEST=1`). Not part of required PR CI.
+Live tests are **opt-in only** (`FLOK_LIVE_DAYTONA_TEST=1`, manual `daytona-c3` workflow). Not part of required PR CI.
 
 **Status:** OPEN
 

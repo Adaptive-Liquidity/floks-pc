@@ -4,9 +4,9 @@
  * Non-live: MemoryDaytonaControlPlane proves A/B isolation, distinct boot IDs,
  * distinct browser profiles, independent lifecycle — zero network.
  *
- * Live: skipped unless FLOK_LIVE_COMPUTER_TEST=1. When the flag is set,
- * missing DAYTONA_API_KEY / FLOK_DAYTONA_SNAPSHOT / API failure MUST FAIL,
- * never silent skip.
+ * Live: skipped unless FLOK_LIVE_DAYTONA_TEST=1 (or FLOK_LIVE_COMPUTER_TEST=1).
+ * When a live flag is set, missing DAYTONA_API_KEY / FLOK_DAYTONA_SNAPSHOT
+ * or API failure MUST FAIL, never silent skip.
  */
 
 import { describe, it, before } from "node:test";
@@ -126,18 +126,20 @@ describe("Daytona C3 isolation (memory plane)", () => {
   });
 });
 
-const LIVE = process.env.FLOK_LIVE_COMPUTER_TEST === "1";
+const LIVE =
+  process.env.FLOK_LIVE_DAYTONA_TEST === "1" ||
+  process.env.FLOK_LIVE_COMPUTER_TEST === "1";
 
 describe("Daytona C3 live Linux VMs", { skip: !LIVE }, () => {
   before(() => {
     if (!process.env.DAYTONA_API_KEY) {
       throw new Error(
-        "FLOK_LIVE_COMPUTER_TEST=1 but DAYTONA_API_KEY is missing (must FAIL, not skip)",
+        "live Daytona flag is set but DAYTONA_API_KEY is missing (must FAIL, not skip)",
       );
     }
     if (!process.env.FLOK_DAYTONA_SNAPSHOT) {
       throw new Error(
-        "FLOK_LIVE_COMPUTER_TEST=1 but FLOK_DAYTONA_SNAPSHOT is missing — Linux VM snapshot required (must FAIL, not skip)",
+        "live Daytona flag is set but FLOK_DAYTONA_SNAPSHOT is missing — Linux VM snapshot required (must FAIL, not skip)",
       );
     }
   });
