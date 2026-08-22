@@ -1,38 +1,29 @@
-# Opt-in / scheduled Daytona Linux VM live tests.
-# NEVER required on pull requests. Burns paid VM time.
-# Secrets live in GitHub Actions only — never in the repo, guest env, or logs.
+# Manual Daytona Linux VM live tests.
+# Not on pull_request. Not on push. Burns paid VM time.
+# DAYTONA_API_KEY stays in GitHub secrets; never in git, guest env, or logs.
+#
+# GitHub does not allow `secrets` in job-level `if:` expressions, so presence
+# is checked in a step (`test -n`) and missing config FAILs instead of skipping.
 name: daytona-c3
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "src/lib/computers/providers/daytona*.ts"
-      - "tests/providers/daytona*.ts"
-      - "tests/live/daytona*.ts"
-      - ".github/workflows/daytona-c3.yml"
-      - "package.json"
-      - "package-lock.json"
 
 concurrency:
-  group: daytona-c3-${{ github.ref }}
+  group: daytona-c3
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  live-linux-vms:
-    name: live Daytona Linux VMs
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    if: ${{ secrets.DAYTONA_API_KEY != '' && (vars.FLOK_DAYTONA_SNAPSHOT != '' || secrets.FLOK_DAYTONA_SNAPSHOT != '') }}
+  daytona-live:
+    name: Daytona VM live test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     env:
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-      FLOK_DAYTONA_SNAPSHOT: ${{ vars.FLOK_DAYTONA_SNAPSHOT || secrets.FLOK_DAYTONA_SNAPSHOT }}
-      DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
-      FLOK_LIVE_COMPUTER_TEST: "1"
+      FLOK_DAYTONA_SNAPSHOT: ${{ vars.FLOK_DAYTONA_SNAPSHOT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,17 +33,13 @@ jobs:
           node-version: "22.16"
           cache: npm
       - run: npm ci
-      - name: Confirm secrets are present without printing them
+      - name: Verify Daytona configuration
         run: |
-          if [ -z "$DAYTONA_API_KEY" ]; then
-            echo "DAYTONA_API_KEY secret is empty" >&2
-            exit 1
-          fi
-          if [ -z "$FLOK_DAYTONA_SNAPSHOT" ]; then
-            echo "FLOK_DAYTONA_SNAPSHOT is empty (set repo variable or secret)" >&2
-            exit 1
-          fi
+          test -n "$DAYTONA_API_KEY"
+          test -n "$FLOK_DAYTONA_SNAPSHOT"
+          echo "Daytona snapshot: $FLOK_DAYTONA_SNAPSHOT"
           echo "DAYTONA_API_KEY length=${#DAYTONA_API_KEY}"
-          echo "FLOK_DAYTONA_SNAPSHOT is set (not printed)"
-      - name: Live C3 isolation
+      - name: Run Daytona live tests
+        env:
+          FLOK_LIVE_COMPUTER_TEST: "1"
         run: npm run test:live:daytona
