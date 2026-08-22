@@ -33,7 +33,7 @@ This runtime owns the isolated-computer substrate. After Gate G0 it can be impor
 - **Control plane** (this package): pairing, capabilities, jobs, policies, audit, MCP endpoint.
 - **Compute plane**: one VM (or later microVM) per Node. Filesystem, processes, browser, and the private display live only there. C3B extends `runloop/universal-ubuntu-24.04-x86_64-dnd` so Docker/Node/Python/Git stay available; Chrome and the X stack run as `flok-ui`, not root. Grok remains the intelligence; Runloop is not the agent runtime.
 
-No route or MCP tool may call a concrete provider. Everything goes through `ComputerService` → `ComputerProvider`.
+No route or MCP tool may call a concrete provider. Everything goes through `ComputerService` → `ComputerProvider`. The C5 public surface is `POST /mcp` (`docs/computers/MCP.md`).
 
 ## Data ownership
 

@@ -21,8 +21,9 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 | **C2** — DockerDevProvider + isolation/persistence | **CLOSED / PASSED** |
 | **C3A** — Runloop Devbox compute substrate | **CLOSED / PASSED** |
 | **C3B** — interactive computer (display, browser, screenshot, bounded input) | **CLOSED / PASSED** |
-| **C4** — pair codes + capability tokens (internal layer) | **IMPLEMENTED** (unpaid gate tests; do not merge until approval) |
-| C5+ | Not started (no public MCP gateway; Nexus-IQ remains hard-locked until G0) |
+| **C4** — pair codes + capability tokens (internal layer) | **CLOSED / PASSED** |
+| **C5** — Flok MCP Gateway (`POST /mcp`, eight tools) | **IMPLEMENTED** (unpaid FakeProvider tests; real Grok Bot / public URL remains manual) |
+| C6+ | Not started (Nexus-IQ remains hard-locked until G0) |
 
 ## Authority files (read in this order)
 
@@ -61,6 +62,14 @@ FLOK_LIVE_RUNLOOP_TEST=1 npm run test:live:runloop
 ```
 
 When the flag is set, missing credentials **fail** the suite. Live Runloop is **not** part of `npm run verify` or required PR CI.
+
+Loopback MCP (FakeProvider, not public, not paid):
+
+```bash
+FLOK_MCP_COMPUTERS_ENABLED=1 npm run start:mcp
+```
+
+See `docs/computers/MCP.md`. Real Grok Bot pairing needs an approved public HTTPS `POST /mcp` URL; this package does not deploy one.
 
 C3B interactive live tests are a separate manual workflow (`runloop-c3` phase `c3b-live`; `runloop-c3b.yml` is not registered on main). They need the custom interactive Blueprint (built from the DnD base; not bare Ubuntu) and `FLOK_LIVE_RUNLOOP_C3B_TEST=1`. Paid live gate **passed** on run `32559415086` (SHA `b892978`). `computerUse` is **true**. `accessibility` / `vnc` / `pauseMemory` stay **false**.
 

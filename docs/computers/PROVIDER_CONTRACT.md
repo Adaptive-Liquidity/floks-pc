@@ -90,14 +90,12 @@ interface ProviderCapabilities {
 - Live lifetime: `keep_alive_time_seconds=900`. Do not combine with `lifecycle.after_idle`.
 - Chromium sandbox is preserved (no `--no-sandbox`) unless a verified Runloop incompatibility is documented.
 
-## MCP notes (for Phase 5)
+## MCP notes (Phase 5)
 
-- Target protocol: **2026-07-28** (stateless).
+- Target protocol: **2026-07-28** (stateless Streamable HTTP) with a 2025-era `initialize` compatibility path.
 - Explicit application-level handles (`computer_handle`, `node_handle`). Do **not** rely on transport sessions for Node identity.
-- Streamable HTTP preferred.
-- Prefer `@modelcontextprotocol/server` (v2 packages).
-- Keep the tool surface small (eight tools). xAI guidance favors filtering tools to protect model context.
-- Compatibility path for older clients that still use initialization-era MCP is still required.
+- Eight tools only. xAI guidance favors filtering tools to protect model context.
+- Implemented in-tree (`src/lib/mcp`) so pair codes and capability tokens can be redacted and so session IDs cannot become auth. See `docs/computers/MCP.md`.
 
 ## Path and execution safety (enforced by ComputerService)
 
