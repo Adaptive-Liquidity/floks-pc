@@ -131,75 +131,110 @@ class SdkDaytonaControlPlane implements DaytonaControlPlane {
     this.daytona = new Daytona(clientConfig(opts.apiKey, opts.apiUrl, opts.preferredTarget));
   }
 
-  private targets(): string[] {
+  private snapshotsToTry(requested: string): string[] {
+    // Dashboard Linux VM snapshots (region "-"): not the us-region container images.
+    const linuxVm = [
+      requested,
+      "daytona-vm-medium",
+      "daytona-vm",
+      "daytona-vm-large",
+      "daytona-vm-ubuntu-xxl",
+    ];
     const out: string[] = [];
-    const add = (t: string | undefined) => {
-      if (t && !out.includes(t)) out.push(t);
-    };
-    add(this.preferredTarget);
-    add("us");
-    add("eu");
+    for (const name of linuxVm) {
+      if (!out.includes(name)) out.push(name);
+    }
     return out;
   }
 
   async create(params: DaytonaCreateParams): Promise<DaytonaSandboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
-    const snapshot = params.snapshot || this.defaultSnapshot;
-    if (!snapshot) {
+    const requested = params.snapshot || this.defaultSnapshot;
+    if (!requested) {
       throw new ProviderUnavailable("daytona", "Linux VM snapshot required");
     }
-    const createArgs: {
-      snapshot: string;
-      language: string;
-      labels: Record<string, string>;
-      envVars: Record<string, string>;
-      autoStopInterval: number;
-      public: boolean;
-      resources?: { cpu?: number; memory?: number; disk?: number };
-    } = {
-      snapshot,
-      language: "typescript",
-      labels: params.labels,
-      envVars: params.envVars,
-      autoStopInterval: 0,
-      public: false,
-    };
-    if (params.cpu !== undefined || params.memoryGb !== undefined || params.diskGb !== undefined) {
-      const resources: { cpu?: number; memory?: number; disk?: number } = {};
-      if (params.cpu !== undefined) resources.cpu = params.cpu;
-      if (params.memoryGb !== undefined) resources.memory = params.memoryGb;
-      if (params.diskGb !== undefined) resources.disk = params.diskGb;
-      createArgs.resources = resources;
-    }
 
+    const probe = new Daytona(clientConfig(this.apiKey, this.apiUrl, this.preferredTarget));
     const errors: string[] = [];
-    for (const target of this.targets()) {
-      const client = new Daytona(clientConfig(this.apiKey, this.apiUrl, target));
+
+    for (const snapshotName of this.snapshotsToTry(requested)) {
+      let sandboxClass = "unknown";
+      let regionIds: string[] = [];
       try {
-        const sandbox = (await client.create(
-          createArgs,
-          { timeout: 180 },
-        )) as unknown as SdkSandbox;
-        this.daytona = client;
-        const session = new SdkDaytonaSandbox(sandbox, params.birdId, params.flockId);
-        await session.ensureWorkspace();
-        return session;
+        const info = await probe.snapshot.get(snapshotName);
+        sandboxClass = String(info.sandboxClass ?? "unknown");
+        regionIds = Array.isArray(info.regionIds) ? info.regionIds.filter(Boolean) : [];
+        if (info.sandboxClass && info.sandboxClass !== "linux-vm") {
+          errors.push(`${snapshotName}: skip sandboxClass=${info.sandboxClass}`);
+          continue;
+        }
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        errors.push(`${target}: ${msg}`);
-        if (!/not available in region/i.test(msg)) {
-          const available = await describeAvailableSnapshots(client);
-          throw new ProviderUnavailable(
-            "daytona",
-            `${msg} (requested snapshot=${snapshot} target=${target}; available=${available})`,
+        errors.push(
+          `${snapshotName}: snapshot.get failed (${e instanceof Error ? e.message : String(e)})`,
+        );
+        continue;
+      }
+
+      const targets: Array<string | undefined> = [];
+      const addTarget = (t: string | undefined) => {
+        if (t && !targets.includes(t)) targets.push(t);
+      };
+      addTarget(this.preferredTarget);
+      for (const id of regionIds) addTarget(id);
+      if (targets.length === 0) targets.push(undefined);
+
+      for (const target of targets) {
+        const client = new Daytona(clientConfig(this.apiKey, this.apiUrl, target));
+        const createArgs: {
+          snapshot: string;
+          language: string;
+          labels: Record<string, string>;
+          envVars: Record<string, string>;
+          autoStopInterval: number;
+          public: boolean;
+          resources?: { cpu?: number; memory?: number; disk?: number };
+        } = {
+          snapshot: snapshotName,
+          language: "typescript",
+          labels: params.labels,
+          envVars: params.envVars,
+          autoStopInterval: 0,
+          public: false,
+        };
+        if (params.cpu !== undefined || params.memoryGb !== undefined || params.diskGb !== undefined) {
+          const resources: { cpu?: number; memory?: number; disk?: number } = {};
+          if (params.cpu !== undefined) resources.cpu = params.cpu;
+          if (params.memoryGb !== undefined) resources.memory = params.memoryGb;
+          if (params.diskGb !== undefined) resources.disk = params.diskGb;
+          createArgs.resources = resources;
+        }
+        try {
+          const sandbox = (await client.create(
+            createArgs,
+            { timeout: 180 },
+          )) as unknown as SdkSandbox;
+          this.daytona = client;
+          const session = new SdkDaytonaSandbox(sandbox, params.birdId, params.flockId);
+          await session.ensureWorkspace();
+          return session;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          errors.push(
+            `${snapshotName}@${target ?? "default"} class=${sandboxClass} regionIds=${regionIds.join(",") || "-"}: ${msg}`,
           );
+          if (!/not available in region/i.test(msg)) {
+            throw new ProviderUnavailable(
+              "daytona",
+              `${msg} (snapshot=${snapshotName} class=${sandboxClass} target=${target ?? "default"})`,
+            );
+          }
         }
       }
     }
-    const available = await describeAvailableSnapshots(this.daytona);
+
     throw new ProviderUnavailable(
       "daytona",
-      `Linux VM snapshot ${snapshot} not available in tried regions. ${errors.join(" | ")} (available=${available})`,
+      `Linux VM snapshot not provisionable from dashboard VM images. ${errors.join(" | ")}`,
     );
   }
 
@@ -477,18 +512,6 @@ function classifyFs(err: unknown): string {
     return "NOT_FOUND";
   }
   return "IO_ERROR";
-}
-
-async function describeAvailableSnapshots(daytona: Daytona): Promise<string> {
-  try {
-    const page = await daytona.snapshot.list({ page: 1, limit: 50 });
-    if (!page.items.length) return "none";
-    return page.items
-      .map((s) => `${s.name}[state=${String(s.state ?? "")}]`)
-      .join(",");
-  } catch (e) {
-    return `list-failed:${e instanceof Error ? e.message : String(e)}`;
-  }
 }
 
 /** Resolve a guest path inside /home/flok; used by live jail tests. */
