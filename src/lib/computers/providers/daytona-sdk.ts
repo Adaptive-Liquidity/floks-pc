@@ -90,20 +90,57 @@ export async function createSdkDaytonaPlane(opts: {
   apiUrl?: string;
   target?: string;
 }): Promise<DaytonaControlPlane> {
-  const config: { apiKey: string; apiUrl?: string; target?: string } = { apiKey: opts.apiKey };
   const apiUrl = opts.apiUrl ?? process.env.DAYTONA_API_URL;
-  if (apiUrl) config.apiUrl = apiUrl;
   const target = opts.target ?? process.env.DAYTONA_TARGET;
+  return new SdkDaytonaControlPlane({
+    apiKey: opts.apiKey,
+    snapshot: opts.snapshot,
+    apiUrl,
+    preferredTarget: target,
+  });
+}
+
+function clientConfig(apiKey: string, apiUrl: string | undefined, target: string | undefined): {
+  apiKey: string;
+  apiUrl?: string;
+  target?: string;
+} {
+  const config: { apiKey: string; apiUrl?: string; target?: string } = { apiKey };
+  if (apiUrl) config.apiUrl = apiUrl;
   if (target) config.target = target;
-  const daytona = new Daytona(config);
-  return new SdkDaytonaControlPlane(daytona, opts.snapshot);
+  return config;
 }
 
 class SdkDaytonaControlPlane implements DaytonaControlPlane {
-  constructor(
-    private readonly daytona: Daytona,
-    private readonly defaultSnapshot: string,
-  ) {}
+  private readonly apiKey: string;
+  private readonly apiUrl: string | undefined;
+  private readonly defaultSnapshot: string;
+  private readonly preferredTarget: string | undefined;
+  private daytona: Daytona;
+
+  constructor(opts: {
+    apiKey: string;
+    snapshot: string;
+    apiUrl: string | undefined;
+    preferredTarget: string | undefined;
+  }) {
+    this.apiKey = opts.apiKey;
+    this.apiUrl = opts.apiUrl;
+    this.defaultSnapshot = opts.snapshot;
+    this.preferredTarget = opts.preferredTarget;
+    this.daytona = new Daytona(clientConfig(opts.apiKey, opts.apiUrl, opts.preferredTarget));
+  }
+
+  private targets(): string[] {
+    const out: string[] = [];
+    const add = (t: string | undefined) => {
+      if (t && !out.includes(t)) out.push(t);
+    };
+    add(this.preferredTarget);
+    add("us");
+    add("eu");
+    return out;
+  }
 
   async create(params: DaytonaCreateParams): Promise<DaytonaSandboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
@@ -134,22 +171,36 @@ class SdkDaytonaControlPlane implements DaytonaControlPlane {
       if (params.diskGb !== undefined) resources.disk = params.diskGb;
       createArgs.resources = resources;
     }
-    try {
-      const sandbox = (await this.daytona.create(
-        createArgs,
-        { timeout: 180 },
-      )) as unknown as SdkSandbox;
-      const session = new SdkDaytonaSandbox(sandbox, params.birdId, params.flockId);
-      await session.ensureWorkspace();
-      return session;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const available = await describeAvailableSnapshots(this.daytona);
-      throw new ProviderUnavailable(
-        "daytona",
-        `${msg} (requested snapshot=${snapshot}; available=${available})`,
-      );
+
+    const errors: string[] = [];
+    for (const target of this.targets()) {
+      const client = new Daytona(clientConfig(this.apiKey, this.apiUrl, target));
+      try {
+        const sandbox = (await client.create(
+          createArgs,
+          { timeout: 180 },
+        )) as unknown as SdkSandbox;
+        this.daytona = client;
+        const session = new SdkDaytonaSandbox(sandbox, params.birdId, params.flockId);
+        await session.ensureWorkspace();
+        return session;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        errors.push(`${target}: ${msg}`);
+        if (!/not available in region/i.test(msg)) {
+          const available = await describeAvailableSnapshots(client);
+          throw new ProviderUnavailable(
+            "daytona",
+            `${msg} (requested snapshot=${snapshot} target=${target}; available=${available})`,
+          );
+        }
+      }
     }
+    const available = await describeAvailableSnapshots(this.daytona);
+    throw new ProviderUnavailable(
+      "daytona",
+      `Linux VM snapshot ${snapshot} not available in tried regions. ${errors.join(" | ")} (available=${available})`,
+    );
   }
 
   async get(id: string): Promise<DaytonaSandboxSession> {
