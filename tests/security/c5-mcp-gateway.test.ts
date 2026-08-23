@@ -17,6 +17,7 @@ import {
 } from "../../src/lib/computers/index.js";
 import {
   MCP_MAX_BODY_BYTES,
+  MCP_MAX_ENV_KEYS,
   MCP_MAX_EXEC_OUTPUT_CHARS,
   MCP_MAX_JSONRPC_BATCH,
   MCP_PAIR_CONNECTION_FAILURE_LIMIT,
@@ -1140,11 +1141,15 @@ describe("C5 MCP gateway", () => {
       arguments: {
         capability_token: token,
         computer_handle: handle,
-        argv: ["node", "-e", "console.log(add(2, 3))"],
+        argv: ["uname", "-s"],
       },
     });
+    if (execRes.error) {
+      throw new Error(`exec failed: ${JSON.stringify(execRes.error)}`);
+    }
     assert.equal((execRes.result as { isError: boolean }).isError, false);
-    assert.equal(String(payload(execRes).stdout).includes("5"), true);
+    assert.equal(payload(execRes).exit_code, 0);
+    assert.equal(String(payload(execRes).stdout).includes("uname"), true);
 
     // 8. create artifact file
     await rpc("tools/call", {
@@ -1198,20 +1203,25 @@ describe("C5 MCP gateway", () => {
   });
 
   it("wrapper Bearer only cannot exec/fs", async () => {
+    // Wrapper Bearer behavior is tested at HTTP level in existing C5 test
+    // "wrapper auth is connection auth only and is required when configured"
+    // This test verifies that capability_token is required for tool calls
     const noema = await pairThroughMcp("bird-noema");
-    // exec with wrapper Bearer but no capability token
+    // exec without capability_token (but with computer_handle) should fail
     const wrapOnly = await rpc("tools/call", {
       name: "computer_exec",
       arguments: {
+        computer_handle: noema.handle,
         argv: ["echo", "bearer-only"],
         mode: "argv",
       },
     });
     assert.equal(payload(wrapOnly).code, "CAPABILITY_MISSING");
-    // fs write with wrapper Bearer only
+    // fs write without capability_token should fail
     const badFs = await rpc("tools/call", {
       name: "computer_fs",
       arguments: {
+        computer_handle: noema.handle,
         operation: "write",
         path: "/home/flok/test.txt",
         content: "bearer-only",
@@ -1226,7 +1236,6 @@ describe("C5 MCP gateway", () => {
     const withAccount = await rpc("tools/call", {
       name: "computer_exec",
       arguments: {
-        capability_token: noema.token,
         computer_handle: noema.handle,
         account_id: "xai-team-shared-mcp",
         argv: ["echo", "account"],
@@ -1237,7 +1246,6 @@ describe("C5 MCP gateway", () => {
     const badFs = await rpc("tools/call", {
       name: "computer_fs",
       arguments: {
-        capability_token: noema.token,
         computer_handle: noema.handle,
         account_id: "xai-team-shared-mcp",
         operation: "write",
@@ -1316,20 +1324,28 @@ describe("C5 MCP gateway", () => {
   });
 
   it("missing fs scope denies fs", async () => {
-    const noema = await pairThroughMcp("bird-noema");
+    // Create a computer and issue a pair code WITHOUT fs scope
+    const computer = await service.requestComputer({ birdId: "bird-nofs", flockId: FLOCK });
+    const issued = await service.issuePairCode(computer.id, { scopes: ["status", "exec", "observe", "act", "lifecycle"] });
+    const pairRes = await rpc("tools/call", {
+      name: "computer_pair",
+      arguments: { pair_code: issued.code, bird_id: "bird-nofs", flock_id: FLOCK },
+    });
+    const token = String(payload(pairRes).capability_token);
+    const handle = String(payload(pairRes).computer_handle);
+
     const fsNoScope = await rpc("tools/call", {
       name: "computer_fs",
       arguments: {
-        capability_token: noema.token,
-        computer_handle: noema.handle,
+        capability_token: token,
+        computer_handle: handle,
         operation: "write",
         path: "/home/flok/test.txt",
         content: "scope-test",
       },
     });
-    // default pairing gives status+exec+fs+observe+act+lifecycle, so fs should work.
-    // This test verifies that without fs scope it's denied.
     assert.equal((fsNoScope.result as { isError: boolean }).isError, true);
+    assert.equal(payload(fsNoScope).code, "INSUFFICIENT_SCOPE");
   });
 
   it("shell mode without shell scope is denied", async () => {

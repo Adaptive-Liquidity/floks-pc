@@ -116,6 +116,15 @@ Status:
 - **Throttle fail-closed:** pair-connection throttle evicts only expired or under-limit entries; a saturated map of throttled identities rejects unknown identities instead of letting them pass unthrottled.
 - **No unvalidated Bearer identity:** caller-supplied `Authorization` is only used for throttle identity when `FLOK_MCP_AUTH_TOKEN` is configured and the Bearer already passed validation. Without wrapper auth configured, unauthenticated connections key on remote address.
 
+## C6: Shell & Filesystem (argv + path jail)
+
+C6 extends the MCP gateway with hardened shell and filesystem operations:
+
+- `computer_exec`: argv[] only by default; `mode: "shell"` requires `shell` scope. Limits: argv max 64, item length 8192, cwd max 4096, timeout max 600s, env keys max 32, key length 128, value length 4096. Result includes exit_code, stdout, stderr, stdout_truncated, stderr_truncated, timed_out.
+- `computer_fs`: stat, list, read, write, mkdir, move, copy, delete. Path jail at `/home/flok` (rejects ../, null bytes, /proc, /sys, /dev). Read/write bounded to 1MB. Structured errors (PATH_ESCAPE, NOT_FOUND, etc.). No host path leaks.
+
+Both tools require valid capability with correct scope (`exec` or `fs`). Wrapper Bearer / account_id / session metadata alone cannot authorize.
+
 ## Env / config
 
 | Variable | Required for unit tests | Meaning |
