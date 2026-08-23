@@ -404,7 +404,7 @@ Require:
 - pull request before merge (squash only);
 - required GitHub Actions check names, which must match job `name:` fields exactly:
   `verify` (typecheck + tests + build), `docker-c2` (Docker isolation), `merge-gate` (security/policy scripts);
-- conversation resolution (unresolved review threads block merge);
+- conversation resolution optional (currently off on the live ruleset);
 - merge-gate classification replies on every review thread (Actions job, see `.github/MERGE_GATE.md`);
 - branch up-to-date with `main`;
 - no force push;

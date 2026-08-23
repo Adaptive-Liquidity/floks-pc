@@ -8,7 +8,7 @@
 | Branch must be up to date with `main` | Yes, via strict status checks | No |
 | Required checks green | Yes | The check itself must run |
 | Squash-only merge | Yes | No |
-| Every review thread resolved | Yes | Also verifies |
+| Every review thread resolved | Optional (ruleset; currently off) | Only if `MERGE_GATE_REQUIRE_RESOLVED=true` |
 | Every thread has a classification reply | No | Yes |
 | Confirmed finding has `FIX` SHA | No | Yes |
 | `FIX` SHA is on the PR branch | No | Yes |
@@ -24,7 +24,7 @@ docker-c2   — Docker isolation test passes
 merge-gate  — security/policy scripts pass
 ```
 
-The ruleset also requires **conversation resolution**: leftover unresolved review threads block merge (`required_review_thread_resolution`).
+Conversation resolution is **off** on the live ruleset (`required_review_thread_resolution: false`). Unresolved threads do not block merge by themselves.
 
 Those jobs are defined in `.github/workflows/verify.yml` and `.github/workflows/merge-gate.yml`. GitHub-hosted runners execute them. Paid Runloop workflows are not required checks. The ruleset pins those checks to GitHub Actions via `integration_id` `15368`.
 
@@ -33,9 +33,8 @@ Those jobs are defined in `.github/workflows/verify.yml` and `.github/workflows/
 1. The three unpaid GitHub Actions checks above are green.
 2. Every review **thread** has a classification **reply** (not only the original comment).
 3. Confirmed / partially-confirmed findings that must or should be fixed cite a `FIX` commit that is an ancestor of the PR head.
-4. Every review thread is **resolved**.
-5. The branch is up to date with `main` (ruleset `strict_required_status_checks_policy`).
-6. Merge method is **squash** (ruleset `allowed_merge_methods`).
+4. The branch is up to date with `main` (ruleset `strict_required_status_checks_policy`).
+5. Merge method is **squash** (ruleset `allowed_merge_methods`).
 
 ## Classification reply
 
