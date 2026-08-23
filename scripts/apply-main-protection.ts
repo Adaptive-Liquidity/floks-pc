@@ -1,5 +1,7 @@
 /**
- * Create or update the "Protect main" repository ruleset.
+ * Create or update the "Protect main" GitHub repository ruleset via the
+ * GitHub REST rulesets API. This does not invoke Cursor and does not run
+ * GitHub Actions; it only tells GitHub which checks must be green to merge.
  *
  * Requires a token with Administration permission:
  *

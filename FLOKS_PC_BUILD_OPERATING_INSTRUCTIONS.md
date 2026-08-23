@@ -391,9 +391,9 @@ Do not require paid Runloop live tests on every PR.
 
 ## 16. `main` rules
 
-Protect `main` with a branch ruleset / protection.
+Protect `main` with a GitHub repository ruleset. **GitHub blocks merges. GitHub Actions runs the named jobs. Cursor only edits files and can respond when a check or review fails. The ruleset does not start Cursor.**
 
-The intended ruleset is `.github/rulesets/main-protection.json`. Apply it with Administration credentials:
+The intended ruleset is `.github/rulesets/main-protection.json` (JSON only; protocol lives in `.github/MERGE_GATE.md`). Apply it with Administration credentials against GitHub's rulesets API:
 
 ```text
 GH_ADMIN_TOKEN=... npm run protect:main
@@ -402,9 +402,10 @@ GH_ADMIN_TOKEN=... npm run protect:main
 Require:
 
 - pull request before merge (squash only);
-- required CI status checks: `typecheck + tests + build`, `live docker isolation`, `merge-gate`;
-- conversation resolution;
-- merge-gate classification replies on every review thread (see `.github/MERGE_GATE.md`);
+- required GitHub Actions check names, which must match job `name:` fields exactly:
+  `typecheck + tests + build`, `live docker isolation`, `merge-gate`;
+- conversation resolution (ruleset);
+- merge-gate classification replies on every review thread (Actions job, see `.github/MERGE_GATE.md`);
 - branch up-to-date with `main`;
 - no force push;
 - no direct pushes;

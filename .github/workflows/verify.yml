@@ -1,6 +1,7 @@
-# Non-paid verification for Adaptive-Liquidity/floks-pc.
+# GitHub Actions (not Cursor) runs these jobs on GitHub-hosted runners.
+# Job `name:` values are the required check contexts in
+# `.github/rulesets/main-protection.json`. Do not rename them.
 # `verify` does NOT run Runloop live tests (paid).
-# `docker-c2` runs live Docker isolation on a GitHub-hosted ubuntu-24.04 runner.
 name: verify
 
 on:

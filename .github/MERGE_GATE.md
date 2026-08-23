@@ -1,20 +1,39 @@
 # Merge gate
 
-PRs into `main` cannot merge until:
+**GitHub enforces branch protection. GitHub Actions runs the named jobs. `merge-gate` enforces the review-classification protocol. Cursor only edits code/workflows and can reply when a check or review fails. The ruleset does not start Cursor, and it does not run tests.**
 
-1. Required GitHub Actions checks are green:
-   - `typecheck + tests + build`
-   - `live docker isolation`
-   - `merge-gate`
+| Requirement | Enforced by GitHub ruleset? | Enforced by `merge-gate` job? |
+| --- | ---: | ---: |
+| PR required before merging to `main` | Yes | No |
+| Branch must be up to date with `main` | Yes, via strict status checks | No |
+| Required checks green | Yes | The check itself must run |
+| Squash-only merge | Yes | No |
+| Every review thread resolved | Yes | Also verifies |
+| Every thread has a classification reply | No | Yes |
+| Confirmed finding has `FIX` SHA | No | Yes |
+| `FIX` SHA is on the PR branch | No | Yes |
+| Paid Runloop tests not required | No | Yes, by not checking for them |
+
+The ruleset JSON is only JSON: `.github/rulesets/main-protection.json`. It uses GitHub REST property names (`required_approving_review_count`, `strict_required_status_checks_policy`, `integration_id`, `allowed_merge_methods`). Do not paste Markdown into that file.
+
+GitHub blocks merge to `main` unless these **GitHub Actions check names** are green on the head commit. Those names must match the job `name:` fields exactly:
+
+```text
+typecheck + tests + build
+live docker isolation
+merge-gate
+```
+
+Those jobs are defined in `.github/workflows/verify.yml` and `.github/workflows/merge-gate.yml`. GitHub-hosted runners execute them. Paid Runloop workflows are not required checks. The ruleset pins those checks to GitHub Actions via `integration_id` `15368`.
+
+## What must be true before merge
+
+1. The three unpaid GitHub Actions checks above are green.
 2. Every review **thread** has a classification **reply** (not only the original comment).
-3. Confirmed / partially-confirmed findings that must or should be fixed cite a `FIX` commit that is on the PR branch.
+3. Confirmed / partially-confirmed findings that must or should be fixed cite a `FIX` commit that is an ancestor of the PR head.
 4. Every review thread is **resolved**.
-5. The branch is up to date with `main`.
-6. Merge method is **squash**.
-
-Paid Runloop live tests are **not** required.
-
-This file is the machine protocol. Human process lives in `FLOKS_PC_BUILD_OPERATING_INSTRUCTIONS.md` §§16–21.
+5. The branch is up to date with `main` (ruleset `strict_required_status_checks_policy`).
+6. Merge method is **squash** (ruleset `allowed_merge_methods`).
 
 ## Classification reply
 
@@ -57,14 +76,14 @@ no code change
 
 Do not rubber-stamp. Classify first. Fix only confirmed / partially-confirmed actionable findings.
 
-## Repository ruleset
+## Applying the GitHub ruleset
 
-The JSON at `.github/rulesets/main-protection.json` is the intended GitHub ruleset for `main`. Applying it needs Administration on the repo (a default `GITHUB_TOKEN` cannot). After this PR is on `main`:
+Applying `.github/rulesets/main-protection.json` needs Administration on the repo (a default `GITHUB_TOKEN` cannot). After this PR is on `main`:
 
 ```bash
 GH_ADMIN_TOKEN=... npm run protect:main
 ```
 
-Until that command succeeds, GitHub will not *enforce* the ruleset; `merge-gate` still runs on PRs and fails the check when threads are unclassified.
+That call hits GitHub's repository rulesets API. It does not invoke Cursor. Until it succeeds, GitHub will not *enforce* the ruleset; the `merge-gate` Actions job still runs on PRs and fails when threads are unclassified.
 
 Do not require a human approving review while only one human GitHub identity exists.

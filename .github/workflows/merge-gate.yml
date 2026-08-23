@@ -1,5 +1,6 @@
-# Comment classification + resolve gate for PRs into main.
-# Does not re-run verify. GitHub required checks still demand verify + docker-c2 + this job.
+# GitHub Actions job. Job `name: merge-gate` is the check context the
+# main ruleset requires. GitHub runners execute it; Cursor does not.
+# It classifies review threads. It does not re-run verify or docker-c2.
 name: merge-gate
 
 on:
