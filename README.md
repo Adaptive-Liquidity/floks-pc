@@ -87,8 +87,11 @@ GitHub **Variables** and **Secrets** are different stores. A value saved only as
 PR
 ├─ verify        ← every PR (free)
 ├─ docker-c2     ← every PR (GitHub-hosted Docker)
+├─ merge-gate    ← every PR: CI green is not enough; review threads must be classified, valid issues fixed, and resolved
 └─ runloop-c3    ← manual workflow_dispatch only (phase c3a / c3b-blueprint / c3b-live)
 ```
+
+Merging to `main` requires those unpaid checks, up-to-date with `main`, and resolved review conversations. See `.github/MERGE_GATE.md`. Apply the repository ruleset with `GH_ADMIN_TOKEN=... npm run protect:main` (Administration permission). Do not require paid Runloop jobs.
 
 Run C3A from Actions → **runloop-c3** → Run workflow. Do not use `runloopai/deploy-agent`. Do not make paid jobs required status checks. Never log the API key or its length.
 
