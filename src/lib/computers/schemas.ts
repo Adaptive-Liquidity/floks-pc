@@ -4,6 +4,10 @@
  */
 
 import { z } from "zod";
+import {
+  MCP_MAX_ARGV,
+  MCP_MAX_ARG_CHARS,
+} from "../mcp/config.js";
 
 export const ComputerStateSchema = z.enum([
   "requested",
@@ -108,8 +112,11 @@ export const ComputerJobStatusSchema = z.enum([
 ]);
 
 export const ExecRequestSchema = z.object({
-  argv: z.array(z.string()).min(1),
-  cwd: z.string().optional(),
+  argv: z
+    .array(z.string().max(MCP_MAX_ARG_CHARS))
+    .min(1)
+    .max(MCP_MAX_ARGV),
+  cwd: z.string().max(4096).optional(),
   env: z.record(z.string(), z.string()).optional(),
   timeoutMs: z.number().int().positive().max(600_000).optional(),
   mode: z.enum(["argv", "shell"]).optional(),
