@@ -403,8 +403,8 @@ Require:
 
 - pull request before merge (squash only);
 - required GitHub Actions check names, which must match job `name:` fields exactly:
-  `typecheck + tests + build`, `live docker isolation`, `merge-gate`;
-- conversation resolution (ruleset);
+  `verify` (typecheck + tests + build), `docker-c2` (Docker isolation), `merge-gate` (security/policy scripts);
+- conversation resolution (unresolved review threads block merge);
 - merge-gate classification replies on every review thread (Actions job, see `.github/MERGE_GATE.md`);
 - branch up-to-date with `main`;
 - no force push;

@@ -19,10 +19,12 @@ The ruleset JSON is only JSON: `.github/rulesets/main-protection.json`. It uses 
 GitHub blocks merge to `main` unless these **GitHub Actions check names** are green on the head commit. Those names must match the job `name:` fields exactly:
 
 ```text
-typecheck + tests + build
-live docker isolation
-merge-gate
+verify      — code typechecks, tests pass, it builds
+docker-c2   — Docker isolation test passes
+merge-gate  — security/policy scripts pass
 ```
+
+The ruleset also requires **conversation resolution**: leftover unresolved review threads block merge (`required_review_thread_resolution`).
 
 Those jobs are defined in `.github/workflows/verify.yml` and `.github/workflows/merge-gate.yml`. GitHub-hosted runners execute them. Paid Runloop workflows are not required checks. The ruleset pins those checks to GitHub Actions via `integration_id` `15368`.
 

@@ -85,10 +85,10 @@ GitHub **Variables** and **Secrets** are different stores. A value saved only as
 
 ```text
 PR  (GitHub Actions runs these; the ruleset only blocks merge until they are green)
-├─ typecheck + tests + build   ← every PR (free)
-├─ live docker isolation       ← every PR (GitHub-hosted Docker)
-├─ merge-gate                  ← every PR: classification replies + valid FIX SHAs
-└─ runloop-c3                  ← manual workflow_dispatch only (not a required check)
+├─ verify        ← typecheck + tests + build (every PR, free)
+├─ docker-c2     ← Docker isolation test (GitHub-hosted Docker)
+├─ merge-gate    ← security/policy scripts + classification replies
+└─ runloop-c3    ← manual workflow_dispatch only (not a required check)
 ```
 
 GitHub, not Cursor, enforces merge to `main`. See `.github/MERGE_GATE.md`. Apply the JSON ruleset with `GH_ADMIN_TOKEN=... npm run protect:main` (Administration permission). Do not require paid Runloop jobs.

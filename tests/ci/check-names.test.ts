@@ -40,8 +40,8 @@ describe("required status check names", () => {
     assert.deepEqual(
       checks?.map((check) => check.context),
       [
-        "typecheck + tests + build",
-        "live docker isolation",
+        "verify",
+        "docker-c2",
         "merge-gate",
       ],
     );
@@ -49,8 +49,8 @@ describe("required status check names", () => {
       checks?.every((check) => check.integration_id === 15368),
       "required checks must come from GitHub Actions (integration_id 15368)",
     );
-    assert.equal(yamlJobName(verify, "verify"), "typecheck + tests + build");
-    assert.equal(yamlJobName(verify, "docker-c2"), "live docker isolation");
+    assert.equal(yamlJobName(verify, "verify"), "verify");
+    assert.equal(yamlJobName(verify, "docker-c2"), "docker-c2");
     assert.equal(yamlJobName(mergeGate, "merge-gate"), "merge-gate");
   });
 });
