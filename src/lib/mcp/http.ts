@@ -6,7 +6,14 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { digestEquals, sha256Hex } from "../computers/digest.js";
-import { MCP_MAX_BODY_BYTES, MCP_PATH, type McpGatewayConfig } from "./config.js";
+import {
+  MCP_MAX_BODY_BYTES,
+  MCP_PATH,
+  MCP_PREFERRED_PROTOCOL,
+  MCP_SUPPORTED_PROTOCOLS,
+  type McpGatewayConfig,
+} from "./config.js";
+import { JSONRPC_INTERNAL, jsonRpcError } from "./errors.js";
 import { McpGateway, type McpRequestContext } from "./handler.js";
 import { header } from "./protocol.js";
 import { parseBearer } from "./throttle.js";
@@ -19,10 +26,72 @@ export interface McpHttpOptions {
   path?: string;
 }
 
+/** Always-ending internal error. Never includes stacks, secrets, or provider refs. */
+export function endUnhandledMcpError(
+  res: ServerResponse,
+  id: string | number | null = null,
+): void {
+  if (res.writableEnded) return;
+  try {
+    if (!res.headersSent) {
+      res.statusCode = 500;
+      res.setHeader("content-type", "application/json");
+    }
+    res.end(JSON.stringify(jsonRpcError(id, JSONRPC_INTERNAL, "internal error", "INTERNAL")));
+  } catch {
+    try {
+      res.end();
+    } catch {
+      /* already closed */
+    }
+  }
+}
+
 export async function handleMcpHttp(
   req: IncomingMessage,
   res: ServerResponse,
   opts: McpHttpOptions,
+): Promise<void> {
+  let rpcId: string | number | null = null;
+  let notification = false;
+  try {
+    await handleMcpHttpInner(req, res, opts, {
+      noteId: (id) => {
+        rpcId = id;
+      },
+      noteNotification: () => {
+        notification = true;
+      },
+    });
+  } catch {
+    try {
+      opts.logger?.error("mcp.http_internal", {});
+    } catch {
+      /* never let logging block the sanitized 500 */
+    }
+    if (notification) {
+      if (!res.writableEnded) {
+        try {
+          res.statusCode = 202;
+          res.end();
+        } catch {
+          /* client already gone */
+        }
+      }
+      return;
+    }
+    endUnhandledMcpError(res, rpcId);
+  }
+}
+
+async function handleMcpHttpInner(
+  req: IncomingMessage,
+  res: ServerResponse,
+  opts: McpHttpOptions,
+  notes: {
+    noteId: (id: string | number) => void;
+    noteNotification: () => void;
+  },
 ): Promise<void> {
   const path = opts.path ?? MCP_PATH;
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -72,7 +141,17 @@ export async function handleMcpHttp(
   let body: string;
   try {
     body = await readBody(req, MCP_MAX_BODY_BYTES);
-  } catch {
+  } catch (err) {
+    if (isAbortError(err)) {
+      if (!res.writableEnded) {
+        try {
+          res.end();
+        } catch {
+          /* client already gone */
+        }
+      }
+      return;
+    }
     res.statusCode = 413;
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({ error: { code: "PAYLOAD_TOO_LARGE", message: "body too large" } }));
@@ -95,8 +174,16 @@ export async function handleMcpHttp(
     return;
   }
 
+  const parsedId = jsonRpcIdOf(parsed);
+  if (parsedId !== undefined) notes.noteId(parsedId);
+  else if (isJsonRpcNotificationShape(parsed)) notes.noteNotification();
+
   const ctx: McpRequestContext = {};
-  if (authorization) ctx.authorization = authorization;
+  // Only use bearer-keyed identity when wrapper auth is configured and the
+  // bearer was already validated above. Forwarding an unvalidated caller-
+  // supplied bearer as an authenticated identity would let attackers saturate
+  // the throttle map with arbitrary tokens when auth is disabled.
+  if (config.authToken && authorization) ctx.authorization = authorization;
   if (req.socket.remoteAddress) ctx.remoteAddress = req.socket.remoteAddress;
   const protocol = header(req.headers, "mcp-protocol-version");
   if (protocol) ctx.protocolVersionHeader = protocol;
@@ -113,10 +200,51 @@ export async function handleMcpHttp(
     res.end();
     return;
   }
+  const negotiated =
+    protocolFromRpc(result) ?? supportedRequestProtocol(protocol) ?? MCP_PREFERRED_PROTOCOL;
+
   res.statusCode = 200;
   res.setHeader("content-type", "application/json");
-  res.setHeader("mcp-protocol-version", protocol ?? "2026-07-28");
+  res.setHeader("mcp-protocol-version", negotiated);
   res.end(JSON.stringify(result));
+}
+
+function supportedRequestProtocol(presented: string | undefined): string | undefined {
+  if (!presented) return undefined;
+  return MCP_SUPPORTED_PROTOCOLS.includes(presented) ? presented : undefined;
+}
+
+function jsonRpcIdOf(parsed: unknown): string | number | undefined {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const id = (parsed as { id?: unknown }).id;
+  if (typeof id === "string" || typeof id === "number") return id;
+  return undefined;
+}
+
+function isJsonRpcNotificationShape(parsed: unknown): boolean {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+  return !("id" in parsed) || (parsed as { id?: unknown }).id === undefined;
+}
+
+function protocolFromRpc(
+  result: Record<string, unknown> | Record<string, unknown>[],
+): string | undefined {
+  const recs = Array.isArray(result) ? result : [result];
+  for (const rec of recs) {
+    if (!rec || typeof rec !== "object") continue;
+    const meta = rec._meta;
+    if (!meta || typeof meta !== "object" || Array.isArray(meta)) continue;
+    const version = (meta as Record<string, unknown>)["io.modelcontextprotocol/protocolVersion"];
+    if (typeof version === "string" && version.length > 0) return version;
+  }
+  return undefined;
+}
+
+const BODY_TOO_LARGE = "PAYLOAD_TOO_LARGE";
+const BODY_ABORTED = "ABORTED";
+
+function isAbortError(err: unknown): boolean {
+  return Boolean(err && typeof err === "object" && "code" in err && err.code === BODY_ABORTED);
 }
 
 function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
@@ -129,17 +257,23 @@ function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
       settled = true;
       fn();
     };
+    const abort = (): void =>
+      finish(() => reject(Object.assign(new Error("aborted"), { code: BODY_ABORTED })));
     req.on("data", (chunk: Buffer) => {
       if (settled) return;
       size += chunk.length;
       if (size > maxBytes) {
         req.resume();
-        finish(() => reject(new Error("too large")));
+        finish(() => reject(Object.assign(new Error("too large"), { code: BODY_TOO_LARGE })));
         return;
       }
       chunks.push(chunk);
     });
     req.on("end", () => finish(() => resolve(Buffer.concat(chunks).toString("utf8"))));
     req.on("error", (err: Error) => finish(() => reject(err)));
+    req.on("aborted", abort);
+    req.on("close", () => {
+      if (!req.complete) abort();
+    });
   });
 }
