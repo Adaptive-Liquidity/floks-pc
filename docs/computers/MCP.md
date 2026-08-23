@@ -109,6 +109,13 @@ Status:
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"computer_status","arguments":{"capability_token":"fakeTokenNotARealSecret","computer_handle":"computer_example"}}}
 ```
 
+## Post-merge hardening (PR #8, on main)
+
+- **Never-hang:** any unhandled gateway throw ends the response — sanitized JSON-RPC `500 INTERNAL` for requests, `202` (no body) for notifications. Client aborts while uploading settle immediately.
+- **Protocol header honesty:** `MCP-Protocol-Version` response header is taken from the negotiated/supported version. An unsupported client-presented version is never echoed.
+- **Throttle fail-closed:** pair-connection throttle evicts only expired or under-limit entries; a saturated map of throttled identities rejects unknown identities instead of letting them pass unthrottled.
+- **No unvalidated Bearer identity:** caller-supplied `Authorization` is only used for throttle identity when `FLOK_MCP_AUTH_TOKEN` is configured and the Bearer already passed validation. Without wrapper auth configured, unauthenticated connections key on remote address.
+
 ## Env / config
 
 | Variable | Required for unit tests | Meaning |

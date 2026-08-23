@@ -276,12 +276,16 @@ handoff_receive
 
 A real Grok Bot can pair → status → exec → read/write file through the public endpoint.
 
-**Status:** IMPLEMENTED (2026-08-22) for the unpaid protocol + capability gate (FakeProvider, in-process / loopback HTTP). Real Grok Bot through a public HTTPS URL remains **manual** and is **not** claimed here. Do not merge until explicit approval.
+**Status:** IMPLEMENTED + POST-MERGE HARDENING **MERGED / ON MAIN** (2026-08-23). The unpaid protocol + capability gate (FakeProvider, in-process / loopback HTTP) is closed by tests. Real Grok Bot through a public HTTPS URL remains **manual, not claimed — pending explicit approval to deploy**. Paid Runloop: **not required** for unpaid C5 and **not run**. C6: **not started**.
 
 **Evidence**
-- Branch: `feat/c5-mcp-gateway`
-- Base: `main` after [Adaptive-Liquidity/floks-pc#6](https://github.com/Adaptive-Liquidity/floks-pc/pull/6) (`1fcedac`)
-- Unpaid: `npm run typecheck` + `npm test` + `npm run build` + `npm run verify` — **155 pass / 0 fail** (22 C5)
+- Branch: `feat/c5-mcp-gateway` → merged as [Adaptive-Liquidity/floks-pc#7](https://github.com/Adaptive-Liquidity/floks-pc/pull/7) (`3013fbc`), base `main` after [Adaptive-Liquidity/floks-pc#6](https://github.com/Adaptive-Liquidity/floks-pc/pull/6) (`1fcedac`)
+- Post-merge hardening: `fix/c5-mcp-post-merge-hardening` → merged as [Adaptive-Liquidity/floks-pc#8](https://github.com/Adaptive-Liquidity/floks-pc/pull/8) (`26d85be`, head `d835c17`)
+  - Top-level MCP HTTP never-hang: sanitized JSON-RPC 500, notifications settle 202, client aborts end without hanging
+  - Aborted body / `readBody` settlement (`ABORTED` vs `PAYLOAD_TOO_LARGE`)
+  - `MCP-Protocol-Version` response header comes from negotiated/supported version — never echoes an unsupported version
+  - Pair throttle saturation **fail-closed**; throttled identities not evicted by flooding; unvalidated Bearer values never mint throttle identities
+- Unpaid verification on main (`26d85be`): `npm run typecheck` + `npm test` + `npm run build` + `npm run verify` — **167 pass / 0 fail** (34 C5, incl. 12 hardening cases)
 - Paid Runloop: **not required** and **not run**
 - Isolation: zero writes under Floks-main
 - Nexus / graph flags remain false
