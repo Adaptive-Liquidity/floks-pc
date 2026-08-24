@@ -276,7 +276,7 @@ handoff_receive
 
 A real Grok Bot can pair → status → exec → read/write file through the public endpoint.
 
-**Status:** IMPLEMENTED + POST-MERGE HARDENING **MERGED / ON MAIN** (2026-08-23). The unpaid protocol + capability gate (FakeProvider, in-process / loopback HTTP) is closed by tests. Real Grok Bot through a public HTTPS URL remains **manual, not claimed — pending explicit approval to deploy**. Paid Runloop: **not required** for unpaid C5 and **not run**. C6: **not started**.
+**Status:** IMPLEMENTED + POST-MERGE HARDENING **MERGED / ON MAIN** (2026-08-23). The unpaid protocol + capability gate (FakeProvider, in-process / loopback HTTP) is closed by tests. Real Grok Bot through a public HTTPS URL remains **manual, not claimed — pending explicit approval to deploy**. Paid Runloop: **not required** for unpaid C5 and **not run**. C6 unpaid later closed in #10; C7 not started.
 
 **Evidence**
 - Branch: `feat/c5-mcp-gateway` → merged as [Adaptive-Liquidity/floks-pc#7](https://github.com/Adaptive-Liquidity/floks-pc/pull/7) (`3013fbc`), base `main` after [Adaptive-Liquidity/floks-pc#6](https://github.com/Adaptive-Liquidity/floks-pc/pull/6) (`1fcedac`)
@@ -326,12 +326,12 @@ Grok Bot completes a real coding exercise entirely on its Flok Computer (clone �
 - Unpaid FakeProvider tests: full suite green (`npm test` 209 pass / 0 fail), including the pair → mkdir → write → list → read → exec → modify → artifact workflow through MCP tools only
 - Real public Grok Bot coding exercise: pending separate manual proof (same public-HTTPS gate as C5)
 
-**Status:** IMPLEMENTED (unpaid FakeProvider + MCP gate green; real Grok Bot / public URL remains manual and is **not** claimed here; C7/C8/C9 not started; paid Runloop not required and not run)
+**Status:** CLOSED / PASSED (2026-08-24) for the unpaid FakeProvider + MCP gate. Real Grok Bot / public HTTPS coding exercise remains **manual, not claimed**. C7/C8/C9 **not started**. Paid Runloop not required and not run.
 
 ### Evidence
-- Branch: `feat/c6-shell-files` → [Adaptive-Liquidity/floks-pc#10](https://github.com/Adaptive-Liquidity/floks-pc/pull/10)
-- Base: `main` after [Adaptive-Liquidity/floks-pc#9](https://github.com/Adaptive-Liquidity/floks-pc/pull/9) (`1269d27`)
-- Verification on branch: `npm run typecheck` + `npm test` + `npm run build` + `npm run verify` — **209 pass / 0 fail**
+- Merged: [Adaptive-Liquidity/floks-pc#10](https://github.com/Adaptive-Liquidity/floks-pc/pull/10) → `d67c4f74cbb0c0a2fc077478d5a767340d3e3183`
+- Branch: `feat/c6-shell-files`
+- Verification: `npm run typecheck` + `npm test` + `npm run build` + `npm run verify` — **209 pass / 0 fail**
 - Paid Runloop: not required, not run
 - Isolation: zero writes under Floks-main
 - Nexus/graph flags remain false

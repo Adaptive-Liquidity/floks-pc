@@ -23,7 +23,7 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 | **C3B** — interactive computer (display, browser, screenshot, bounded input) | **CLOSED / PASSED** |
 | **C4** — pair codes + capability tokens (internal layer) | **CLOSED / PASSED** |
 | **C5** — Flok MCP Gateway (`POST /mcp`, eight tools) | **IMPLEMENTED + hardening merged on main** (unpaid FakeProvider tests; real Grok Bot / public URL remains manual) |
-| **C6** — Shell + filesystem (argv, path jail, limits) | **IMPLEMENTED** (unpaid FakeProvider tests; real Grok Bot / public URL remains manual) |
+| **C6** — Shell + filesystem (argv, path jail, limits) | **CLOSED / PASSED** (unpaid FakeProvider + MCP; real Grok Bot / public HTTPS remains manual). C7 not started. |
 | C7+ | Not started (Nexus-IQ remains hard-locked until G0) |
 
 ## Authority files (read in this order)
