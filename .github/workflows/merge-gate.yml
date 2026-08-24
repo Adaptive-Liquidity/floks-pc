@@ -3,6 +3,10 @@
 # It classifies review threads. It does not re-run verify or docker-c2.
 # Do not add on.pull_request_review_thread — that webhook is not a valid
 # Actions trigger and GitHub fails the whole workflow with 0 jobs.
+# Do not also subscribe to pull_request_review_comment: GitHub already
+# emits pull_request_review when an inline comment is posted, so both
+# events spawn two merge-gate runs. cancel-in-progress then leaves a
+# cancelled required check, which blocks merge.
 name: merge-gate
 
 on:
@@ -10,8 +14,6 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   pull_request_review:
     types: [submitted, edited, dismissed]
-  pull_request_review_comment:
-    types: [created, edited, deleted]
 
 concurrency:
   group: merge-gate-${{ github.event.pull_request.number || github.ref }}

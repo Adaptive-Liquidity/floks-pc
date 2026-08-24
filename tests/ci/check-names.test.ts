@@ -53,4 +53,17 @@ describe("required status check names", () => {
     assert.equal(yamlJobName(verify, "docker-c2"), "docker-c2");
     assert.equal(yamlJobName(mergeGate, "merge-gate"), "merge-gate");
   });
+
+  it("does not double-subscribe merge-gate to review and review_comment", () => {
+    const mergeGate = readFileSync(
+      join(ROOT, ".github/workflows/merge-gate.yml"),
+      "utf8",
+    );
+    assert.match(mergeGate, /^ {2}pull_request_review:$/m);
+    assert.doesNotMatch(
+      mergeGate,
+      /^ {2}pull_request_review_comment:$/m,
+      "pull_request_review already fires for inline comments; a second trigger duplicates the required check and cancel-in-progress leaves it cancelled",
+    );
+  });
 });
