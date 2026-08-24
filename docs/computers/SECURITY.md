@@ -38,7 +38,7 @@ C5 (MCP gateway) tools call `ComputerService` — never a provider, never skip t
 
 ## C6: Shell & Filesystem Hardening
 
-- `computer_exec`: argv[] enforced (no shell strings by default). `mode: "shell"` requires `shell` scope. Limits: argv count ≤64, item length ≤8192, cwd ≤4096, timeout ≤600s, env keys ≤32, key length ≤128, value length ≤4096. Result includes exit_code, stdout, stderr, stdout_truncated, stderr_truncated, timed_out. No stack traces, provider refs, host paths, pair codes, capability tokens, Authorization headers, or provider keys in responses.
+- `computer_exec`: argv[] enforced (no shell strings by default). `mode: "shell"` requires `shell` scope. Limits: argv count ≤64, item length ≤8192, cwd ≤1024, timeout ≤600s, env keys ≤32, key length ≤128, value length ≤4096. Result includes exit_code, stdout, stderr, stdout_truncated, stderr_truncated, timed_out. No stack traces, provider refs, host paths, pair codes, capability tokens, Authorization headers, or provider keys in responses.
 - `computer_fs`: stat, list, read, write, mkdir, move, copy, delete. Path jail at `/home/flok`: rejects ../, null bytes, /proc, /sys, /dev, symlink escapes. Read/write bounded to 1MB. Structured errors (PATH_ESCAPE, NOT_FOUND, MISSING_CONTENT, UNSUPPORTED). No host path leaks.
 - Capability required for every operation. `exec` scope for argv exec, `shell` scope for shell mode, `fs` scope for filesystem. Wrapper Bearer / account_id / session metadata alone cannot authorize.
 - Cross-Node denial: capability bound to exact computer_id + bird_id + flock_id. Revoked/expired/missing capability denied.

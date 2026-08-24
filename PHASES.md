@@ -309,7 +309,7 @@ A real Grok Bot can pair → status → exec → read/write file through the pub
 Grok Bot completes a real coding exercise entirely on its Flok Computer (clone → edit → install → test → artifact).
 
 ### Implement
-- Hardened `computer_exec` with argv[] enforcement, shell scope gating, and limits (argv count 64, argv item length 8192, cwd max 4096, timeout max 600s, env key count 32, env key/value length limits)
+- Hardened `computer_exec` with argv[] enforcement, shell scope gating, and limits (argv count 64, argv item length 8192, cwd max 1024, timeout max 600s, env key count 32, env key/value length limits)
 - Hardened `computer_fs` with path jail (rejects ../, null bytes, /proc, /sys, /dev), bounded read/write (1MB), structured errors, no host path leaks
 - All 8 fs operations: stat, list, read, write, mkdir, move, copy, delete
 - C6 workflow proof: pair → mkdir → write → list → read → exec → modify → artifact (FakeProvider, MCP tools only)

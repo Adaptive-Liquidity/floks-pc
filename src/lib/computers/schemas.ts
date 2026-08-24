@@ -7,6 +7,7 @@ import { z } from "zod";
 import {
   MCP_MAX_ARGV,
   MCP_MAX_ARG_CHARS,
+  MCP_MAX_ENV_KEYS,
 } from "../mcp/config.js";
 
 export const ComputerStateSchema = z.enum([
@@ -116,8 +117,13 @@ export const ExecRequestSchema = z.object({
     .array(z.string().max(MCP_MAX_ARG_CHARS))
     .min(1)
     .max(MCP_MAX_ARGV),
-  cwd: z.string().max(4096).optional(),
-  env: z.record(z.string(), z.string()).optional(),
+  cwd: z.string().max(1024).optional(),
+  env: z
+    .record(z.string().max(128), z.string().max(4096))
+    .optional()
+    .refine((env) => !env || Object.keys(env).length <= MCP_MAX_ENV_KEYS, {
+      message: `env must have at most ${MCP_MAX_ENV_KEYS} keys`,
+    }),
   timeoutMs: z.number().int().positive().max(600_000).optional(),
   mode: z.enum(["argv", "shell"]).optional(),
 });

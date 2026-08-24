@@ -7,6 +7,7 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
+import { z } from "zod";
 import {
   ComputerService,
   FLAGS,
@@ -1160,7 +1161,7 @@ describe("C5 MCP gateway", () => {
         computer_handle: handle,
         operation: "write",
         path: "/home/flok/artifact.txt",
-        content: "C5 proof artifact",
+        content: "C6 proof artifact",
       },
     });
 
@@ -1174,7 +1175,7 @@ describe("C5 MCP gateway", () => {
         path: "/home/flok/artifact.txt",
       },
     });
-    assert.equal(payload(artRes).data, "C5 proof artifact");
+    assert.equal(payload(artRes).data, "C6 proof artifact");
   });
 
   /**
@@ -1310,18 +1311,26 @@ describe("C5 MCP gateway", () => {
   });
 
   it("missing exec scope denies exec", async () => {
-    const noema = await pairThroughMcp("bird-noema");
-    // noema has default scopes (status, exec, fs, observe, act, lifecycle) but let's test explicitly
-    const noShellExec = await rpc("tools/call", {
+    // Create a computer and issue a pair code WITHOUT exec scope
+    const computer = await service.requestComputer({ birdId: "bird-noexec", flockId: FLOCK });
+    const issued = await service.issuePairCode(computer.id, { scopes: ["status", "fs", "observe", "act", "lifecycle"] });
+    const pairRes = await rpc("tools/call", {
+      name: "computer_pair",
+      arguments: { pair_code: issued.code, bird_id: "bird-noexec", flock_id: FLOCK },
+    });
+    const token = String(payload(pairRes).capability_token);
+    const handle = String(payload(pairRes).computer_handle);
+
+    const noExecExec = await rpc("tools/call", {
       name: "computer_exec",
       arguments: {
-        capability_token: noema.token,
-        computer_handle: noema.handle,
-        argv: ["echo", "scope-test"],
-        mode: "shell",
+        capability_token: token,
+        computer_handle: handle,
+        argv: ["echo", "noexec"],
       },
     });
-    assert.equal(payload(noShellExec).code, "INSUFFICIENT_SCOPE");
+    assert.equal((noExecExec.result as { isError: boolean }).isError, true);
+    assert.equal(payload(noExecExec).code, "INSUFFICIENT_SCOPE");
   });
 
   it("missing fs scope denies fs", async () => {
@@ -1450,9 +1459,71 @@ describe("C5 MCP gateway", () => {
         env: manyKeys,
       },
     });
-    // The schema should reject or the provider should handle it;
-    // at minimum the request should not crash and should report an error.
-    assert.ok((res.result as { isError: boolean }).isError || payload(res).code);
+    // The schema should reject with INVALID_PARAMS
+    assert.equal((res.result as { isError: boolean }).isError, true);
+    assert.equal(payload(res).code, "INVALID_PARAMS");
+  });
+
+  it("service.exec rejects env key length > 128", async () => {
+    const noema = await pairThroughMcp("bird-noema");
+    const longKey = "K".repeat(129);
+    try {
+      await service.exec(
+        { kind: "capability", token: noema.token },
+        noema.handle,
+        { argv: ["echo", "test"], env: { [longKey]: "value" } },
+      );
+      assert.fail("should have thrown");
+    } catch (err) {
+      assert.ok(err instanceof z.ZodError || err instanceof Error);
+    }
+  });
+
+  it("service.exec rejects env value length > 4096", async () => {
+    const noema = await pairThroughMcp("bird-noema");
+    const longValue = "V".repeat(4097);
+    try {
+      await service.exec(
+        { kind: "capability", token: noema.token },
+        noema.handle,
+        { argv: ["echo", "test"], env: { KEY: longValue } },
+      );
+      assert.fail("should have thrown");
+    } catch (err) {
+      assert.ok(err instanceof z.ZodError || err instanceof Error);
+    }
+  });
+
+  it("service.exec rejects env key count > 32", async () => {
+    const noema = await pairThroughMcp("bird-noema");
+    const manyKeys: Record<string, string> = {};
+    for (let i = 0; i < 33; i++) {
+      manyKeys[`KEY_${i}`] = `value_${i}`;
+    }
+    try {
+      await service.exec(
+        { kind: "capability", token: noema.token },
+        noema.handle,
+        { argv: ["echo", "test"], env: manyKeys },
+      );
+      assert.fail("should have thrown");
+    } catch (err) {
+      assert.ok(err instanceof z.ZodError || err instanceof Error);
+    }
+  });
+
+  it("service.exec accepts valid env within limits", async () => {
+    const noema = await pairThroughMcp("bird-noema");
+    const validEnv: Record<string, string> = {};
+    for (let i = 0; i < 32; i++) {
+      validEnv[`KEY_${i}`] = `value_${i}`;
+    }
+    const res = await service.exec(
+      { kind: "capability", token: noema.token },
+      noema.handle,
+      { argv: ["echo", "test"], env: validEnv },
+    );
+    assert.equal(res.exitCode, 0);
   });
 
   it("output clipping flags work (stdout/stderr truncated)", async () => {
@@ -1467,28 +1538,27 @@ describe("C5 MCP gateway", () => {
         argv: longArgs,
       },
     });
-    const stdout = String(payload(res).stdout);
-    const stderr = String(payload(res).stderr || "");
-    // The fake provider may not truncate, but the schema expects truncated flags.
-    // At minimum, the result should have the expected shape.
-    assert.ok(res.result !== undefined);
-    assert.ok("exit_code" in payload(res));
-    assert.ok("stdout" in payload(res));
-    assert.ok("stderr" in payload(res));
-    assert.ok("stdout_truncated" in payload(res) || "stderr_truncated" in payload(res) || !stdout.includes("A".repeat(100)));
+    const payload_res = payload(res);
+    const stdout = String(payload_res.stdout);
+    const stderr = String(payload_res.stderr || "");
+    // The handler clips output at MCP_MAX_EXEC_OUTPUT_CHARS and sets truncated flags
+    assert.ok(payload_res.stdout_truncated !== undefined, "stdout_truncated should be present");
+    assert.ok(payload_res.stderr_truncated !== undefined, "stderr_truncated should be present");
+    assert.equal(typeof payload_res.stdout_truncated, "boolean", "stdout_truncated should be boolean");
+    assert.equal(typeof payload_res.stderr_truncated, "boolean", "stderr_truncated should be boolean");
   });
 
   it("timeout behavior works", async () => {
     const noema = await pairThroughMcp("bird-noema");
     // The fake provider doesn't implement timeout natively for this stub,
-    // but the schema supports timeoutMs. Verify the request shapes correctly.
+    // but the schema supports timeout_ms. Verify the request shapes correctly.
     const res = await rpc("tools/call", {
       name: "computer_exec",
       arguments: {
         capability_token: noema.token,
         computer_handle: noema.handle,
         argv: ["sleep", "0"],
-        timeoutMs: 5000,
+        timeout_ms: 5000,
       },
     });
     assert.ok(res.result !== undefined);
