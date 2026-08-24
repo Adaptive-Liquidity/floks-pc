@@ -7,7 +7,6 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
-import { z } from "zod";
 import {
   ComputerService,
   FLAGS,
@@ -1467,31 +1466,25 @@ describe("C5 MCP gateway", () => {
   it("service.exec rejects env key length > 128", async () => {
     const noema = await pairThroughMcp("bird-noema");
     const longKey = "K".repeat(129);
-    try {
-      await service.exec(
+    await assert.rejects(
+      service.exec(
         { kind: "capability", token: noema.token },
         noema.handle,
         { argv: ["echo", "test"], env: { [longKey]: "value" } },
-      );
-      assert.fail("should have thrown");
-    } catch (err) {
-      assert.ok(err instanceof z.ZodError || err instanceof Error);
-    }
+      ),
+    );
   });
 
   it("service.exec rejects env value length > 4096", async () => {
     const noema = await pairThroughMcp("bird-noema");
     const longValue = "V".repeat(4097);
-    try {
-      await service.exec(
+    await assert.rejects(
+      service.exec(
         { kind: "capability", token: noema.token },
         noema.handle,
         { argv: ["echo", "test"], env: { KEY: longValue } },
-      );
-      assert.fail("should have thrown");
-    } catch (err) {
-      assert.ok(err instanceof z.ZodError || err instanceof Error);
-    }
+      ),
+    );
   });
 
   it("service.exec rejects env key count > 32", async () => {
@@ -1500,16 +1493,13 @@ describe("C5 MCP gateway", () => {
     for (let i = 0; i < 33; i++) {
       manyKeys[`KEY_${i}`] = `value_${i}`;
     }
-    try {
-      await service.exec(
+    await assert.rejects(
+      service.exec(
         { kind: "capability", token: noema.token },
         noema.handle,
         { argv: ["echo", "test"], env: manyKeys },
-      );
-      assert.fail("should have thrown");
-    } catch (err) {
-      assert.ok(err instanceof z.ZodError || err instanceof Error);
-    }
+      ),
+    );
   });
 
   it("service.exec accepts valid env within limits", async () => {

@@ -323,7 +323,7 @@ Grok Bot completes a real coding exercise entirely on its Flok Computer (clone �
 - Nexus/AEON/Graphiti
 
 ### Gate C6
-- Unpaid FakeProvider tests: full suite green (`npm test` 184 pass / 0 fail), including the pair → mkdir → write → list → read → exec → modify → artifact workflow through MCP tools only
+- Unpaid FakeProvider tests: full suite green (`npm test` 207 pass / 0 fail), including the pair → mkdir → write → list → read → exec → modify → artifact workflow through MCP tools only
 - Real public Grok Bot coding exercise: pending separate manual proof (same public-HTTPS gate as C5)
 
 **Status:** IMPLEMENTED (unpaid FakeProvider + MCP gate green; real Grok Bot / public URL remains manual and is **not** claimed here; C7/C8/C9 not started; paid Runloop not required and not run)
@@ -331,7 +331,7 @@ Grok Bot completes a real coding exercise entirely on its Flok Computer (clone �
 ### Evidence
 - Branch: `feat/c6-shell-files` → [Adaptive-Liquidity/floks-pc#10](https://github.com/Adaptive-Liquidity/floks-pc/pull/10)
 - Base: `main` after [Adaptive-Liquidity/floks-pc#9](https://github.com/Adaptive-Liquidity/floks-pc/pull/9) (`1269d27`)
-- Verification on branch: `npm run typecheck` + `npm test` + `npm run build` + `npm run verify` — **184 pass / 0 fail**
+- Verification on branch: `npm run typecheck` + `npm test` + `npm run build` + `npm run verify` — **207 pass / 0 fail**
 - Paid Runloop: not required, not run
 - Isolation: zero writes under Floks-main
 - Nexus/graph flags remain false
