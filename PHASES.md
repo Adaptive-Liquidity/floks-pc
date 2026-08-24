@@ -140,7 +140,7 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
 - Bounded `act()`: click_coordinates, type, key, scroll, open_url, wait; `click_element` fail-closed
 - Local noVNC on localhost only; `takeover()` remains fail-closed; `vnc: false`
 - `computerUse: true` after paid C3B live gate; `accessibility: false`, `vnc: false`, `pauseMemory: false`
-- Manual `runloop-c3` phase `c3b-live` (GitHub only lists workflows that exist on main; `runloop-c3b.yml` is not dispatchable)
+- Manual `runloop-c3` phase `c3b-live` (the only Runloop workflow; do not add standalone `runloop-c3b.yml` / `runloop-blueprint.yml`)
 
 ### Non-goals (do not invent)
 - Browserbase, Kernel, Runloop Agents, MCP, pairing, Grok Bot connection, Nexus/AEON/Graphiti
@@ -308,7 +308,38 @@ A real Grok Bot can pair → status → exec → read/write file through the pub
 ### Gate C6
 Grok Bot completes a real coding exercise entirely on its Flok Computer (clone → edit → install → test → artifact).
 
----
+### Implement
+- Hardened `computer_exec` with argv[] enforcement, shell scope gating, and limits (argv count 64, argv item length 8192, cwd max 1024, timeout max 600s, env key count 32, env key/value length limits)
+- Hardened `computer_fs` with path jail (rejects ../, null bytes, /proc, /sys, /dev), bounded read/write (1MB), structured errors, no host path leaks
+- All 8 fs operations: stat, list, read, write, mkdir, move, copy, delete
+- C6 workflow proof: pair → mkdir → write → list → read → exec → modify → artifact (FakeProvider, MCP tools only)
+- Security/isolation tests: capability required, scope enforcement, cross-bot denial, revocation, path escape blocking, wrapper Bearer insufficiency
+
+### Non-goals (do not invent)
+- Browser control, screenshots, VNC/takeover (C7)
+- Persistence/checkpoints (C8)
+- Handoffs (C9)
+- Paid Runloop, public deploy, new MCP tools
+- Nexus/AEON/Graphiti
+
+### Gate C6
+- Unpaid FakeProvider tests: full suite green (`npm test` 209 pass / 0 fail), including the pair → mkdir → write → list → read → exec → modify → artifact workflow through MCP tools only
+- Real public Grok Bot coding exercise: pending separate manual proof (same public-HTTPS gate as C5)
+
+**Status:** IMPLEMENTED (unpaid FakeProvider + MCP gate green; real Grok Bot / public URL remains manual and is **not** claimed here; C7/C8/C9 not started; paid Runloop not required and not run)
+
+### Evidence
+- Branch: `feat/c6-shell-files` → [Adaptive-Liquidity/floks-pc#10](https://github.com/Adaptive-Liquidity/floks-pc/pull/10)
+- Base: `main` after [Adaptive-Liquidity/floks-pc#9](https://github.com/Adaptive-Liquidity/floks-pc/pull/9) (`1269d27`)
+- Verification on branch: `npm run typecheck` + `npm test` + `npm run build` + `npm run verify` — **209 pass / 0 fail**
+- Paid Runloop: not required, not run
+- Isolation: zero writes under Floks-main
+- Nexus/graph flags remain false
+- C3B preserved: `computerUse: true`, `accessibility: false`, `vnc: false`, `pauseMemory: false`
+
+### Known limitations (not C6 blockers)
+- FakeProvider is in-memory (state resets on restart); persistence is C8
+- `.gitattributes` pins `*.sh` to `eol=lf` so byte-exact script comparisons stay green on Windows checkouts
 
 ## Phase 7 — Browser + computer use + human takeover
 

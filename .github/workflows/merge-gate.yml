@@ -1,21 +1,31 @@
 # GitHub Actions job. Job `name: merge-gate` is the check context the
 # main ruleset requires. GitHub runners execute it; Cursor does not.
 # It classifies review threads. It does not re-run verify or docker-c2.
+#
+# Triggers: pull_request + workflow_dispatch only.
+# Do not add on.pull_request_review or on.pull_request_review_comment.
+# Review bots (Gitar auto-approve) and inline classification replies each
+# emit those events; a second merge-gate run with cancel-in-progress then
+# leaves a cancelled required check, which blocks merge.
 # Do not add on.pull_request_review_thread — that webhook is not a valid
 # Actions trigger and GitHub fails the whole workflow with 0 jobs.
+# After posting classification replies, push a commit or re-run this
+# workflow (workflow_dispatch with the PR number).
 name: merge-gate
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  pull_request_review:
-    types: [submitted, edited, dismissed]
-  pull_request_review_comment:
-    types: [created, edited, deleted]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to evaluate
+        required: true
+        type: string
 
 concurrency:
-  group: merge-gate-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: merge-gate-${{ github.event.pull_request.number || inputs.pr_number || github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -24,7 +34,7 @@ permissions:
 jobs:
   merge-gate:
     name: merge-gate
-    if: github.event.pull_request || github.event.issue.pull_request
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -32,7 +42,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "22.16"
@@ -42,4 +52,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MERGE_GATE_REQUIRE_RESOLVED: "false"
+          MERGE_GATE_PR: ${{ github.event.pull_request.number || inputs.pr_number }}
         run: npm run merge-gate

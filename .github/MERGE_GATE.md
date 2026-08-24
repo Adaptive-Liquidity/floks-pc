@@ -28,6 +28,8 @@ Conversation resolution is **off** on the live ruleset (`required_review_thread_
 
 Those jobs are defined in `.github/workflows/verify.yml` and `.github/workflows/merge-gate.yml`. GitHub-hosted runners execute them. Paid Runloop workflows are not required checks. The ruleset pins those checks to GitHub Actions via `integration_id` `15368`.
 
+`merge-gate.yml` listens to `pull_request` (opened, synchronize, reopened, ready_for_review) and `workflow_dispatch` only. Do not add `pull_request_review` or `pull_request_review_comment`: Gitar auto-approve and inline classification replies each start another run. `cancel-in-progress: true` then leaves a cancelled required `merge-gate` check and GitHub blocks merge. After posting classification replies, push a commit or re-run `merge-gate` (`workflow_dispatch` with the PR number). `cancel-in-progress` is **false** so a required check is never left cancelled.
+
 ## What must be true before merge
 
 1. The three unpaid GitHub Actions checks above are green.

@@ -68,6 +68,7 @@ import {
   PAIR_CODE_TTL_MS,
   validatePairCode,
 } from "./pairing.js";
+import { ExecRequestSchema } from "./schemas.js";
 
 function newId(): string {
   return randomBytes(16).toString("hex");
@@ -420,12 +421,15 @@ export class ComputerService {
     computerId: string,
     request: ExecRequest,
   ): Promise<ExecResult> {
+    // Validate request at service boundary (schema-level enforcement)
+    const validatedRequest = ExecRequestSchema.parse(request) as ExecRequest;
+
     const required: CapabilityScope[] =
-      request.mode === "shell" ? ["exec", "shell"] : ["exec"];
+      validatedRequest.mode === "shell" ? ["exec", "shell"] : ["exec"];
     const { computer } = this.authorize(auth, computerId, required);
     const ref = this.requireProviderRef(computer);
     this.touch(computer);
-    return this.provider.exec(ref, request);
+    return this.provider.exec(ref, validatedRequest);
   }
 
   async filesystem(
