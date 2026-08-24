@@ -391,17 +391,27 @@ Do not require paid Runloop live tests on every PR.
 
 ## 16. `main` rules
 
-Protect `main` with a branch ruleset / protection.
+Protect `main` with a GitHub repository ruleset. **GitHub blocks merges. GitHub Actions runs the named jobs. Cursor only edits files and can respond when a check or review fails. The ruleset does not start Cursor.**
+
+The intended ruleset is `.github/rulesets/main-protection.json` (JSON only; protocol lives in `.github/MERGE_GATE.md`). Apply it with Administration credentials against GitHub's rulesets API:
+
+```text
+GH_ADMIN_TOKEN=... npm run protect:main
+```
 
 Require:
 
-- pull request before merge;
-- required CI status checks;
-- conversation resolution;
+- pull request before merge (squash only);
+- required GitHub Actions check names, which must match job `name:` fields exactly:
+  `verify` (typecheck + tests + build), `docker-c2` (Docker isolation), `merge-gate` (security/policy scripts);
+- conversation resolution optional (currently off on the live ruleset);
+- merge-gate classification replies on every review thread (Actions job, see `.github/MERGE_GATE.md`);
 - branch up-to-date with `main`;
 - no force push;
 - no direct pushes;
 - no branch deletion where appropriate.
+
+Do not require paid Runloop live tests.
 
 If there is only one human GitHub identity, do not require one approving review yet because authors cannot approve their own PR.
 
@@ -515,6 +525,16 @@ low | medium | high | critical
 ```
 
 Only confirmed/partially-confirmed actionable findings go to a fixer.
+
+Post the classification as a **reply on the review thread** (required by the `merge-gate` check):
+
+```text
+VALIDITY: confirmed
+ACTION: must-fix
+FIX: <sha>
+```
+
+Then resolve the thread. Rubber-stamp resolves without this reply fail CI.
 
 ---
 

@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/domain/**/*.test.ts tests/providers/**/*.test.ts tests/security/**/*.test.ts",
+    "test": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/domain/**/*.test.ts tests/providers/**/*.test.ts tests/security/**/*.test.ts tests/ci/**/*.test.ts",
     "test:domain": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/domain/**/*.test.ts",
     "test:providers": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/providers/**/*.test.ts",
     "test:live": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/live/**/*.test.ts",
@@ -18,7 +18,10 @@
     "test:live:runloop-c3b": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/live/runloop.c3b.live.test.ts",
     "test:live:mcp": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/live/mcp.grok.live.test.ts",
     "build": "tsc",
-    "verify": "npm run typecheck && npm test && npm run build",
+    "verify": "npm run typecheck && npm run typecheck:scripts && npm test && npm run build",
+    "typecheck:scripts": "tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 --types node --skipLibCheck scripts/merge-gate.ts scripts/apply-main-protection.ts",
+    "merge-gate": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs scripts/merge-gate.ts",
+    "protect:main": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs scripts/apply-main-protection.ts",
     "start:mcp": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs src/mcp-server.ts"
   },
   "dependencies": {

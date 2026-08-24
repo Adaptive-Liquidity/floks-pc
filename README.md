@@ -85,11 +85,14 @@ Store production credentials in GitHub Actions only (never in git, `.env` commit
 GitHub **Variables** and **Secrets** are different stores. A value saved only as a Secret is not visible as `vars.FLOK_*`. Workflows accept either.
 
 ```text
-PR
-├─ verify        ← every PR (free)
-├─ docker-c2     ← every PR (GitHub-hosted Docker)
-└─ runloop-c3    ← manual workflow_dispatch only (phase c3a / c3b-blueprint / c3b-live)
+PR  (GitHub Actions runs these; the ruleset only blocks merge until they are green)
+├─ verify        ← typecheck + tests + build (every PR, free)
+├─ docker-c2     ← Docker isolation test (GitHub-hosted Docker)
+├─ merge-gate    ← security/policy scripts + classification replies
+└─ runloop-c3    ← manual workflow_dispatch only (not a required check)
 ```
+
+GitHub, not Cursor, enforces merge to `main`. See `.github/MERGE_GATE.md`. Apply the JSON ruleset with `GH_ADMIN_TOKEN=... npm run protect:main` (Administration permission). Do not require paid Runloop jobs.
 
 Run C3A from Actions → **runloop-c3** → Run workflow. Do not use `runloopai/deploy-agent`. Do not make paid jobs required status checks. Never log the API key or its length.
 

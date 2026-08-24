@@ -1,0 +1,45 @@
+# GitHub Actions job. Job `name: merge-gate` is the check context the
+# main ruleset requires. GitHub runners execute it; Cursor does not.
+# It classifies review threads. It does not re-run verify or docker-c2.
+# Do not add on.pull_request_review_thread — that webhook is not a valid
+# Actions trigger and GitHub fails the whole workflow with 0 jobs.
+name: merge-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+
+concurrency:
+  group: merge-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  merge-gate:
+    name: merge-gate
+    if: github.event.pull_request || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22.16"
+          cache: npm
+      - run: npm ci
+      - name: Classify and resolve review threads
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_GATE_REQUIRE_RESOLVED: "false"
+        run: npm run merge-gate
