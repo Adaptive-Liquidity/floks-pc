@@ -1,0 +1,4 @@
+# Shell scripts must stay LF on every platform. Tests compare
+# ensure-interactive.sh byte-exact against an embedded LF constant, and bash
+# scripts break under CRLF. Force LF regardless of the client's autocrlf.
+*.sh text eol=lf

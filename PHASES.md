@@ -323,25 +323,23 @@ Grok Bot completes a real coding exercise entirely on its Flok Computer (clone �
 - Nexus/AEON/Graphiti
 
 ### Gate C6
-- Unpaid FakeProvider tests: 181/184 pass (3 known test infrastructure issues, 0 implementation failures)
-- Real public Grok Bot: pending separate proof
+- Unpaid FakeProvider tests: full suite green (`npm test` 184 pass / 0 fail), including the pair → mkdir → write → list → read → exec → modify → artifact workflow through MCP tools only
+- Real public Grok Bot coding exercise: pending separate manual proof (same public-HTTPS gate as C5)
 
-**Status:** IMPLEMENTED (unpaid FakeProvider tests; real Grok Bot / public URL remains manual; C7/C8/C9 not started; paid Runloop not run)
+**Status:** IMPLEMENTED (unpaid FakeProvider + MCP gate green; real Grok Bot / public URL remains manual and is **not** claimed here; C7/C8/C9 not started; paid Runloop not required and not run)
 
 ### Evidence
-- Branch: `feat/c6-shell-files`
+- Branch: `feat/c6-shell-files` → [Adaptive-Liquidity/floks-pc#10](https://github.com/Adaptive-Liquidity/floks-pc/pull/10)
 - Base: `main` after [Adaptive-Liquidity/floks-pc#9](https://github.com/Adaptive-Liquidity/floks-pc/pull/9) (`1269d27`)
-- Verification on branch: `npm run typecheck` ✓, `npm run build` ✓, `npm test` 181/184 pass (3 test infrastructure issues, 2 pre-existing Windows CRLF)
+- Verification on branch: `npm run typecheck` + `npm test` + `npm run build` + `npm run verify` — **184 pass / 0 fail**
 - Paid Runloop: not required, not run
 - Isolation: zero writes under Floks-main
 - Nexus/graph flags remain false
 - C3B preserved: `computerUse: true`, `accessibility: false`, `vnc: false`, `pauseMemory: false`
 
 ### Known limitations (not C6 blockers)
-- C6 workflow test has test infrastructure issue with exec response structure (implementation works; existing C5 exec test passes)
-- Raw pair code logging test has test infrastructure issue with throttle assertion
-- Windows CRLF pre-existing issue in C3B test (2 tests)
-- Windows CI would need CRLF normalization for full green
+- FakeProvider is in-memory (state resets on restart); persistence is C8
+- `.gitattributes` pins `*.sh` to `eol=lf` so byte-exact script comparisons stay green on Windows checkouts
 
 ## Phase 7 — Browser + computer use + human takeover
 

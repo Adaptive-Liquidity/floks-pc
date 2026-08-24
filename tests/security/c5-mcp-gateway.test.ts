@@ -1108,7 +1108,8 @@ describe("C5 MCP gateway", () => {
         path: "/home/flok/project",
       },
     });
-    const children = (listRes.result as { data: string[] }).data;
+    const children = payload(listRes).data as string[];
+    assert.ok(Array.isArray(children));
     assert.ok(children.includes("index.ts") && children.includes("config.json"));
 
     // 5. read source file
@@ -1497,18 +1498,30 @@ describe("C5 MCP gateway", () => {
 
   it("raw pair code/capability token/Authorization are not logged or returned", async () => {
     const { issued } = await provision("bird-noema");
-    const res = await rpc("tools/call", {
+    const pairRes = await rpc("tools/call", {
       name: "computer_pair",
       arguments: { pair_code: issued.code, bird_id: "bird-noema", flock_id: FLOCK },
     });
-    const token = String(payload(res).capability_token);
-    // Verify the logger redacts secrets (test via the existing logger)
+    // The pair response returns the capability token exactly once, by design;
+    // that is how the Bot receives its credential.
+    const token = String(payload(pairRes).capability_token);
+    const handle = String(payload(pairRes).computer_handle);
+    assert.ok(token.length > 20);
+    assert.equal(payload(pairRes).pair_code, undefined);
+
+    // A later tool response must not echo the raw pair code or capability token.
+    const statusRes = await rpc("tools/call", {
+      name: "computer_status",
+      arguments: { capability_token: token, computer_handle: handle },
+    });
+    assert.equal((statusRes.result as { isError: boolean }).isError, false);
+    const statusBlob = JSON.stringify(payload(statusRes));
+    assert.equal(statusBlob.includes(token), false);
+    assert.equal(statusBlob.includes(issued.code), false);
+
+    // The gateway logger never records raw pair codes, capability tokens, or auth headers.
     const blob = logger.blob();
     assert.equal(blobContainsSecret(blob, issued.code), false);
     assert.equal(blobContainsSecret(blob, token), false);
-    assert.equal(blob.includes("[redacted]") || !blob.includes("capability_token") || !blob.includes(issued.code), true);
-    // Verify returned JSON does not contain raw code or raw token in structuredContent
-    assert.ok(!JSON.stringify(payload(res)).includes(issued.code));
-    assert.ok(!JSON.stringify(payload(res)).includes(token));
   });
 });
