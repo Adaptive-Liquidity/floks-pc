@@ -72,7 +72,7 @@ FLOK_MCP_COMPUTERS_ENABLED=1 npm run start:mcp
 
 See `docs/computers/MCP.md`. Real Grok Bot pairing needs an approved public HTTPS `POST /mcp` URL; this package does not deploy one.
 
-C3B interactive live tests are a separate manual workflow (`runloop-c3` phase `c3b-live`; `runloop-c3b.yml` is not registered on main). They need the custom interactive Blueprint (built from the DnD base; not bare Ubuntu) and `FLOK_LIVE_RUNLOOP_C3B_TEST=1`. Paid live gate **passed** on run `32559415086` (SHA `b892978`). `computerUse` is **true**. `accessibility` / `vnc` / `pauseMemory` stay **false**.
+C3B interactive live tests are a separate manual workflow (`runloop-c3` phase `c3b-live` only; do not add standalone `runloop-c3b.yml` or `runloop-blueprint.yml`). They need the custom interactive Blueprint (built from the DnD base; not bare Ubuntu) and `FLOK_LIVE_RUNLOOP_C3B_TEST=1`. Paid live gate **passed** on run `32559415086` (SHA `b892978`). `computerUse` is **true**. `accessibility` / `vnc` / `pauseMemory` stay **false**.
 
 Store production credentials in GitHub Actions only (never in git, `.env` committed to the repo, or a Node VM / Devbox):
 

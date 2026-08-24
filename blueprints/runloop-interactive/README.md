@@ -50,7 +50,7 @@ The script **creates**, then **polls** status:
 - fail: `failed` / `build_failed` (prints build logs)
 - fail: timeout (default 1500s; `FLOK_BLUEPRINT_BUILD_TIMEOUT_SEC`)
 
-Do **not** dispatch `runloop-c3b` while the Blueprint is still queued or building.
+Do **not** dispatch `runloop-c3` phase `c3b-live` while the Blueprint is still queued or building.
 
 Then set GitHub **secret or variable**:
 

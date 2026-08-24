@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,16 +54,41 @@ describe("required status check names", () => {
     assert.equal(yamlJobName(mergeGate, "merge-gate"), "merge-gate");
   });
 
-  it("does not double-subscribe merge-gate to review and review_comment", () => {
+  it("does not retrigger merge-gate on review events", () => {
     const mergeGate = readFileSync(
       join(ROOT, ".github/workflows/merge-gate.yml"),
       "utf8",
     );
-    assert.match(mergeGate, /^ {2}pull_request_review:$/m);
+    assert.match(mergeGate, /^ {2}pull_request:$/m);
+    assert.match(mergeGate, /^ {2}workflow_dispatch:$/m);
+    assert.doesNotMatch(
+      mergeGate,
+      /^ {2}pull_request_review:$/m,
+      "Gitar auto-approve and classification replies emit pull_request_review; a second run cancels the required check",
+    );
     assert.doesNotMatch(
       mergeGate,
       /^ {2}pull_request_review_comment:$/m,
-      "pull_request_review already fires for inline comments; a second trigger duplicates the required check and cancel-in-progress leaves it cancelled",
+      "inline comments already duplicate pull_request_review; do not subscribe to both",
     );
+    assert.match(
+      mergeGate,
+      /cancel-in-progress:\s*false/,
+      "cancelling in-progress merge-gate leaves a cancelled required check and blocks merge",
+    );
+  });
+
+  it("registers a single Runloop workflow with phase selector", () => {
+    const dir = join(ROOT, ".github/workflows");
+    const files = readdirSync(dir)
+      .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
+      .sort();
+    assert.deepEqual(files, ["merge-gate.yml", "runloop-c3.yml", "verify.yml"]);
+    const runloop = readFileSync(join(dir, "runloop-c3.yml"), "utf8");
+    assert.match(runloop, /^ {2}workflow_dispatch:$/m);
+    assert.doesNotMatch(runloop, /^ {2}pull_request:$/m);
+    assert.match(runloop, /^ {10}- c3a$/m);
+    assert.match(runloop, /^ {10}- c3b-blueprint$/m);
+    assert.match(runloop, /^ {10}- c3b-live$/m);
   });
 });

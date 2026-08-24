@@ -1,5 +1,7 @@
 # Manual Runloop paid jobs. workflow_dispatch only. Burns trial credits.
 # Not on pull_request. Not on push.
+# This is the only Runloop workflow. Do not add runloop-c3b.yml or
+# runloop-blueprint.yml — they duplicate the c3b-blueprint / c3b-live jobs.
 # Do NOT use runloopai/deploy-agent — FLOKS tests Devboxes, not Runloop Agents.
 # RUNLOOP_API_KEY stays in GitHub secrets; never in git, guest env, or logs.
 #
