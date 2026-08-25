@@ -49,6 +49,7 @@ import {
   DuplicateComputer,
   IllegalStateTransition,
   PairCodeInvalid,
+  PathEscape,
 } from "./errors.js";
 import { assertTransition } from "./state.js";
 import {
@@ -68,7 +69,11 @@ import {
   PAIR_CODE_TTL_MS,
   validatePairCode,
 } from "./pairing.js";
-import { ExecRequestSchema } from "./schemas.js";
+import { ExecRequestSchema, FsRequestSchema } from "./schemas.js";
+import {
+  canonicalizeWorkspacePath,
+  workspaceRootForProvider,
+} from "./path.js";
 
 function newId(): string {
   return randomBytes(16).toString("hex");
@@ -429,7 +434,27 @@ export class ComputerService {
     const { computer } = this.authorize(auth, computerId, required);
     const ref = this.requireProviderRef(computer);
     this.touch(computer);
-    return this.provider.exec(ref, validatedRequest);
+    const root = workspaceRootForProvider(computer.provider);
+    try {
+      const cwd =
+        validatedRequest.cwd !== undefined
+          ? canonicalizeWorkspacePath(validatedRequest.cwd, root)
+          : undefined;
+      return this.provider.exec(
+        ref,
+        cwd !== undefined ? { ...validatedRequest, cwd } : validatedRequest,
+      );
+    } catch (err) {
+      if (err instanceof PathEscape) {
+        return {
+          exitCode: 126,
+          stdout: "",
+          stderr: `PATH_ESCAPE: cwd escapes workspace: ${validatedRequest.cwd}`,
+          timedOut: false,
+        };
+      }
+      throw err;
+    }
   }
 
   async filesystem(
@@ -437,10 +462,28 @@ export class ComputerService {
     computerId: string,
     request: FsRequest,
   ): Promise<FsResult> {
+    const validatedRequest = FsRequestSchema.parse(request) as FsRequest;
     const { computer } = this.authorize(auth, computerId, "fs");
     const ref = this.requireProviderRef(computer);
     this.touch(computer);
-    return this.provider.filesystem(ref, request);
+    const root = workspaceRootForProvider(computer.provider);
+    try {
+      const path = canonicalizeWorkspacePath(validatedRequest.path, root);
+      const destination =
+        validatedRequest.destination !== undefined
+          ? canonicalizeWorkspacePath(validatedRequest.destination, root)
+          : undefined;
+      return this.provider.filesystem(ref, {
+        ...validatedRequest,
+        path,
+        ...(destination !== undefined ? { destination } : {}),
+      });
+    } catch (err) {
+      if (err instanceof PathEscape) {
+        return { ok: false, errorCode: "PATH_ESCAPE" };
+      }
+      throw err;
+    }
   }
 
   async observe(

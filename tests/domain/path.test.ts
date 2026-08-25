@@ -6,7 +6,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   assertInsideRoot,
+  canonicalizeWorkspacePath,
   getDefaultWorkspaceRoot,
+  workspaceRootForProvider,
   PathEscape,
 } from "../../src/lib/computers/index.js";
 
@@ -56,6 +58,34 @@ describe("path jail", () => {
     assert.throws(
       () => assertInsideRoot("proc/self/environ"),
       (err: unknown) => err instanceof PathEscape,
+    );
+  });
+});
+
+describe("canonicalizeWorkspacePath", () => {
+  it("rewrites known aliases onto the provider root", () => {
+    const fakeRoot = workspaceRootForProvider("fake");
+    assert.equal(
+      canonicalizeWorkspacePath("/workspace/x", fakeRoot),
+      `${ROOT}/x`,
+    );
+    assert.equal(canonicalizeWorkspacePath("/workspace", fakeRoot), ROOT);
+  });
+
+  it("rejects .. segments before posix normalize", () => {
+    assert.throws(
+      () => canonicalizeWorkspacePath("/home/flok/foo/../bar", ROOT),
+      (err: unknown) => err instanceof PathEscape,
+    );
+  });
+
+  it("strips trailing slashes so alias roots equal the provider root", () => {
+    assert.equal(canonicalizeWorkspacePath("/workspace/", ROOT), ROOT);
+    assert.equal(canonicalizeWorkspacePath("/home/flok/", ROOT), ROOT);
+    assert.equal(canonicalizeWorkspacePath("/home/user/flok/", ROOT), ROOT);
+    assert.equal(
+      canonicalizeWorkspacePath("/workspace/project/", ROOT),
+      `${ROOT}/project`,
     );
   });
 });
