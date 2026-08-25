@@ -130,12 +130,15 @@ Both tools require valid capability with correct scope (`exec` or `fs`). Wrapper
 | Variable | Required for unit tests | Meaning |
 |---|---|---|
 | `FLOK_MCP_COMPUTERS_ENABLED` | no | Must be `1`/`true` to bind `src/mcp-server.ts` |
-| `FLOK_MCP_LISTEN_HOST` | no | Default `127.0.0.1` |
+| `FLOK_MCP_LISTEN_HOST` | no | Default `127.0.0.1`. Non-loopback (`0.0.0.0` / `::`) requires `FLOK_MCP_AUTH_TOKEN`. |
 | `FLOK_MCP_LISTEN_PORT` | no | Default `8787` |
 | `FLOK_MCP_AUTH_TOKEN` | no | Optional wrapper Bearer. Connection auth, not Bot auth. |
 | `FLOK_MCP_BASE_URL` | no | Public URL to document for Grok (e.g. `https://host/mcp`) |
 | `FLOK_MCP_PUBLIC_URL` | no | Live Grok gate only |
 | `FLOK_LIVE_MCP_GROK_TEST` | no | Opt-in live file; not CI |
+| `FLOK_MCP_BOOTSTRAP` | no | Opt-in local FakeProvider control-plane: provision one computer and print a one-time pair code to stdout. Not an MCP tool. |
+| `FLOK_MCP_BOOTSTRAP_BIRD_ID` | no | Bootstrap identity. Default `bird-local`. Must match `computer_pair`. |
+| `FLOK_MCP_BOOTSTRAP_FLOCK_ID` | no | Bootstrap identity. Default `flock-local`. Must match `computer_pair`. |
 
 ```bash
 FLOK_MCP_COMPUTERS_ENABLED=1 npm run start:mcp

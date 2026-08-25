@@ -30,13 +30,13 @@ function envFlag(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 export function isLoopbackListenHost(host: string): boolean {
-  return host === "127.0.0.1" || host === "::1" || host === "localhost";
+  return host === "127.0.0.1" || host === "::1";
 }
 
 /** Non-loopback MCP bind requires wrapper Bearer. Connection auth, not Bot identity. */
 export function assertSafeMcpBind(host: string, authToken: string | undefined): void {
   if (isLoopbackListenHost(host)) return;
-  if (authToken && authToken.length > 0) return;
+  if (authToken && authToken.trim().length > 0) return;
   throw new ComputerError(
     "MCP_BIND_UNAUTHENTICATED",
     "Non-loopback MCP bind requires FLOK_MCP_AUTH_TOKEN (connection auth, not compute authority)",
@@ -93,7 +93,8 @@ async function main(): Promise<void> {
     server.listen(port, host, () => resolve());
   });
 
-  process.stdout.write(`flok-mcp-gateway listening on http://${host}:${port}${MCP_PATH}\n`);
+  const displayHost = host.includes(":") ? `[${host}]` : host;
+  process.stdout.write(`flok-mcp-gateway listening on http://${displayHost}:${port}${MCP_PATH}\n`);
   if (config.baseUrl) {
     process.stdout.write(`public base URL (config): ${config.baseUrl}\n`);
   }

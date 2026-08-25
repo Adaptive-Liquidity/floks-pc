@@ -75,11 +75,13 @@ Local FakeProvider bootstrap (optional; prints a one-time pair code to stdout, 1
 ```bash
 FLOK_MCP_COMPUTERS_ENABLED=1 \
 FLOK_MCP_BOOTSTRAP=1 \
+FLOK_MCP_BOOTSTRAP_BIRD_ID=bird-local \
+FLOK_MCP_BOOTSTRAP_FLOCK_ID=flock-local \
 FLOK_MCP_LISTEN_PORT=8790 \
 npm run start:mcp
 ```
 
-Restarting with the same `bird_id` reissues a pair code (in-memory store). Binding a non-loopback host requires `FLOK_MCP_AUTH_TOKEN` (connection auth only — never a capability).
+`computer_pair` must use those exact `bird_id` / `flock_id` values (defaults are `bird-local` / `flock-local` if the env vars are omitted). In-process re-bootstrap reissues a pair code and burns the unused previous code; a process restart creates a new in-memory computer. Binding `0.0.0.0` / `::` requires `FLOK_MCP_AUTH_TOKEN` (connection auth only — never a capability). Do not enable `FLOK_MCP_BOOTSTRAP` under systemd/Docker/CI: the one-time pair code is printed to stdout and will land in captured logs.
 
 See `docs/computers/MCP.md`. Real Grok Bot pairing needs an approved public HTTPS `POST /mcp` URL; this package does not deploy one.
 

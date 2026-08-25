@@ -20,6 +20,22 @@ describe("MCP local bootstrap", () => {
     assert.equal(service.list().length, 0);
   });
 
+  it("defaults bird-local/flock-local when identity env is omitted", async () => {
+    const service = new ComputerService(new FakeProvider());
+    const result = await bootstrapLocalComputer(service, { FLOK_MCP_BOOTSTRAP: "1" });
+    assert.ok(result);
+    assert.equal(result.birdId, "bird-local");
+    assert.equal(result.flockId, "flock-local");
+    await assert.rejects(() =>
+      service.pair(result.pairCode, { birdId: "other-bird", flockId: "flock-local" }),
+    );
+    const redeemed = await service.pair(result.pairCode, {
+      birdId: "bird-local",
+      flockId: "flock-local",
+    });
+    assert.equal(redeemed.computerHandle, result.computerId);
+  });
+
   it("provisions one computer and returns a one-time pair code", async () => {
     const service = new ComputerService(new FakeProvider());
     const result = await bootstrapLocalComputer(service, {
@@ -85,8 +101,25 @@ describe("MCP local bootstrap", () => {
 
   it("allows loopback without wrapper auth and refuses non-loopback", () => {
     assert.doesNotThrow(() => assertSafeMcpBind("127.0.0.1", undefined));
+    assert.doesNotThrow(() => assertSafeMcpBind("::1", undefined));
+    assert.throws(
+      () => assertSafeMcpBind("localhost", undefined),
+      (err: unknown) => err instanceof ComputerError && err.code === "MCP_BIND_UNAUTHENTICATED",
+    );
     assert.throws(
       () => assertSafeMcpBind("0.0.0.0", undefined),
+      (err: unknown) => err instanceof ComputerError && err.code === "MCP_BIND_UNAUTHENTICATED",
+    );
+    assert.throws(
+      () => assertSafeMcpBind("::", undefined),
+      (err: unknown) => err instanceof ComputerError && err.code === "MCP_BIND_UNAUTHENTICATED",
+    );
+    assert.throws(
+      () => assertSafeMcpBind("0.0.0.0", ""),
+      (err: unknown) => err instanceof ComputerError && err.code === "MCP_BIND_UNAUTHENTICATED",
+    );
+    assert.throws(
+      () => assertSafeMcpBind("0.0.0.0", "   "),
       (err: unknown) => err instanceof ComputerError && err.code === "MCP_BIND_UNAUTHENTICATED",
     );
     assert.doesNotThrow(() => assertSafeMcpBind("0.0.0.0", "wrapper-token"));
