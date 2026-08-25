@@ -11,6 +11,7 @@
 
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
+import { z } from "zod";
 import { ComputerService } from "./lib/computers/service.js";
 import { FakeProvider } from "./lib/computers/providers/fake.js";
 import { ComputerError } from "./lib/computers/errors.js";
@@ -44,13 +45,32 @@ export function assertSafeMcpBind(host: string, authToken: string | undefined): 
   );
 }
 
+/** Same length cap as MCP `computer_pair` bird_id / flock_id. */
+const BootstrapIdentitySchema = z.object({
+  birdId: z.string().min(1).max(128),
+  flockId: z.string().min(1).max(128),
+});
+
 export async function bootstrapLocalComputer(
   service: ComputerService,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ birdId: string; flockId: string; computerId: string; pairCode: string } | null> {
   if (!envFlag("FLOK_MCP_BOOTSTRAP", env)) return null;
-  const birdId = env.FLOK_MCP_BOOTSTRAP_BIRD_ID?.trim() || "bird-local";
-  const flockId = env.FLOK_MCP_BOOTSTRAP_FLOCK_ID?.trim() || "flock-local";
+  let birdId: string;
+  let flockId: string;
+  try {
+    const identity = BootstrapIdentitySchema.parse({
+      birdId: env.FLOK_MCP_BOOTSTRAP_BIRD_ID?.trim() || "bird-local",
+      flockId: env.FLOK_MCP_BOOTSTRAP_FLOCK_ID?.trim() || "flock-local",
+    });
+    birdId = identity.birdId;
+    flockId = identity.flockId;
+  } catch {
+    throw new ComputerError(
+      "BOOTSTRAP_IDENTITY_INVALID",
+      "FLOK_MCP_BOOTSTRAP_BIRD_ID and FLOK_MCP_BOOTSTRAP_FLOCK_ID must be 1–128 characters",
+    );
+  }
   const existing = await service.getByBird(birdId);
   if (existing && existing.flockId !== flockId) {
     throw new ComputerError(
