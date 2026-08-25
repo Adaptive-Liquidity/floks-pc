@@ -20,6 +20,27 @@ describe("MCP local bootstrap", () => {
     assert.equal(service.list().length, 0);
   });
 
+  it("treats unrecognized FLOK_MCP_BOOTSTRAP values as off, not an error", async () => {
+    const service = new ComputerService(new FakeProvider());
+    const result = await bootstrapLocalComputer(service, { FLOK_MCP_BOOTSTRAP: "ture" });
+    assert.equal(result, null);
+    assert.equal(service.list().length, 0);
+  });
+
+  it("rejects bird/flock ids longer than MCP computer_pair allows", async () => {
+    const service = new ComputerService(new FakeProvider());
+    await assert.rejects(
+      () =>
+        bootstrapLocalComputer(service, {
+          FLOK_MCP_BOOTSTRAP: "1",
+          FLOK_MCP_BOOTSTRAP_BIRD_ID: "b".repeat(129),
+          FLOK_MCP_BOOTSTRAP_FLOCK_ID: "flock-local",
+        }),
+      (err: unknown) => err instanceof ComputerError && err.code === "BOOTSTRAP_IDENTITY_INVALID",
+    );
+    assert.equal(service.list().length, 0);
+  });
+
   it("defaults bird-local/flock-local when identity env is omitted", async () => {
     const service = new ComputerService(new FakeProvider());
     const result = await bootstrapLocalComputer(service, { FLOK_MCP_BOOTSTRAP: "1" });
