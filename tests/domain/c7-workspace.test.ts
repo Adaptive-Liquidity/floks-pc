@@ -182,13 +182,14 @@ describe("C7 Fake per-machine desktop", () => {
     assert.match(escaped.stderr, /PATH_ESCAPE/);
   });
 
-  it("still treats Fake click_element as success (PR2 contract)", async () => {
+  it("fail-closes Fake click_element (no fake browser)", async () => {
     const { computer, auth } = await provisionAndPair("bird-click");
     const clicked = await service.act(auth, computer.id, {
       actions: [{ type: "click_element", elementId: "unused" }],
     });
-    assert.equal(clicked.ok, true);
-    assert.equal(clicked.results[0]?.success, true);
+    assert.equal(clicked.ok, false);
+    assert.equal(clicked.results[0]?.success, false);
+    assert.match(String(clicked.results[0]?.error), /unsupported/i);
   });
 
   it("does not delete a file when move aliases collapse to the same path", async () => {

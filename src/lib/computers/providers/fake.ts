@@ -321,8 +321,22 @@ export class FakeProvider implements ComputerProvider {
     this.maybeFail("act");
     const m = this.getMachine(ref);
     const root = workspaceRootForProvider("fake");
-    for (const action of request.actions) {
-      if (action.type === "open_url" && action.url) {
+    const results: ActionResult["results"] = request.actions.map((action) => {
+      if (action.type === "click_element") {
+        return {
+          action,
+          success: false,
+          error: "click_element unsupported until accessibility addressing exists",
+        };
+      }
+      if (action.type === "open_url") {
+        if (typeof action.url !== "string" || action.url.length === 0) {
+          return {
+            action,
+            success: false,
+            error: "open_url requires url",
+          };
+        }
         m.lastUrl = action.url;
         m.fs.set(`${root}/.browser`, { content: "", isDir: true });
         m.fs.set(`${root}/.browser/profile`, { content: "", isDir: true });
@@ -330,14 +344,13 @@ export class FakeProvider implements ComputerProvider {
           content: action.url,
           isDir: false,
         });
+        return { action, success: true };
       }
-    }
+      return { action, success: true };
+    });
     return {
-      ok: true,
-      results: request.actions.map((action) => ({
-        action,
-        success: true,
-      })),
+      ok: results.every((row) => row.success),
+      results,
     };
   }
 
