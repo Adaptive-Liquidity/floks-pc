@@ -23,7 +23,11 @@ import type {
   TakeoverGrant,
 } from "../types.js";
 import { ProviderUnavailable, PathEscape } from "../errors.js";
-import { assertInsideRoot, getDefaultWorkspaceRoot } from "../path.js";
+import {
+  canonicalizeWorkspacePath,
+  getDefaultWorkspaceRoot,
+  workspaceRootForProvider,
+} from "../path.js";
 
 type FailureMode =
   | "timeout"
@@ -43,6 +47,7 @@ interface FakeMachine {
   flockId: string;
   state: "ready" | "running" | "paused" | "stopped" | "deleted";
   fs: Map<string, VirtualFile>;
+  lastUrl: string | null;
   createdAt: Date;
   lastActiveAt: Date;
 }
@@ -122,6 +127,7 @@ export class FakeProvider implements ComputerProvider {
       flockId: spec.flockId,
       state: "ready",
       fs,
+      lastUrl: null,
       createdAt: now,
       lastActiveAt: now,
     };
@@ -193,11 +199,11 @@ export class FakeProvider implements ComputerProvider {
     this.maybeFail("filesystem");
     const m = this.getMachine(ref);
     m.lastActiveAt = new Date();
-    const root = getDefaultWorkspaceRoot();
+    const root = workspaceRootForProvider("fake");
 
     let canonical: string;
     try {
-      canonical = assertInsideRoot(request.path, root);
+      canonical = canonicalizeWorkspacePath(request.path, root);
     } catch (e) {
       if (e instanceof PathEscape) {
         return { ok: false, errorCode: "PATH_ESCAPE" };
@@ -263,8 +269,10 @@ export class FakeProvider implements ComputerProvider {
         return { ok: true };
       }
       case "delete": {
+        if (canonical === root) {
+          return { ok: false, errorCode: "PATH_ESCAPE" };
+        }
         m.fs.delete(canonical);
-        // Also delete children
         for (const key of [...m.fs.keys()]) {
           if (key.startsWith(canonical + "/")) m.fs.delete(key);
         }
@@ -277,12 +285,18 @@ export class FakeProvider implements ComputerProvider {
         }
         let dest: string;
         try {
-          dest = assertInsideRoot(request.destination, root);
-        } catch {
-          return { ok: false, errorCode: "PATH_ESCAPE" };
+          dest = canonicalizeWorkspacePath(request.destination, root);
+        } catch (e) {
+          if (e instanceof PathEscape) {
+            return { ok: false, errorCode: "PATH_ESCAPE" };
+          }
+          throw e;
         }
         const src = m.fs.get(canonical);
         if (!src) return { ok: false, errorCode: "NOT_FOUND" };
+        if (dest === canonical) {
+          return { ok: true };
+        }
         m.fs.set(dest, { ...src });
         if (request.operation === "move") m.fs.delete(canonical);
         return { ok: true };
@@ -294,18 +308,30 @@ export class FakeProvider implements ComputerProvider {
 
   async observe(ref: string, _request: ObserveRequest): Promise<Observation> {
     this.maybeFail("observe");
-    this.getMachine(ref);
+    const m = this.getMachine(ref);
     return {
       screenWidth: 1280,
       screenHeight: 720,
-      activeWindow: "Fake Desktop",
+      activeWindow: m.lastUrl ?? "Fake Desktop",
       accessibilitySummary: { nodes: 0 },
     };
   }
 
   async act(ref: string, request: ActionBatch): Promise<ActionResult> {
     this.maybeFail("act");
-    this.getMachine(ref);
+    const m = this.getMachine(ref);
+    const root = workspaceRootForProvider("fake");
+    for (const action of request.actions) {
+      if (action.type === "open_url" && action.url) {
+        m.lastUrl = action.url;
+        m.fs.set(`${root}/.browser`, { content: "", isDir: true });
+        m.fs.set(`${root}/.browser/profile`, { content: "", isDir: true });
+        m.fs.set(`${root}/.browser/profile/c7-marker`, {
+          content: action.url,
+          isDir: false,
+        });
+      }
+    }
     return {
       ok: true,
       results: request.actions.map((action) => ({
@@ -354,6 +380,7 @@ export class FakeProvider implements ComputerProvider {
       flockId: "restored",
       state: "ready",
       fs,
+      lastUrl: null,
       createdAt: now,
       lastActiveAt: now,
     });

@@ -6,7 +6,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   assertInsideRoot,
+  canonicalizeWorkspacePath,
   getDefaultWorkspaceRoot,
+  workspaceRootForProvider,
   PathEscape,
 } from "../../src/lib/computers/index.js";
 
@@ -55,6 +57,24 @@ describe("path jail", () => {
   it("rejects /proc and /sys style paths", () => {
     assert.throws(
       () => assertInsideRoot("proc/self/environ"),
+      (err: unknown) => err instanceof PathEscape,
+    );
+  });
+});
+
+describe("canonicalizeWorkspacePath", () => {
+  it("rewrites known aliases onto the provider root", () => {
+    const fakeRoot = workspaceRootForProvider("fake");
+    assert.equal(
+      canonicalizeWorkspacePath("/workspace/x", fakeRoot),
+      `${ROOT}/x`,
+    );
+    assert.equal(canonicalizeWorkspacePath("/workspace", fakeRoot), ROOT);
+  });
+
+  it("rejects .. segments before posix normalize", () => {
+    assert.throws(
+      () => canonicalizeWorkspacePath("/home/flok/foo/../bar", ROOT),
       (err: unknown) => err instanceof PathEscape,
     );
   });

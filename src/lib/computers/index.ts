@@ -112,7 +112,13 @@ export {
   isTerminal,
 } from "./state.js";
 
-export { assertInsideRoot, getDefaultWorkspaceRoot } from "./path.js";
+export {
+  assertInsideRoot,
+  canonicalizeWorkspacePath,
+  getDefaultWorkspaceRoot,
+  workspaceRootForProvider,
+  WORKSPACE_ALIAS_PREFIXES,
+} from "./path.js";
 
 export {
   generatePairCode,
