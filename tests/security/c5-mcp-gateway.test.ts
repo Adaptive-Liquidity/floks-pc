@@ -398,6 +398,43 @@ describe("C5 MCP gateway", () => {
     assert.equal(typeof body.screen_width, "number");
   });
 
+  it("computer_act fail-closes click_element and still omits fake AX after open_url", async () => {
+    const noema = await pairThroughMcp("bird-noema");
+    const clicked = await rpc("tools/call", {
+      name: "computer_act",
+      arguments: {
+        capability_token: noema.token,
+        computer_handle: noema.handle,
+        actions: [{ type: "click_element", elementId: "Submit" }],
+      },
+    });
+    assert.equal((clicked.result as { isError: boolean }).isError, false);
+    assert.equal(payload(clicked).ok, false);
+    const clickResults = payload(clicked).results as Array<{
+      type: string;
+      success: boolean;
+      error?: string;
+    }>;
+    assert.equal(clickResults[0]?.success, false);
+    assert.match(String(clickResults[0]?.error), /unsupported/i);
+
+    await rpc("tools/call", {
+      name: "computer_act",
+      arguments: {
+        capability_token: noema.token,
+        computer_handle: noema.handle,
+        actions: [{ type: "open_url", url: "https://noema.example/" }],
+      },
+    });
+    const observed = await rpc("tools/call", {
+      name: "computer_observe",
+      arguments: { capability_token: noema.token, computer_handle: noema.handle },
+    });
+    const body = payload(observed);
+    assert.equal("accessibility_summary" in body, false);
+    assert.equal(MCP_TOOL_NAMES.length, 8);
+  });
+
   it("initialize and server/discover work; session id is not identity", async () => {
     const init = await rpc("initialize", {
       protocolVersion: "2025-06-18",
