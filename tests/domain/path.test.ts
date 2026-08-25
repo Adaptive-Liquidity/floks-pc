@@ -78,4 +78,14 @@ describe("canonicalizeWorkspacePath", () => {
       (err: unknown) => err instanceof PathEscape,
     );
   });
+
+  it("strips trailing slashes so alias roots equal the provider root", () => {
+    assert.equal(canonicalizeWorkspacePath("/workspace/", ROOT), ROOT);
+    assert.equal(canonicalizeWorkspacePath("/home/flok/", ROOT), ROOT);
+    assert.equal(canonicalizeWorkspacePath("/home/user/flok/", ROOT), ROOT);
+    assert.equal(
+      canonicalizeWorkspacePath("/workspace/project/", ROOT),
+      `${ROOT}/project`,
+    );
+  });
 });

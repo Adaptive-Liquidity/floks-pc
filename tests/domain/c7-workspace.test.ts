@@ -226,6 +226,12 @@ describe("C7 Fake per-machine desktop", () => {
     });
     assert.equal(deleted.ok, false);
     assert.equal(deleted.errorCode, "PATH_ESCAPE");
+    const deletedSlash = await service.filesystem(auth, computer.id, {
+      operation: "delete",
+      path: "/workspace/",
+    });
+    assert.equal(deletedSlash.ok, false);
+    assert.equal(deletedSlash.errorCode, "PATH_ESCAPE");
     const read = await service.filesystem(auth, computer.id, {
       operation: "read",
       path: "/home/flok/keep.txt",

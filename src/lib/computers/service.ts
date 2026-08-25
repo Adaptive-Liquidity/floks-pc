@@ -69,7 +69,7 @@ import {
   PAIR_CODE_TTL_MS,
   validatePairCode,
 } from "./pairing.js";
-import { ExecRequestSchema } from "./schemas.js";
+import { ExecRequestSchema, FsRequestSchema } from "./schemas.js";
 import {
   canonicalizeWorkspacePath,
   workspaceRootForProvider,
@@ -462,18 +462,19 @@ export class ComputerService {
     computerId: string,
     request: FsRequest,
   ): Promise<FsResult> {
+    const validatedRequest = FsRequestSchema.parse(request) as FsRequest;
     const { computer } = this.authorize(auth, computerId, "fs");
     const ref = this.requireProviderRef(computer);
     this.touch(computer);
     const root = workspaceRootForProvider(computer.provider);
     try {
-      const path = canonicalizeWorkspacePath(request.path, root);
+      const path = canonicalizeWorkspacePath(validatedRequest.path, root);
       const destination =
-        request.destination !== undefined
-          ? canonicalizeWorkspacePath(request.destination, root)
+        validatedRequest.destination !== undefined
+          ? canonicalizeWorkspacePath(validatedRequest.destination, root)
           : undefined;
       return this.provider.filesystem(ref, {
-        ...request,
+        ...validatedRequest,
         path,
         ...(destination !== undefined ? { destination } : {}),
       });

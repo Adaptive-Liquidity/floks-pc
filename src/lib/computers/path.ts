@@ -32,15 +32,17 @@ export function assertInsideRoot(
     throw new PathEscape(userPath);
   }
 
-  const normalizedRoot = pathPosix.normalize(root);
+  const normalizedRoot = stripTrailingSlash(pathPosix.normalize(root));
   const rootWithSep = normalizedRoot.endsWith("/")
     ? normalizedRoot
     : normalizedRoot + "/";
 
   // Relative paths join under root. Absolute paths must already be inside root.
-  const candidate = userPath.startsWith("/")
-    ? pathPosix.normalize(userPath)
-    : pathPosix.normalize(pathPosix.join(normalizedRoot, userPath));
+  const candidate = stripTrailingSlash(
+    userPath.startsWith("/")
+      ? pathPosix.normalize(userPath)
+      : pathPosix.normalize(pathPosix.join(normalizedRoot, userPath)),
+  );
 
   if (candidate !== normalizedRoot && !candidate.startsWith(rootWithSep)) {
     throw new PathEscape(userPath);
@@ -77,6 +79,13 @@ export function workspaceRootForProvider(name: ComputerProviderName): string {
   }
 }
 
+function stripTrailingSlash(resolved: string): string {
+  if (resolved.length > 1 && resolved.endsWith("/")) {
+    return resolved.slice(0, -1);
+  }
+  return resolved;
+}
+
 function hasDotDotSegment(userPath: string): boolean {
   return userPath.split("/").includes("..");
 }
@@ -111,10 +120,10 @@ export function canonicalizeWorkspacePath(
     throw new PathEscape(userPath);
   }
 
-  const normalizedRoot = pathPosix.normalize(providerRoot);
+  const normalizedRoot = stripTrailingSlash(pathPosix.normalize(providerRoot));
   let candidate: string;
   if (userPath.startsWith("/")) {
-    const absolute = pathPosix.normalize(userPath);
+    const absolute = stripTrailingSlash(pathPosix.normalize(userPath));
     const alias = WORKSPACE_ALIAS_PREFIXES.find((prefix) =>
       matchesAliasPrefix(absolute, prefix),
     );
@@ -130,5 +139,5 @@ export function canonicalizeWorkspacePath(
     candidate = pathPosix.normalize(pathPosix.join(normalizedRoot, userPath));
   }
 
-  return assertInsideRoot(candidate, normalizedRoot);
+  return assertInsideRoot(stripTrailingSlash(candidate), normalizedRoot);
 }
