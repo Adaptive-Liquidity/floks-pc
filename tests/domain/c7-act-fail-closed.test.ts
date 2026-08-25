@@ -114,4 +114,47 @@ describe("C7 Fake observe/act fail-closed", () => {
     });
     assertNoActionableAx(obs.accessibilitySummary);
   });
+
+  it("fail-closes open_url without a url", async () => {
+    const { computer, auth } = await provisionAndPair("bird-nourl");
+    const opened = await service.act(auth, computer.id, {
+      actions: [{ type: "open_url" }],
+    });
+    assert.equal(opened.ok, false);
+    assert.equal(opened.results[0]?.success, false);
+    assert.match(String(opened.results[0]?.error), /open_url requires url/);
+    const marker = await service.filesystem(auth, computer.id, {
+      operation: "read",
+      path: "/home/flok/.browser/profile/c7-marker",
+    });
+    assert.equal(marker.ok, false);
+  });
+
+  it("fail-closes open_url with an empty url", async () => {
+    const { computer, auth } = await provisionAndPair("bird-emptyurl");
+    const opened = await service.act(auth, computer.id, {
+      actions: [{ type: "open_url", url: "" }],
+    });
+    assert.equal(opened.ok, false);
+    assert.equal(opened.results[0]?.success, false);
+    assert.match(String(opened.results[0]?.error), /open_url requires url/);
+  });
+
+  it("returns ok false for a mixed batch with invalid open_url", async () => {
+    const { computer, auth } = await provisionAndPair("bird-mixed-open");
+    const mixed = await service.act(auth, computer.id, {
+      actions: [
+        { type: "open_url", url: "" },
+        { type: "wait", durationMs: 10 },
+      ],
+    });
+    assert.equal(mixed.ok, false);
+    assert.equal(mixed.results[0]?.success, false);
+    assert.match(String(mixed.results[0]?.error), /open_url requires url/);
+    const marker = await service.filesystem(auth, computer.id, {
+      operation: "read",
+      path: "/home/flok/.browser/profile/c7-marker",
+    });
+    assert.equal(marker.ok, false);
+  });
 });

@@ -329,7 +329,14 @@ export class FakeProvider implements ComputerProvider {
           error: "click_element unsupported until accessibility addressing exists",
         };
       }
-      if (action.type === "open_url" && action.url) {
+      if (action.type === "open_url") {
+        if (typeof action.url !== "string" || action.url.length === 0) {
+          return {
+            action,
+            success: false,
+            error: "open_url requires url",
+          };
+        }
         m.lastUrl = action.url;
         m.fs.set(`${root}/.browser`, { content: "", isDir: true });
         m.fs.set(`${root}/.browser/profile`, { content: "", isDir: true });
@@ -337,6 +344,7 @@ export class FakeProvider implements ComputerProvider {
           content: action.url,
           isDir: false,
         });
+        return { action, success: true };
       }
       return { action, success: true };
     });
