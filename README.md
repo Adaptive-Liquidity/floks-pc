@@ -70,6 +70,19 @@ Loopback MCP (FakeProvider, not public, not paid):
 FLOK_MCP_COMPUTERS_ENABLED=1 npm run start:mcp
 ```
 
+Local FakeProvider bootstrap (optional; prints a one-time pair code to stdout, 10 min TTL):
+
+```bash
+FLOK_MCP_COMPUTERS_ENABLED=1 \
+FLOK_MCP_BOOTSTRAP=1 \
+FLOK_MCP_BOOTSTRAP_BIRD_ID=bird-local \
+FLOK_MCP_BOOTSTRAP_FLOCK_ID=flock-local \
+FLOK_MCP_LISTEN_PORT=8790 \
+npm run start:mcp
+```
+
+`computer_pair` must use those exact `bird_id` / `flock_id` values (defaults are `bird-local` / `flock-local` if the env vars are omitted). In-process re-bootstrap reissues a pair code and burns the unused previous code; a process restart creates a new in-memory computer. Binding `0.0.0.0` / `::` requires `FLOK_MCP_AUTH_TOKEN` (connection auth only — never a capability). Do not enable `FLOK_MCP_BOOTSTRAP` under systemd/Docker/CI: the one-time pair code is printed to stdout and will land in captured logs.
+
 See `docs/computers/MCP.md`. Real Grok Bot pairing needs an approved public HTTPS `POST /mcp` URL; this package does not deploy one.
 
 C3B interactive live tests are a separate manual workflow (`runloop-c3` phase `c3b-live` only; do not add standalone `runloop-c3b.yml` or `runloop-blueprint.yml`). They need the custom interactive Blueprint (built from the DnD base; not bare Ubuntu) and `FLOK_LIVE_RUNLOOP_C3B_TEST=1`. Paid live gate **passed** on run `32559415086` (SHA `b892978`). `computerUse` is **true**. `accessibility` / `vnc` / `pauseMemory` stay **false**.
