@@ -535,6 +535,10 @@ describe("C5 MCP gateway", () => {
     const result = env.result as { isError: boolean; structuredContent: Record<string, unknown> };
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.code, new ComputerUseNotAvailable().code);
+    assert.match(
+      String(result.structuredContent.message),
+      /guest Chrome CDP is not available on the memory plane/,
+    );
     assert.equal("accessibility_summary" in result.structuredContent, false);
   });
 

@@ -24,7 +24,10 @@ import {
   CHROME_LOG_PATH,
   CDP_AX_HELPER_JS,
   CDP_HELPER_PATH,
+  CDP_NODE_BIN,
   CdpAxDumpSchema,
+  logCdpAxObserve,
+  parseCdpAxHelperStdout,
 } from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
@@ -451,22 +454,54 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     return r.exitCode === 0 && r.stdout.includes("ok");
   }
 
+  /** Guest `node` as the default exec user (root). flok-ui PATH is not assumed. */
+  private async resolveGuestNodeBin(): Promise<string> {
+    const r = await this.exec({
+      argv: ["bash", "-c", "command -v node"],
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      timeoutMs: 5_000,
+    });
+    const found = (r.stdout ?? "").trim().split(/\s+/)[0] ?? "";
+    if (
+      r.exitCode === 0 &&
+      found.startsWith("/") &&
+      found.length < 256 &&
+      !found.includes("..") &&
+      /^[A-Za-z0-9._/-]+$/.test(found)
+    ) {
+      return found;
+    }
+    return CDP_NODE_BIN;
+  }
+
   async cdpAxDump(): Promise<{ nodes: unknown[] }> {
     await this.ensureInteractiveStack();
+    const nodeBin = await this.resolveGuestNodeBin();
+    // Same invocation the live tester used: node /home/user/flok/.flok/cdp-ax.mjs
+    // Loopback CDP is reachable from the default exec user; argvAsUiUser is not required.
     const r = await this.exec({
-      argv: argvAsUiUser(["node", CDP_HELPER_PATH]),
+      argv: [nodeBin, CDP_HELPER_PATH],
       cwd: RUNLOOP_WORKSPACE_ROOT,
       timeoutMs: 15_000,
     });
+    logCdpAxObserve("helper", {
+      exit: r.exitCode,
+      timedOut: r.timedOut,
+      stdoutLen: r.stdout.length,
+      stderrLen: r.stderr.length,
+      asUi: false,
+    });
     if (r.exitCode !== 0) {
-      throw new ProviderUnavailable(
-        "runloop",
-        `cdp ax helper failed: ${r.stderr || r.stdout}`,
-      );
+      const hint = (r.stderr || "")
+        .replace(/[A-Za-z0-9_-]{32,}/g, "[redacted]")
+        .replace(/\s+/g, " ")
+        .slice(0, 80);
+      if (hint) logCdpAxObserve("helper-fail", { exit: r.exitCode, hint });
+      throw new ProviderUnavailable("runloop", "cdp ax helper failed");
     }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(r.stdout);
+      parsed = parseCdpAxHelperStdout(r.stdout);
     } catch {
       throw new ProviderUnavailable("runloop", "cdp ax helper returned non-JSON");
     }

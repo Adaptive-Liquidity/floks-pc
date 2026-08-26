@@ -31,8 +31,11 @@ export const CdpAxDumpNodeSchema = z.object({
   name: z.string().max(4096).optional(),
   value: z.string().max(4096).optional(),
   focused: z.boolean().optional(),
-  contentQuad: z.array(z.number().finite()).max(8).optional(),
+  contentQuad: z.array(z.number().finite()).max(32).optional(),
 });
+
+/** Guest Node binary. PATH as flok-ui is not assumed. */
+export const CDP_NODE_BIN = "/usr/bin/node";
 
 export const CdpAxDumpSchema = z
   .object({
@@ -89,6 +92,41 @@ export function cdpAxNodeId(backendDOMNodeId: number): string {
     .slice(0, 16);
 }
 
+export function cdpAxFallbackId(role: string, name: string | undefined, index: number): string {
+  return createHash("sha256")
+    .update(`${index}:${role}:${name ?? ""}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+/** Pull the helper JSON object out of mixed guest stdout. No dump text in errors. */
+export function parseCdpAxHelperStdout(stdout: string): unknown {
+  const start = stdout.indexOf("{");
+  const end = stdout.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    throw new Error("cdp ax helper returned non-JSON");
+  }
+  try {
+    return JSON.parse(stdout.slice(start, end + 1));
+  } catch {
+    throw new Error("cdp ax helper returned non-JSON");
+  }
+}
+
+function stringValue(raw: unknown): string | undefined {
+  if (typeof raw === "string" && raw.length > 0) return raw;
+  if (raw && typeof raw === "object" && "value" in raw) {
+    const v = (raw as { value: unknown }).value;
+    if (typeof v === "string" && v.length > 0) return v;
+  }
+  return undefined;
+}
+
+export function logCdpAxObserve(event: string, fields: Record<string, string | number | boolean>): void {
+  const parts = Object.entries(fields).map(([k, v]) => `${k}=${v}`);
+  process.stderr.write(`flok-cdp-ax ${event} ${parts.join(" ")}\n`);
+}
+
 function boundsFromQuad(quad: number[] | undefined): CdpAxBounds | undefined {
   if (!quad || quad.length < 8) return undefined;
   const xs: number[] = [];
@@ -113,6 +151,30 @@ function boundsFromQuad(quad: number[] | undefined): CdpAxBounds | undefined {
   return { x, y, width, height };
 }
 
+function coerceDumpNode(candidate: unknown, index: number): CdpAxNode | undefined {
+  if (!candidate || typeof candidate !== "object") return undefined;
+  const o = candidate as Record<string, unknown>;
+  if (o.ignored === true) return undefined;
+  const role = stringValue(o.role);
+  if (!role) return undefined;
+  const name = stringValue(o.name);
+  const value = stringValue(o.value);
+  const id =
+    typeof o.backendDOMNodeId === "number" && Number.isFinite(o.backendDOMNodeId)
+      ? cdpAxNodeId(o.backendDOMNodeId)
+      : cdpAxFallbackId(role, name, index);
+  const node: CdpAxNode = { id, role: role.slice(0, 64) };
+  if (name) node.name = name.slice(0, 512);
+  if (value) node.value = value.slice(0, 512);
+  if (o.focused === true) node.focused = true;
+  const quad = Array.isArray(o.contentQuad)
+    ? o.contentQuad.filter((n): n is number => typeof n === "number" && Number.isFinite(n))
+    : undefined;
+  const bounds = boundsFromQuad(quad);
+  if (bounds) node.bounds = bounds;
+  return node;
+}
+
 /** Map a guest CDP dump. Nodes without a box model keep no bounds (no guessed clicks). */
 export function mapCdpAxDump(dump: unknown): CdpAxSummary {
   const parsed = CdpAxDumpSchema.parse(dump);
@@ -120,26 +182,9 @@ export function mapCdpAxDump(dump: unknown): CdpAxSummary {
     throw new Error("cdp ax tree empty");
   }
   const nodes: CdpAxNode[] = [];
-  for (const candidate of parsed.nodes) {
-    const rawResult = CdpAxDumpNodeSchema.safeParse(candidate);
-    if (!rawResult.success) continue;
-    const raw = rawResult.data;
-    if (raw.ignored) continue;
-    if (typeof raw.backendDOMNodeId !== "number") continue;
-    if (typeof raw.role !== "string" || raw.role.length === 0) continue;
-    const node: CdpAxNode = {
-      id: cdpAxNodeId(raw.backendDOMNodeId),
-      role: raw.role.slice(0, 64),
-    };
-    if (typeof raw.name === "string" && raw.name.length > 0) {
-      node.name = raw.name.slice(0, 512);
-    }
-    if (typeof raw.value === "string" && raw.value.length > 0) {
-      node.value = raw.value.slice(0, 512);
-    }
-    if (raw.focused === true) node.focused = true;
-    const bounds = boundsFromQuad(raw.contentQuad);
-    if (bounds) node.bounds = bounds;
+  for (let i = 0; i < parsed.nodes.length; i++) {
+    const node = coerceDumpNode(parsed.nodes[i], i);
+    if (!node) continue;
     nodes.push(node);
     if (nodes.length >= CDP_AX_NODE_CAP) break;
   }

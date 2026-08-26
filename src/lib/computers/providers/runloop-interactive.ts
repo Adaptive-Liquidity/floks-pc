@@ -18,8 +18,11 @@ export {
   CDP_DEBUG_ADDRESS,
   CDP_DEBUG_PORT,
   CDP_HELPER_PATH,
+  CDP_NODE_BIN,
   CdpAxDumpSchema,
+  logCdpAxObserve,
   mapCdpAxDump,
+  parseCdpAxHelperStdout,
 } from "./runloop-cdp.js";
 
 export const FLOK_DISPLAY = ":99";

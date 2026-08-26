@@ -22,8 +22,10 @@ import {
   DISPLAY_HEIGHT,
   DISPLAY_WIDTH,
   ENSURE_INTERACTIVE_SH,
+  CDP_NODE_BIN,
   chromeLaunchArgv,
   mapCdpAxDump,
+  parseCdpAxHelperStdout,
   validateAction,
 } from "../../src/lib/computers/providers/runloop-interactive.js";
 
@@ -89,7 +91,11 @@ describe("C7 Chrome loopback CDP argv", () => {
     assert.ok(writeAt >= 0);
     assert.ok(lockAt >= 0);
     assert.ok(lastLock > writeAt);
-    assert.match(sdk, /argv: argvAsUiUser\(\["node", CDP_HELPER_PATH\]\)/);
+    assert.match(sdk, /argv: \[nodeBin, CDP_HELPER_PATH\]/);
+    assert.match(sdk, /command -v node/);
+    assert.doesNotMatch(sdk, /argvAsUiUser\(\[CDP_NODE_BIN, CDP_HELPER_PATH\]\)/);
+    assert.doesNotMatch(sdk, /argvAsUiUser\(\["node", CDP_HELPER_PATH\]\)/);
+    assert.equal(CDP_NODE_BIN, "/usr/bin/node");
     assert.match(sdk, /chmod 755 \$\{cdpHelper\}/);
     assert.match(sdk, /CdpAxDumpSchema\.safeParse\(parsed\)/);
   });
@@ -169,11 +175,62 @@ describe("C7 CDP AX mapping", () => {
     );
   });
 
-  it("skips one bad sibling and truncates long roles instead of dropping the dump", () => {
+  it("keeps helper nodes that have a role even without backendDOMNodeId", () => {
     const mapped = mapCdpAxDump({
       nodes: [
         { role: 1 },
         { backendDOMNodeId: null, role: "button", name: "NullId" },
+        {
+          backendDOMNodeId: 7,
+          role: "custom-role-that-is-definitely-longer-than-sixty-four-characters-xx",
+          name: "Keep",
+          contentQuad: [0, 0, 8, 0, 8, 8, 0, 8],
+        },
+      ],
+    });
+    assert.equal(mapped.source, "cdp");
+    assert.equal(mapped.nodes.length, 2);
+    assert.equal(mapped.nodes.some((n) => n.name === "NullId"), true);
+    const keep = mapped.nodes.find((n) => n.name === "Keep");
+    assert.ok(keep);
+    assert.equal(keep.role.length, 64);
+  });
+
+  it("maps mixed helper stdout JSON", () => {
+    const parsed = parseCdpAxHelperStdout('warn\n{"nodes":[{"role":"link","name":"Go"}]}\n');
+    const mapped = mapCdpAxDump(parsed);
+    assert.equal(mapped.source, "cdp");
+    assert.equal(mapped.nodes[0]?.name, "Go");
+  });
+
+  it("maps Chrome AXValue-shaped roles instead of dropping the dump", () => {
+    const mapped = mapCdpAxDump({
+      nodes: [
+        {
+          backendDOMNodeId: 1,
+          role: { value: "RootWebArea" },
+          name: { value: "Example Domain" },
+        },
+        {
+          backendDOMNodeId: 2,
+          role: { value: "link" },
+          name: { value: "More information" },
+          contentQuad: [10, 20, 50, 20, 50, 40, 10, 40],
+        },
+      ],
+    });
+    assert.equal(mapped.source, "cdp");
+    assert.equal(mapped.nodes.length, 2);
+    assert.equal(mapped.nodes[0]?.role, "RootWebArea");
+    assert.equal(mapped.nodes[0]?.name, "Example Domain");
+    assert.equal(mapped.nodes[1]?.name, "More information");
+    assert.deepEqual(mapped.nodes[1]?.bounds, { x: 10, y: 20, width: 40, height: 20 });
+  });
+
+  it("skips one bad sibling and truncates long roles instead of dropping the dump", () => {
+    const mapped = mapCdpAxDump({
+      nodes: [
+        { role: 1 },
         {
           backendDOMNodeId: 7,
           role: "custom-role-that-is-definitely-longer-than-sixty-four-characters-xx",
@@ -261,7 +318,14 @@ describe("C7 leftover click_element stays fail-closed", () => {
     assert.equal(obs.accessibilitySummary, undefined);
     await assert.rejects(
       () => p.observe(a.providerRef, { includeAccessibility: true }),
-      (err: unknown) => err instanceof ComputerUseNotAvailable,
+      (err: unknown) => {
+        assert.ok(err instanceof ComputerUseNotAvailable);
+        assert.match(
+          err.message,
+          /guest Chrome CDP is not available on the memory plane/,
+        );
+        return true;
+      },
     );
     const bad = await p.act(a.providerRef, {
       actions: [{ type: "click_element", elementId: "nope" }],

@@ -31,7 +31,7 @@ import type {
 } from "../types.js";
 import { ComputerError, PathEscape, ProviderUnavailable } from "../errors.js";
 import { assertInsideRoot } from "../path.js";
-import { mapCdpAxDump, validateAction } from "./runloop-interactive.js";
+import { logCdpAxObserve, mapCdpAxDump, validateAction } from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
   DEFAULT_RUNLOOP_ARCH,
@@ -136,7 +136,10 @@ export class RunloopProvider implements ComputerProvider {
       throw new ProviderUnavailable("runloop", "linux only");
     }
     const params = this.createParams(spec);
-    const session = await this.plane.create(params);
+    const existingId = process.env.FLOK_RUNLOOP_EXISTING_DEVBOX_ID?.trim();
+    const session = existingId
+      ? await this.plane.get(existingId)
+      : await this.plane.create(params);
     this.sessions.set(session.id, session);
     try {
       await session.fsMkdir(RUNLOOP_WORKSPACE_ROOT).catch(() => undefined);
@@ -356,15 +359,36 @@ export class RunloopProvider implements ComputerProvider {
       obs.screenshotBase64 = shot.png.toString("base64");
     }
     if (request.includeAccessibility) {
+      logCdpAxObserve("begin", {
+        provider: this.name,
+        ref: ref.slice(0, 24),
+        session: s.constructor.name,
+        hasCdpAxDump: typeof s.cdpAxDump === "function",
+      });
       try {
         const dump = await s.cdpAxDump();
-        obs.accessibilitySummary = mapCdpAxDump(dump);
+        logCdpAxObserve("dump", { nodes: dump.nodes.length, parsed: true });
+        const summary = mapCdpAxDump(dump);
+        obs.accessibilitySummary = summary;
+        logCdpAxObserve("mapped", {
+          source: summary.source,
+          nodes: summary.nodes.length,
+        });
       } catch (err) {
+        const detail = (err instanceof Error ? err.message : "unknown")
+          .replace(/[A-Za-z0-9_-]{32,}/g, "[redacted]")
+          .slice(0, 180);
+        logCdpAxObserve("fail", {
+          err: err instanceof Error ? err.name : "unknown",
+          reason: detail.slice(0, 80),
+        });
         if (err instanceof ComputerError && !(err instanceof ProviderUnavailable)) {
           throw err;
         }
         throw new ComputerUseNotAvailable(
-          "accessibility addressing requires guest Chrome CDP",
+          detail
+            ? `accessibility addressing requires guest Chrome CDP (${detail})`
+            : "accessibility addressing requires guest Chrome CDP",
         );
       }
     }
