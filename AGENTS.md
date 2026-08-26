@@ -28,8 +28,9 @@ Violations are stop-the-line. Revert immediately.
 Work only on the currently open phase listed in `PHASES.md`.
 
 - **Current open phase: L1 — Launch MVP (one bot, one Agent Computer).** L0 / C7 is CLOSED (PR #17).
-- Historical C0–C6 stay closed. Do not re-open them. Do not start L4+ (C8 snapshots, L5 click_element rewrite, L6 handoffs, quotas, extra providers, Nexus) while L1 is open.
-- Launch MVP does **not** add MCP tools (stay at eight). Do not add Fake AX, fake clicking, takeover, C8/C9 code, or proxy/bot-detection claims.
+- Historical C0–C6 stay closed. Do not re-open them. Do not start L4+ (C8 snapshots, L5 click_element rewrite, L6 handoffs, **L7 real quotas**, extra providers, Nexus) while L1 is open. L3 later only adds **minimal beta safety caps** (invite, per-user active cap, default auto-shutdown, cost warning) — not L7.
+- Launch MVP does **not** add MCP tools (stay at eight). MCP cannot destroy a Devbox; `Ctrl+C` does not either — use the Runloop shutdown runbook. Do not add Fake AX, fake clicking, takeover, C8/C9 code, or proxy/bot-detection claims.
+- Paid Agent Computers must use `flok-runloop-interactive` (or equivalent validated interactive stack). Fail before accepting generic compute-only DnD.
 - Do not enable or import Nexus-IQ, AEON, Graphiti, or any memory plane until Gate G0 is explicitly marked PASSED. G0 is not an L1–L3 blocker.
 
 ## Hard locks (never relax)

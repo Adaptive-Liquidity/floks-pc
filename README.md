@@ -21,10 +21,10 @@ Product object: **Agent Computer**. Backend v1: **Runloop Devbox**. Open work: *
 | Launch | Status |
 |--------|--------|
 | **L0** — C7 landing / CDP AX proof | **CLOSED / PASSED** — [PR #17](https://github.com/Adaptive-Liquidity/floks-pc/pull/17) (`bda72e0`). Live Grok Bot `computer_observe({ include_accessibility: true })` → `accessibility_summary.source === "cdp"` with real nodes. FakeProvider is not proof. |
-| **L1** — Launch MVP: one bot, one Agent Computer | **OPEN** — pair, observe, exec, files, lifecycle, operator cleanup. Fix MCP fs write-ok/read-empty before beta. |
+| **L1** — Launch MVP: one bot, one Agent Computer | **OPEN** — pair, observe, exec, files, interactive blueprint fail-closed, operator Runloop shutdown runbook (MCP cannot destroy). Fix MCP fs write-ok/read-empty before beta. |
 | **L2** — Bot Computers / Live Node Console | After L1 |
-| **L3** — Private beta (sign-up / invite while upgrades continue) | After L2 |
-| **L4–L9** — recovery, safer click, handoffs, quotas, provider fabric, enterprise | After users can join. See `PHASES.md` and `docs/computers/agent-computer-cloud.md`. |
+| **L3** — Private beta | After L2. **Safety caps only:** invite/approval, visible cost warning, max active machines per beta user, default auto-shutdown. Real quotas/billing are **L7**. |
+| **L4–L9** — recovery, safer click, handoffs, **L7 quotas/billing**, provider fabric, enterprise | After users can join. See `PHASES.md` and `docs/computers/agent-computer-cloud.md`. |
 
 Historical C0–C6 (scaffold → pairing → MCP → shell/fs) are **CLOSED**. `click_element` stays fail-closed until **L5**. Takeover, snapshots, and extra MCP tools are not launch. Nexus-IQ remains hard-locked until Gate G0.
 
@@ -73,7 +73,7 @@ Loopback MCP (FakeProvider, not public, not paid, **not** Agent Computer proof):
 FLOK_MCP_COMPUTERS_ENABLED=1 npm run start:mcp
 ```
 
-Real Agent Computer (paid Runloop; owner-approved only; interactive blueprint required for Chrome/`flok-ui`):
+Real Agent Computer (paid Runloop; owner-approved only). **L1 must fail before accepting the computer** unless `FLOK_RUNLOOP_BLUEPRINT` is `flok-runloop-interactive` (or an equivalent validated interactive stack). Generic DnD Ubuntu is compute-only and is **not** an Agent Computer.
 
 ```bash
 FLOK_MCP_COMPUTERS_ENABLED=1 \
@@ -85,7 +85,16 @@ FLOK_MCP_BOOTSTRAP_FLOCK_ID=flock-local \
 npm run start:mcp
 ```
 
-Do not run paid Runloop in required PR CI. Generic DnD Ubuntu is compute-only and is **not** an Agent Computer.
+**MCP cannot destroy the Devbox. `Ctrl+C` does not destroy it.** After you are done, list then shutdown every `dbx_…` you created (full runbook: `docs/computers/agent-computer-cloud.md`):
+
+```bash
+curl -sS -H "Authorization: Bearer ${RUNLOOP_API_KEY}" \
+  https://api.runloop.ai/v1/devboxes
+curl -sS -X POST -H "Authorization: Bearer ${RUNLOOP_API_KEY}" \
+  "https://api.runloop.ai/v1/devboxes/dbx_REPLACE/shutdown"
+```
+
+Never log or paste the API key. Keep-alive is a timeout fallback, not cleanup. Do not run paid Runloop in required PR CI.
 
 Local FakeProvider bootstrap (optional; prints a one-time pair code to stdout, 10 min TTL):
 
@@ -136,4 +145,4 @@ See `reference/flok-core/`. That take-pack contains curated, read-only excerpts 
 
 Private development under Adaptive Liquidity Labs. Public repository for collaboration on FLOKS Agent Computer Cloud.
 
-Do not claim residential proxies, bot-detection bypass, full root / uncensored terminal, or production-ready security. `click_element` is fail-closed. MCP fs write-ok / read-empty is a known L1 bug.
+Do not claim residential proxies, bot-detection bypass, full root / uncensored terminal, or production-ready security. `click_element` is fail-closed. MCP cannot destroy a Devbox; `Ctrl+C` does not either. MCP fs write-ok / read-empty is a known L1 bug.

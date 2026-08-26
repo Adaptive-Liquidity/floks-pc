@@ -144,14 +144,16 @@ Both tools require valid capability with correct scope (`exec` or `fs`). Wrapper
 | `FLOK_MCP_BOOTSTRAP_BIRD_ID` | no | Bootstrap identity. Default `bird-local`. Must match `computer_pair`. |
 | `FLOK_MCP_BOOTSTRAP_FLOCK_ID` | no | Bootstrap identity. Default `flock-local`. Must match `computer_pair`. |
 | `FLOK_MCP_PROVIDER` | no | Default `fake`. Set `runloop` only with owner approval and `RUNLOOP_API_KEY`. FakeProvider is not Agent Computer / L0 proof. |
-| `FLOK_RUNLOOP_BLUEPRINT` | for Runloop | Interactive Agent Computers need `flok-runloop-interactive` (`flok-ui` + Chrome). Generic DnD Ubuntu is compute-only. |
-| `FLOK_RUNLOOP_KEEP_ALIVE_SECONDS` | no | Live keep-alive 60–3600 (default 900). MCP process stop does not always destroy the Devbox. |
+| `FLOK_RUNLOOP_BLUEPRINT` | for Runloop | **Required for a paid Agent Computer:** `flok-runloop-interactive` (or an equivalent owner-validated interactive stack: `flok-ui`, Xvfb, Chrome, loopback CDP). Generic `runloop/universal-ubuntu-24.04-x86_64-dnd` is compute-only and is **not** an Agent Computer. L1 must fail **before** accepting a paid computer if this is missing/wrong. Do not treat missing Xvfb as success. |
+| `FLOK_RUNLOOP_KEEP_ALIVE_SECONDS` | no | Timeout fallback 60–3600 (default 900). **Not** the cleanup path. `Ctrl+C` / MCP stop does not destroy the Devbox. |
 
 ```bash
 FLOK_MCP_COMPUTERS_ENABLED=1 npm run start:mcp
 ```
 
 Default provider for that process is **FakeProvider**. Paid Runloop (`FLOK_MCP_PROVIDER=runloop`) is not started here and is **not** part of required PR CI. See README for the owner-approved Agent Computer snippet.
+
+**MCP cannot stop or destroy a Devbox.** None of the eight tools call `ComputerService.stop()` / `destroy()`. `computer_status` never returns a provider id. Paid-machine cleanup is the Runloop shutdown runbook in `docs/computers/agent-computer-cloud.md` (`POST https://api.runloop.ai/v1/devboxes/{id}/shutdown`). Do not add a ninth tool for L1.
 
 ## Logging
 

@@ -15,7 +15,7 @@ Launch sequence and customer-facing object: `PHASES.md` (L0–L9) and `docs/comp
 
 **Now (L0 proven / L1 launch):** pair + capability, one bot → one Agent Computer, Runloop v1, status, screenshot observe, CDP accessibility observe, `open_url` / wait / basic act, exec, files, private workspace, stop/destroy, fail-closed `click_element`.
 
-**Later (after users can join):** dashboard (L2), private beta signup (L3), snapshots / recovery (L4), AX-bounds `click_element` (L5), one-file handoff (L6), quotas (L7), extra providers (L8), enterprise / private infra (L9), authenticated VNC takeover.
+**Later (after users can join):** dashboard (L2), private beta signup with **L3 safety caps** (invite, per-user active-machine cap, default auto-shutdown, cost warning), snapshots / recovery (L4), AX-bounds `click_element` (L5), one-file handoff (L6), **real quotas/billing (L7)**, extra providers (L8), enterprise / private infra (L9), authenticated VNC takeover.
 
 Do not claim residential proxies, bot-detection bypass, full root / uncensored terminal, unthrottled infra, or production-ready security.
 

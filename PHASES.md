@@ -47,27 +47,28 @@ Runloop Devbox is **provider v1**, not the product name.
 **Required:**
 - Pair-code onboarding + capability token auth
 - One bot → one Agent Computer
-- Runloop provider v1 (`FLOK_MCP_PROVIDER=runloop`, interactive blueprint)
+- Runloop provider v1 (`FLOK_MCP_PROVIDER=runloop`)
+- **Interactive blueprint validation** — fail **before** accepting a paid computer if `FLOK_RUNLOOP_BLUEPRINT` is missing, wrong, or the generic compute-only DnD image. Require `flok-runloop-interactive` or an equivalent owner-validated interactive stack (`flok-ui`, Xvfb, Chrome, loopback CDP). Generic `runloop/universal-ubuntu-24.04-x86_64-dnd` is **not** an Agent Computer.
 - status, observe screenshot, observe CDP accessibility
 - `open_url` / wait / safe basic actions
 - terminal/exec
 - file write/read/list/stat (and remaining fs ops)
 - private workspace
-- lifecycle stop/destroy
 - cost/runtime visibility
-- cleanup safety
 - redacted logs
 - simple operator runbook
+- **Obvious cleanup/destroy** — see paid Runloop shutdown runbook in `docs/computers/agent-computer-cloud.md`. MCP **cannot** destroy a Devbox today (no stop/destroy tool; do not add one for L1). `Ctrl+C` / stopping MCP does **not** shut the machine down.
 
 **Must fix before beta (L3):**
 - MCP fs write-ok / read-empty
-- cleanup/destroy obvious and reliable (MCP stop ≠ Devbox destroy)
+- Operator can list and shutdown/destroy every paid Agent Computer they started (Runloop API runbook, not process exit)
+- Interactive blueprint fail-closed before a paid computer is accepted
 - owner/operator can see active Agent Computers
 - startup instructions simple enough to run without a live walkthrough
 
 **Non-goals:** new MCP tools, Fake AX, fake clicking, takeover, C8/C9 code, proxies, Nexus/AEON/Graphiti, paid tests in required CI.
 
-**Gate:** A real Grok Bot can pair, use its assigned Agent Computer, observe browser state, use files/exec, and the operator can safely stop/destroy the computer.
+**Gate:** A real Grok Bot can pair, use its assigned **interactive** Agent Computer, observe browser state, use files/exec, and the operator can **safely stop/destroy the Runloop Devbox** using the documented shutdown path (not MCP, not `Ctrl+C`).
 
 ---
 
@@ -89,11 +90,19 @@ Runloop Devbox is **provider v1**, not the product name.
 
 **Purpose:** Let users sign up / join while upgrades continue.
 
-**Required:** controlled onboarding, waitlist or invite codes, pricing/cost warning, usage limits, max active machines, default auto-shutdown, support/debug packet, bug-report template, known-limitations page.
+**L3 = minimal private-beta safety caps only** (not the L7 quota/billing platform):
+
+- controlled onboarding: waitlist **or** manual invite / approval
+- visible pricing / cost warning for running machines
+- max **active** Agent Computers **per beta user** (a small hard cap, operator-enforced is enough)
+- default **auto-shutdown** (keep-alive / TTL so an abandoned box dies)
+- support/debug packet, bug-report template, known-limitations page
+
+Do **not** build L7 here: no billing ledger, no worker queue, no OpenTelemetry platform, no admin kill-switch fleet, no provider-capacity scheduler. Those are **L7**.
 
 **Must say clearly:** `click_element` not yet supported; proxies/residential egress not included; production scale not proven; no guaranteed bot-detection bypass; background jobs via exec/files; browser computer use is the first lane.
 
-**Gate:** Users can join, connect a bot, get an Agent Computer, run basic browser/files/exec workflows, and report bugs without a live explanation every time.
+**Gate:** Users can join, connect a bot, get an Agent Computer, run basic browser/files/exec workflows, and report bugs without a live explanation every time. A beta user cannot run unbounded machines; cost is visible; unused machines auto-shut.
 
 ---
 
@@ -125,7 +134,11 @@ Includes: provider-native snapshots, wake/pause/resume polish, failed-boot recov
 
 ### PHASE L7 — Scale / quotas / billing controls
 
-**Purpose:** Maps former Phase 11. Quotas, max active machines, runtime limits, auto-destroy, cost visibility, worker queue if needed, observability, admin kill switch, provider capacity.
+**Purpose:** Maps former Phase 11. **Real** quotas, billing, observability, and scaling — the platform that **replaces** L3’s minimal safety caps.
+
+Includes: billed quotas, workspace/user limits at scale, runtime accounting, auto-destroy policies, cost dashboards, worker queue if needed, traces/metrics, admin kill switch, provider capacity handling.
+
+**Not L7:** the L3 invite cap, visible cost warning, per-beta-user active-machine limit, and default auto-shutdown. Those already exist as private-beta safety. L7 is when many users can run without an operator watching every box.
 
 **Gate:** Multiple users/bots without runaway spend or orphan machines.
 
@@ -533,7 +546,7 @@ Do **not** treat the headings below as the currently open sequence. Launch work 
 | C8 persistence / recovery | **L4** | After users can join (L3). Provider-native snapshots first. |
 | C9 explicit handoffs | **L6** | One-file handoff first. No cookie/profile/.env sharing. |
 | C10 network + CredentialBroker | After L3 | Do not claim residential proxies or bot-detection bypass. |
-| C11 worker / quotas / observability | **L7** | Needed before runaway spend. |
+| C11 worker / quotas / observability | **L7** | Real quotas/billing/observability. L3 only has minimal beta safety caps. |
 | G0 standalone acceptance | Nexus lock | **Not** an L3 private-beta blocker. |
 | Phase 13 Kata / Firecracker | **L8 / L9** | Keep Runloop as provider v1. |
 | Phase 14–15 Nexus / AEON / Graphiti | After G0 only | Hard flags stay false. |
@@ -564,15 +577,17 @@ Do **not** claim residential proxies, custom egress as a current product, or “
 
 ### Former Phase 11 — Worker, quotas and observability → L7
 
-**Goal:** Quotas, max active machines, runtime limits, auto-destroy, cost visibility, worker queue if needed, observability, admin kill switch, provider capacity.
+**Goal:** Real quotas/billing/observability/scaling (not the L3 beta safety caps).
 
 **Historical Gate C11:** Complete trace for one Grok action from MCP request to provider result without secrets or private terminal contents.
 
-### Gate G0 — Nexus lock (unchanged)
+### Gate G0 — Nexus lock / pre-Nexus acceptance
 
-**Nexus-IQ still disabled.** G0 is the lock before Nexus / AEON / Graphiti may enter the architecture. It is **not** a blocker for L1 launch MVP or L3 private beta.
+**Nexus-IQ still disabled.** G0 is the **pre-Nexus acceptance gate**: the standalone Agent Computer is proven enough that Nexus / AEON / Graphiti **may be considered**. It is **not** a blocker for L1 launch MVP or L3 private beta.
 
-All of the following must PASS before G0:
+G0 must **not** be defined using post-G0 features. Bounded graph memory, Nexus-secured WASM tools, AEON-IQ, and Proof Capsules are **after G0**. They are not G0 exit criteria.
+
+All of the following must PASS before G0 (Nexus still false):
 
 - Real Grok Bot integration
 - 3 isolated Nodes concurrent
@@ -626,18 +641,24 @@ handoff_send          ← PHASE_NOT_STARTED until L6
 handoff_receive       ← PHASE_NOT_STARTED until L6
 ```
 
-`memory_context` / `memory_remember` exist only after G0. Infrastructure tools (`runloop_*`, `firecracker_*`, `nexus_*`, `graphiti_*`, `postgres_*`) remain internal.
+`memory_context` / `memory_remember` exist only **after G0** (Nexus/AEON memory plane). Infrastructure tools (`runloop_*`, `firecracker_*`, `nexus_*`, `graphiti_*`, `postgres_*`) remain internal.
 
 ---
 
 ## Launch definition of done (L1–L3)
 
-FLOKS Agent Computer Cloud: a user can pair a Grok Bot to one isolated Agent Computer (Runloop provider v1), observe real Chrome (screenshot + CDP accessibility), use files and exec, see cost/runtime, and an operator can stop/destroy the machine. Users can join a private beta while later upgrades (snapshots, structured click, handoffs, quotas, extra providers) continue.
+FLOKS Agent Computer Cloud: a user can pair a Grok Bot to one isolated **interactive** Agent Computer (Runloop provider v1, `flok-runloop-interactive` or equivalent), observe real Chrome (screenshot + CDP accessibility), use files and exec, see a cost warning, and an operator can **shut down the Devbox** using the documented Runloop API runbook. Users can join a private beta with L3 safety caps (invite, per-user active-machine cap, default auto-shutdown, visible cost) while later upgrades continue.
 
-Do not claim: residential proxies, bot-detection bypass, full root / uncensored terminal, unthrottled infra, production-ready security, or that `click_element` works.
+Do not claim: residential proxies, bot-detection bypass, full root / uncensored terminal, unthrottled infra, production-ready security, or that `click_element` works. Do not claim `Ctrl+C` destroys the machine.
 
 ---
 
-## Full-system definition of done (G0, not launch)
+## G0 definition of done (pre-Nexus, not launch)
 
-A user can create NOEMA / Code / Research / Design inside Grok Bot and receive four different isolated computers, filesystems, browser profiles, authenticated sessions, and working histories, while still allowing explicit handoffs, persistence, human takeover, pause/resume, disaster recovery, scoped credentials, audit, bounded graph memory, Nexus-secured WASM tools, AEON-IQ recall, and Proof Capsules — without Flok replacing Grok Bot itself.
+Standalone Agent Computers work for real Grok Bots: several isolated machines, browser + terminal + files, persistence/recovery, explicit handoff, security tests, load/staging evidence. **Nexus-IQ / AEON / Graphiti remain disabled.** Passing G0 does **not** include graph memory, Nexus-secured tools, AEON-IQ, or Proof Capsules.
+
+---
+
+## Post-G0 / full-system future definition
+
+After G0, a later entire-build goal is: a user can create NOEMA / Code / Research / Design inside Grok Bot and receive four different isolated computers, filesystems, browser profiles, authenticated sessions, and working histories, while still allowing explicit handoffs, persistence, human takeover, pause/resume, disaster recovery, scoped credentials, audit, **bounded graph memory, Nexus-secured WASM tools, AEON-IQ recall, and Proof Capsules** — without Flok replacing Grok Bot itself. Those four Nexus/AEON items are **post-G0 only**.
