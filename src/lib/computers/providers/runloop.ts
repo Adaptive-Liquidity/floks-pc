@@ -107,13 +107,18 @@ export class RunloopProvider implements ComputerProvider {
     if (!blueprint) {
       throw new RunloopBlueprintRequired("FLOK_RUNLOOP_BLUEPRINT is required");
     }
+    const keepRaw = Number(process.env.FLOK_RUNLOOP_KEEP_ALIVE_SECONDS?.trim());
+    const keepAliveSeconds =
+      Number.isInteger(keepRaw) && keepRaw >= 60 && keepRaw <= 3600
+        ? keepRaw
+        : LIVE_KEEP_ALIVE_SECONDS;
     const { createSdkRunloopPlane } = await import("./runloop-sdk.js");
     const client = await createSdkRunloopPlane({
       apiKey,
       blueprint,
-      keepAliveSeconds: LIVE_KEEP_ALIVE_SECONDS,
+      keepAliveSeconds,
     });
-    return new RunloopProvider({ client, blueprint, apiKey });
+    return new RunloopProvider({ client, blueprint, apiKey, keepAliveSeconds });
   }
 
   capabilities(): ProviderCapabilities {

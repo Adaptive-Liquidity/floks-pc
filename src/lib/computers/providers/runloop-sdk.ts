@@ -455,9 +455,18 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     return r.exitCode === 0 && r.stdout.includes("ok");
   }
 
-  async cdpAxDump(): Promise<{ nodes: unknown[] }> {
-    await this.ensureInteractiveStack();
-    // Same argv the live tester proved via computer_exec: node /home/user/flok/.flok/cdp-ax.mjs
+  private chromePopenArgv(url: string): string[] {
+    const chromeCode = [
+      "import subprocess,sys",
+      `log=open(${JSON.stringify(CHROME_LOG_PATH)},"ab",buffering=0)`,
+      "subprocess.Popen(sys.argv[1:], start_new_session=True, stdout=log, stderr=subprocess.STDOUT)",
+      "print('launched')",
+      "",
+    ].join("\n");
+    return ["python3", "-c", chromeCode, ...chromeLaunchArgv(url)];
+  }
+
+  private async runCdpHelper(): Promise<RunloopExecResult> {
     let r = await this.exec({
       argv: ["node", CDP_HELPER_PATH],
       cwd: RUNLOOP_WORKSPACE_ROOT,
@@ -477,6 +486,62 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       stderrLen: r.stderr.length,
       asUi: false,
     });
+    return r;
+  }
+
+  private async launchChromeForCdp(): Promise<void> {
+    logCdpAxObserve("chrome-launch", { via: "observe" });
+    const r = await this.exec({
+      argv: this.chromePopenArgv(`file://${FIXTURE_PATH}`),
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      env: { DISPLAY: FLOK_DISPLAY },
+      timeoutMs: 20_000,
+    });
+    if (r.exitCode !== 0) {
+      throw new ProviderUnavailable("runloop", "chrome launch failed");
+    }
+  }
+
+  private async waitForCdp(): Promise<boolean> {
+    const py = [
+      "import urllib.request,time,sys",
+      "deadline=time.time()+20",
+      "while time.time()<deadline:",
+      "  try:",
+      "    urllib.request.urlopen('http://127.0.0.1:9222/json/version', timeout=1)",
+      "    print('cdp-ready')",
+      "    sys.exit(0)",
+      "  except Exception:",
+      "    time.sleep(1)",
+      "print('cdp-down')",
+      "sys.exit(1)",
+      "",
+    ].join("\n");
+    const r = await this.exec({
+      argv: ["python3", "-c", py],
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      timeoutMs: 25_000,
+    });
+    logCdpAxObserve("cdp-wait", { ready: r.exitCode === 0 });
+    return r.exitCode === 0;
+  }
+
+  async cdpAxDump(): Promise<{ nodes: unknown[] }> {
+    await this.ensureInteractiveStack();
+    // Same argv the live tester proved via computer_exec: node /home/user/flok/.flok/cdp-ax.mjs
+    let r = await this.runCdpHelper();
+    const refused = /ECONNREFUSED|9222/.test(r.stderr);
+    if (r.exitCode !== 0 && refused) {
+      await this.launchChromeForCdp();
+      const ready = await this.waitForCdp();
+      if (!ready) {
+        throw new ProviderUnavailable(
+          "runloop",
+          "cdp ax helper failed (connect ECONNREFUSED 127.0.0.1:9222)",
+        );
+      }
+      r = await this.runCdpHelper();
+    }
     if (r.exitCode !== 0) {
       const hint = sanitizeCdpAxHint(r.stderr || "");
       if (hint) logCdpAxObserve("helper-fail", { exit: r.exitCode, hint });
@@ -541,17 +606,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
             ? (action.url ?? `file://${FIXTURE_PATH}`)
             : `file://${FIXTURE_PATH}`;
         // Detach so exec returning does not SIGHUP Chrome. No --no-sandbox.
-        // Launch accepted ≠ Chrome ready; live gate polls readiness separately.
-        // runuser drops to flok-ui; python launcher stays the Devbox user (root on DnD).
-        // Startup stderr goes to a guest tmp log (not FLOKS audit).
-        const chromeCode = [
-          "import subprocess,sys",
-          `log=open(${JSON.stringify(CHROME_LOG_PATH)},"ab",buffering=0)`,
-          "subprocess.Popen(sys.argv[1:], start_new_session=True, stdout=log, stderr=subprocess.STDOUT)",
-          "print('launched')",
-          "",
-        ].join("\n");
-        argv = ["python3", "-c", chromeCode, ...chromeLaunchArgv(url)];
+        argv = this.chromePopenArgv(url);
         break;
       }
       default:

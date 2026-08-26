@@ -93,6 +93,9 @@ describe("C7 Chrome loopback CDP argv", () => {
     assert.ok(lastLock > writeAt);
     assert.match(sdk, /argv: \["node", CDP_HELPER_PATH\]/);
     assert.match(sdk, /argv: \[CDP_NODE_BIN, CDP_HELPER_PATH\]/);
+    assert.match(sdk, /launchChromeForCdp/);
+    assert.match(sdk, /http:\/\/127\.0\.0\.1:9222\/json\/version/);
+    assert.match(sdk, /chrome-launch/);
     assert.doesNotMatch(sdk, /argvAsUiUser\(\[CDP_NODE_BIN, CDP_HELPER_PATH\]\)/);
     assert.doesNotMatch(sdk, /argvAsUiUser\(\["node", CDP_HELPER_PATH\]\)/);
     assert.equal(CDP_NODE_BIN, "/usr/bin/node");
