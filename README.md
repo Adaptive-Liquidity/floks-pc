@@ -1,10 +1,12 @@
 # floks-pc
 
-**An addon for Floks so your Grok Bots no longer need to share a computer.**
+**FLOKS Agent Computer Cloud — every bot gets its own isolated computer.**
 
-Isolated Flok Node Computer runtime — per-Node VMs, MCP gateway, pairing, jobs, checkpoints, handoffs, and recovery.
+An Agent Computer is a provider-backed machine assigned to exactly one Grok Bot through pair-code onboarding and scoped capability tokens. **Runloop Devbox is provider v1** (backend infrastructure, not the product name).
 
-This package implements the complete Flok Computer system (Phases 0–15) as a standalone TypeScript project. It is deliberately separate from the main Flok application so the Computer substrate can be built, tested, and gated independently.
+This package is the standalone TypeScript runtime for that product: MCP gateway, pairing, capability auth, ComputerService, and the Runloop provider. It is deliberately separate from the main Flok application.
+
+Launch sequence is **L0–L9** in `PHASES.md` (fastest path to a usable bot computer, then upgrades). Historical engineering gates C0–C6 and landed C7 are the evidence record. Nexus-IQ stays locked until Gate G0.
 
 ## Isolation rule (non-negotiable)
 
@@ -14,24 +16,25 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 
 ## Current status
 
-| Gate | Status |
-|------|--------|
-| **C0** — scaffold, authority, domain types, ComputerProvider interface | **CLOSED / PASSED** |
-| **C1** — domain logic, FakeProvider, ComputerService, unit tests | **CLOSED / PASSED** |
-| **C2** — DockerDevProvider + isolation/persistence | **CLOSED / PASSED** |
-| **C3A** — Runloop Devbox compute substrate | **CLOSED / PASSED** |
-| **C3B** — interactive computer (display, browser, screenshot, bounded input) | **CLOSED / PASSED** |
-| **C4** — pair codes + capability tokens (internal layer) | **CLOSED / PASSED** |
-| **C5** — Flok MCP Gateway (`POST /mcp`, eight tools) | **IMPLEMENTED + hardening merged on main** (unpaid FakeProvider tests; real Grok Bot / public URL remains manual) |
-| **C6** — Shell + filesystem (argv, path jail, limits) | **IMPLEMENTED** (unpaid FakeProvider tests; real Grok Bot / public URL remains manual) |
-| C7+ | Not started (Nexus-IQ remains hard-locked until G0) |
+Product object: **Agent Computer**. Backend v1: **Runloop Devbox**. Open work: **L1 Launch MVP**.
+
+| Launch | Status |
+|--------|--------|
+| **L0** — C7 landing / CDP AX proof | **CLOSED / PASSED** — [PR #17](https://github.com/Adaptive-Liquidity/floks-pc/pull/17) (`bda72e0`). Live Grok Bot `computer_observe({ include_accessibility: true })` → `accessibility_summary.source === "cdp"` with real nodes. FakeProvider is not proof. |
+| **L1** — Launch MVP: one bot, one Agent Computer | **OPEN** — pair, observe, exec, files, interactive blueprint fail-closed, durable control-plane records before L3, scoped Runloop shutdown (this run only). `127.0.0.1` is local smoke; remote Grok needs authenticated HTTPS. Fix MCP fs write-ok/read-empty before beta. |
+| **L2** — Bot Computers / Live Node Console | After L1 |
+| **L3** — Private beta | After L2. **Safety caps only:** invite/approval, visible cost warning, max active machines per beta user, default auto-shutdown. Real quotas/billing are **L7**. |
+| **L4–L9** — recovery, safer click, handoffs, **L7 quotas/billing**, provider fabric, enterprise | After users can join. See `PHASES.md` and `docs/computers/agent-computer-cloud.md`. |
+
+Historical C0–C6 (scaffold → pairing → MCP → shell/fs) are **CLOSED**. `click_element` stays fail-closed until **L5**. Takeover, snapshots, and extra MCP tools are not launch. Nexus-IQ remains hard-locked until Gate G0.
 
 ## Authority files (read in this order)
 
 1. `AGENTS.md` — isolation fence + phase enforcement for every coding agent
 2. `AUTHORITY.md` — local product & architecture contract
-3. `PHASES.md` — full C0 → G0 → 15 sequence with gates
-4. `docs/computers/` — architecture, security, provider contract
+3. `PHASES.md` — launch sequence L0–L9 (current open: L1) plus historical C0–C6 / G0 lock
+4. `docs/computers/agent-computer-cloud.md` — product object, feature matrix, what not to claim
+5. `docs/computers/` — architecture, MCP, security, provider contract
 
 ## Hard locks
 
@@ -64,11 +67,38 @@ FLOK_LIVE_RUNLOOP_TEST=1 npm run test:live:runloop
 
 When the flag is set, missing credentials **fail** the suite. Live Runloop is **not** part of `npm run verify` or required PR CI.
 
-Loopback MCP (FakeProvider, not public, not paid):
+Loopback MCP (FakeProvider, not public, not paid, **not** Agent Computer proof):
 
 ```bash
 FLOK_MCP_COMPUTERS_ENABLED=1 npm run start:mcp
 ```
+
+Real Agent Computer (paid Runloop; owner-approved only). **L1 must fail before accepting the computer** unless `FLOK_RUNLOOP_BLUEPRINT` is `flok-runloop-interactive` (or an equivalent validated interactive stack). Generic DnD Ubuntu is compute-only and is **not** an Agent Computer.
+
+**A. Local/operator smoke** (`127.0.0.1`, default). Remote Grok Bot cannot connect:
+
+```bash
+FLOK_MCP_COMPUTERS_ENABLED=1 \
+FLOK_MCP_PROVIDER=runloop \
+FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive \
+FLOK_MCP_LISTEN_HOST=127.0.0.1 \
+FLOK_MCP_BOOTSTRAP=1 \
+FLOK_MCP_BOOTSTRAP_BIRD_ID=bird-local \
+FLOK_MCP_BOOTSTRAP_FLOCK_ID=flock-local \
+npm run start:mcp
+```
+
+**B. Remote Grok Bot** needs an operator **authenticated HTTPS** tunnel/proxy in front of MCP, plus `FLOK_MCP_AUTH_TOKEN`. Do not expose unauthenticated public MCP. **127.0.0.1 is not a real remote Grok Bot endpoint. A remote Grok Bot needs an authenticated HTTPS endpoint that forwards to the MCP server and requires FLOK_MCP_AUTH_TOKEN.**
+
+**MCP cannot destroy the Devbox. `Ctrl+C` does not destroy it.** Only shut down the Devbox created by this FLOKS run. Never bulk-shutdown all Devboxes returned by the Runloop account. Prefer the captured `providerRef` from this run; if unsure, do not shut down anything. Full runbook: `docs/computers/agent-computer-cloud.md`.
+
+```bash
+# Placeholder id only — use the captured providerRef from THIS run.
+curl -sS -X POST -H "Authorization: Bearer ${RUNLOOP_API_KEY}" \
+  "https://api.runloop.ai/v1/devboxes/dbx_REDACTED/shutdown"
+```
+
+Never log or paste the API key or real provider IDs. Keep-alive is a timeout fallback, not cleanup. Do not run paid Runloop in required PR CI.
 
 Local FakeProvider bootstrap (optional; prints a one-time pair code to stdout, 10 min TTL):
 
@@ -117,4 +147,6 @@ See `reference/flok-core/`. That take-pack contains curated, read-only excerpts 
 
 ## License / ownership
 
-Private development under Adaptive Liquidity Labs. Public repository for collaboration on the Flok Computer addon.
+Private development under Adaptive Liquidity Labs. Public repository for collaboration on FLOKS Agent Computer Cloud.
+
+Do not claim residential proxies, bot-detection bypass, full root / uncensored terminal, or production-ready security. `click_element` is fail-closed. MCP cannot destroy a Devbox; `Ctrl+C` does not either. MCP fs write-ok / read-empty is a known L1 bug.
