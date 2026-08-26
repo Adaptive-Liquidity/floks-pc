@@ -24,6 +24,7 @@ import {
   CHROME_LOG_PATH,
   CDP_AX_HELPER_JS,
   CDP_HELPER_PATH,
+  CdpAxDumpSchema,
 } from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
@@ -469,14 +470,11 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     } catch {
       throw new ProviderUnavailable("runloop", "cdp ax helper returned non-JSON");
     }
-    if (!parsed || typeof parsed !== "object" || !("nodes" in parsed)) {
-      throw new ProviderUnavailable("runloop", "cdp ax helper missing nodes");
+    const checked = CdpAxDumpSchema.safeParse(parsed);
+    if (!checked.success) {
+      throw new ProviderUnavailable("runloop", "cdp ax helper dump invalid");
     }
-    const nodes = (parsed as { nodes: unknown }).nodes;
-    if (!Array.isArray(nodes)) {
-      throw new ProviderUnavailable("runloop", "cdp ax helper nodes is not an array");
-    }
-    return { nodes };
+    return { nodes: checked.data.nodes };
   }
 
   async uiAction(action: Action): Promise<void> {

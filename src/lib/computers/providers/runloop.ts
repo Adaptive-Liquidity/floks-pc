@@ -360,8 +360,9 @@ export class RunloopProvider implements ComputerProvider {
         const dump = await s.cdpAxDump();
         obs.accessibilitySummary = mapCdpAxDump(dump);
       } catch (err) {
-        if (err instanceof ProviderUnavailable) throw err;
-        if (err instanceof ComputerError) throw err;
+        if (err instanceof ComputerError && !(err instanceof ProviderUnavailable)) {
+          throw err;
+        }
         throw new ComputerUseNotAvailable(
           "accessibility addressing requires guest Chrome CDP",
         );

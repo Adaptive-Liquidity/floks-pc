@@ -68,6 +68,8 @@ describe("C7 Chrome loopback CDP argv", () => {
     assert.match(CDP_AX_HELPER_JS, /DOM\.getDocument/);
     assert.match(CDP_AX_HELPER_JS, /cdp page target missing/);
     assert.match(CDP_AX_HELPER_JS, /return \[backendNodeId, undefined\]/);
+    assert.match(CDP_AX_HELPER_JS, /cdp helper deadline/);
+    assert.match(CDP_AX_HELPER_JS, /p\.name === 'focused'/);
     assert.doesNotMatch(CDP_AX_HELPER_JS, /0\.0\.0\.0/);
     assert.doesNotMatch(CDP_AX_HELPER_JS, /--no-sandbox/);
   });
@@ -89,6 +91,7 @@ describe("C7 Chrome loopback CDP argv", () => {
     assert.ok(lastLock > writeAt);
     assert.match(sdk, /argv: argvAsUiUser\(\["node", CDP_HELPER_PATH\]\)/);
     assert.match(sdk, /chmod 755 \$\{cdpHelper\}/);
+    assert.match(sdk, /CdpAxDumpSchema\.safeParse\(parsed\)/);
   });
 });
 
@@ -128,6 +131,20 @@ describe("C7 CDP AX mapping", () => {
     assert.ok(x >= 0 && x < DISPLAY_WIDTH);
     assert.ok(y >= 0 && y < DISPLAY_HEIGHT);
     assert.equal(validateAction({ type: "click_coordinates", x, y }), null);
+  });
+
+  it("preserves focused from the dump flag", () => {
+    const mapped = mapCdpAxDump({
+      nodes: [
+        {
+          backendDOMNodeId: 3,
+          role: "textbox",
+          name: "Q",
+          focused: true,
+        },
+      ],
+    });
+    assert.equal(mapped.nodes[0]?.focused, true);
   });
 
   it("rejects garbage dumps instead of inventing AX", () => {

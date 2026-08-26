@@ -13,10 +13,12 @@ import { RUNLOOP_WORKSPACE_ROOT } from "./runloop-client.js";
 import { CDP_DEBUG_ADDRESS, CDP_DEBUG_PORT } from "./runloop-cdp.js";
 
 export {
+  CDP_AX_HELPER_DEADLINE_MS,
   CDP_AX_HELPER_JS,
   CDP_DEBUG_ADDRESS,
   CDP_DEBUG_PORT,
   CDP_HELPER_PATH,
+  CdpAxDumpSchema,
   mapCdpAxDump,
 } from "./runloop-cdp.js";
 
