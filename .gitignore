@@ -46,3 +46,6 @@ secrets/
 checkpoints/
 *.tar.zst
 *.snapshot
+
+# Durable local control-plane (providerRefs, digests)
+.flok/

@@ -44,6 +44,12 @@ import {
   type RunloopDevboxSession,
 } from "./runloop-client.js";
 import { MemoryRunloopControlPlane } from "./runloop-memory.js";
+import {
+  InteractiveBlueprintRequired,
+  allowComputeOnlyBlueprint,
+  buildAgentComputerLabels,
+  resolveAgentComputerBlueprint,
+} from "./interactive-blueprint.js";
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_OUTPUT = 1_000_000;
@@ -68,6 +74,9 @@ export class RunloopProvider implements ComputerProvider {
   readonly name = RUNLOOP_PROVIDER_NAME;
   private readonly plane: RunloopControlPlane;
   private readonly blueprint: string;
+  private readonly requireInteractive: boolean;
+  private readonly ownerId: string | null;
+  private readonly workspaceId: string | null;
   private readonly keepAliveSeconds: number;
   private readonly sessions = new Map<string, RunloopDevboxSession>();
 
@@ -76,7 +85,13 @@ export class RunloopProvider implements ComputerProvider {
     blueprint?: string;
     apiKey?: string;
     keepAliveSeconds?: number;
+    requireInteractive?: boolean;
+    ownerId?: string | null;
+    workspaceId?: string | null;
   }) {
+    this.requireInteractive = opts?.requireInteractive ?? !allowComputeOnlyBlueprint();
+    this.ownerId = opts?.ownerId ?? process.env.FLOK_OWNER_ID?.trim() ?? null;
+    this.workspaceId = opts?.workspaceId ?? process.env.FLOK_WORKSPACE_ID?.trim() ?? null;
     this.blueprint =
       opts?.blueprint ?? process.env.FLOK_RUNLOOP_BLUEPRINT ?? DEFAULT_RUNLOOP_BLUEPRINT;
     this.keepAliveSeconds = opts?.keepAliveSeconds ?? LIVE_KEEP_ALIVE_SECONDS;
@@ -99,8 +114,10 @@ export class RunloopProvider implements ComputerProvider {
 
   static async fromEnv(): Promise<RunloopProvider> {
     const apiKey = process.env.RUNLOOP_API_KEY ?? "";
-    const blueprint =
-      process.env.FLOK_RUNLOOP_BLUEPRINT ?? DEFAULT_RUNLOOP_BLUEPRINT;
+    const requireInteractive = !allowComputeOnlyBlueprint();
+    const blueprint = requireInteractive
+      ? resolveAgentComputerBlueprint()
+      : (process.env.FLOK_RUNLOOP_BLUEPRINT ?? DEFAULT_RUNLOOP_BLUEPRINT);
     if (!apiKey) {
       throw new ProviderUnavailable("runloop", "RUNLOOP_API_KEY is required");
     }
@@ -118,7 +135,13 @@ export class RunloopProvider implements ComputerProvider {
       blueprint,
       keepAliveSeconds,
     });
-    return new RunloopProvider({ client, blueprint, apiKey, keepAliveSeconds });
+    return new RunloopProvider({
+      client,
+      blueprint,
+      apiKey,
+      keepAliveSeconds,
+      requireInteractive,
+    });
   }
 
   capabilities(): ProviderCapabilities {
@@ -151,6 +174,11 @@ export class RunloopProvider implements ComputerProvider {
     try {
       await session.fsMkdir(RUNLOOP_WORKSPACE_ROOT).catch(() => undefined);
       await session.ensureInteractiveStack();
+      if (this.requireInteractive && !session.interactiveGuest) {
+        throw new InteractiveBlueprintRequired(
+          "guest is missing flok-ui / Xvfb / Chrome; generic compute-only Devboxes are not Agent Computers",
+        );
+      }
     } catch (e) {
       if (existingId) {
         this.sessions.delete(session.id);
@@ -180,6 +208,11 @@ export class RunloopProvider implements ComputerProvider {
     const s = await this.requireSession(ref);
     await s.resume();
     await s.ensureInteractiveStack();
+    if (this.requireInteractive && !s.interactiveGuest) {
+      throw new InteractiveBlueprintRequired(
+        "guest is missing flok-ui / Xvfb / Chrome after wake; not an Agent Computer",
+      );
+    }
   }
 
   async pause(ref: string): Promise<void> {
@@ -467,16 +500,21 @@ export class RunloopProvider implements ComputerProvider {
       blueprint: this.blueprint,
       architecture: DEFAULT_RUNLOOP_ARCH,
       keepAliveSeconds: this.keepAliveSeconds,
-      labels: {
-        "flok.provider": "runloop",
-        "flok.isolation": "linux-vm",
-      },
+      labels: buildAgentComputerLabels(
+        { birdId: existing?.birdId ?? "restore", flockId: existing?.flockId ?? "restore" },
+        { ownerId: this.ownerId, workspaceId: this.workspaceId },
+      ),
       envVars: {},
     };
     const session = await this.plane.restore(request.providerSnapshotRef, params);
     this.sessions.set(session.id, session);
     try {
       await session.ensureInteractiveStack();
+      if (this.requireInteractive && !session.interactiveGuest) {
+        throw new InteractiveBlueprintRequired(
+          "guest is missing flok-ui / Xvfb / Chrome after restore; not an Agent Computer",
+        );
+      }
     } catch (e) {
       await this.abandonSession(session.id);
       throw e;
@@ -490,15 +528,13 @@ export class RunloopProvider implements ComputerProvider {
     return {
       birdId: spec.birdId,
       flockId: spec.flockId,
-      blueprint: this.blueprint || DEFAULT_RUNLOOP_BLUEPRINT,
+      blueprint: this.blueprint,
       architecture: DEFAULT_RUNLOOP_ARCH,
       keepAliveSeconds: this.keepAliveSeconds,
-      labels: {
-        "flok.provider": "runloop",
-        "flok.bird_id": spec.birdId,
-        "flok.flock_id": spec.flockId,
-        "flok.isolation": "linux-vm",
-      },
+      labels: buildAgentComputerLabels(spec, {
+        ownerId: this.ownerId,
+        workspaceId: this.workspaceId,
+      }),
       envVars,
     };
   }

@@ -65,6 +65,8 @@ export interface RunloopDevboxSession {
   readonly birdId: string;
   readonly flockId: string;
   readonly bootId: string;
+  /** True when guest has flok-ui / Xvfb / Chrome. Agent Computer requires this. */
+  interactiveGuest: boolean;
 
   state(): Promise<RunloopDevboxState>;
   /** disk-preserving suspend; RAM is discarded */

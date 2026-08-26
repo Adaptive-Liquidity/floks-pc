@@ -126,7 +126,7 @@ An Agent Computer is the **interactive** stack. L1 must **fail before accepting 
 
 Required: `FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive` or an equivalent **owner-validated** interactive stack.
 
-**Current code gap (fix in L1 implementation, not this docs PR):** `RunloopProvider.fromEnv()` still falls back to generic DnD, and `ensure-interactive.sh` exits 0 when Xvfb is missing. That path must not ship as a working Agent Computer.
+L1 implementation: `RunloopProvider.fromEnv()` requires `flok-runloop-interactive` (or `FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT`). Generic DnD is rejected unless `FLOK_RUNLOOP_ALLOW_COMPUTE_ONLY=1` (C3A live compute tests only). Missing `flok-ui` / Xvfb / Chrome fails before the computer is ready.
 
 ## 4. Feature matrix
 
@@ -172,7 +172,8 @@ Required: `FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive` or an equivalent **o
 - `click_element` is fail-closed until L5. Do not treat FakeProvider trees as proof.
 - `capabilities().accessibility` remains `false` until an explicit later lift.
 - MCP `computer_fs`: write can succeed and the file exist on disk while a following MCP read returns empty. Separate from C7 AX. **L1 blocker.**
-- In-memory `ComputerService` is acceptable for local/dev only. It is **not** acceptable for private beta. Persist or reconcile control-plane records before L3. Provider workspace snapshots remain L4.
+- In-memory `ComputerService` is acceptable for local/dev only. It is **not** acceptable for private beta. Set `FLOK_CONTROL_PLANE_PATH` (Runloop MCP defaults to `.flok/control-plane.json`). Provider workspace snapshots remain L4.
+- Operator destroy (not an MCP tool): `FLOK_MCP_PROVIDER=runloop FLOK_DESTROY_CONFIRM=1 FLOK_DESTROY_PROVIDER_REF=<captured> npm run computers:destroy-run`. Requires the captured providerRef from this run. If more than one candidate matches or unsure, the command stops.
 - Handoffs are not implemented.
 - Takeover / authenticated VNC is not implemented.
 - Public HTTPS `POST /mcp` is an operator tunnel/proxy choice, not a claim that FLOKS hosts a production cloud. **127.0.0.1 is not a real remote Grok Bot endpoint. A remote Grok Bot needs an authenticated HTTPS endpoint that forwards to the MCP server and requires FLOK_MCP_AUTH_TOKEN.**

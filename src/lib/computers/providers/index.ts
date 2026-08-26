@@ -17,6 +17,11 @@ export {
   DEFAULT_RUNLOOP_BLUEPRINT,
 } from "./runloop.js";
 export {
+  InteractiveBlueprintRequired,
+  resolveAgentComputerBlueprint,
+  buildAgentComputerLabels,
+} from "./interactive-blueprint.js";
+export {
   assertNoControlPlaneSecrets,
   CONTROL_PLANE_SECRET_ENV_KEYS,
 } from "./runloop-client.js";

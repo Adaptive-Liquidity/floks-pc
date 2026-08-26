@@ -156,3 +156,14 @@ export type {
 export { digestEquals, sha256Hex } from "./digest.js";
 
 export { ComputerService, PAIR_IDENTITY_FAILURE_LIMIT } from "./service.js";
+export {
+  JsonFileControlPlaneStore,
+  MemoryControlPlaneStore,
+  controlPlaneStoreFromEnv,
+} from "./control-plane-store.js";
+export type { ControlPlaneStore, ControlPlaneSnapshot } from "./control-plane-store.js";
+export {
+  InteractiveBlueprintRequired,
+  resolveAgentComputerBlueprint,
+  buildAgentComputerLabels,
+} from "./providers/interactive-blueprint.js";

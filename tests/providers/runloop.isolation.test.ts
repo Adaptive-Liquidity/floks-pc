@@ -127,6 +127,7 @@ describe("Runloop C3A live Devboxes", { skip: !LIVE }, () => {
   });
 
   it("two live Devboxes prove isolation, suspend, snapshot fork, then shutdown", async () => {
+    process.env.FLOK_RUNLOOP_ALLOW_COMPUTE_ONLY = "1";
     const p = await RunloopProvider.fromEnv();
     const refs: string[] = [];
     try {

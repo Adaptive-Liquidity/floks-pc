@@ -84,6 +84,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
   readonly birdId: string;
   readonly flockId: string;
   readonly bootId: string;
+  interactiveGuest = true;
   destroyed = false;
   /** How many times ensureInteractiveStack actually (re)started. */
   stackStarts = 0;

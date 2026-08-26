@@ -153,6 +153,8 @@ Both tools require valid capability with correct scope (`exec` or `fs`). Wrapper
 | `FLOK_MCP_PROVIDER` | no | Default `fake`. Set `runloop` only with owner approval and `RUNLOOP_API_KEY`. FakeProvider is not Agent Computer / L0 proof. |
 | `FLOK_RUNLOOP_BLUEPRINT` | for Runloop | **Required for a paid Agent Computer:** `flok-runloop-interactive` (or an equivalent owner-validated interactive stack: `flok-ui`, Xvfb, Chrome, loopback CDP). Generic `runloop/universal-ubuntu-24.04-x86_64-dnd` is compute-only and is **not** an Agent Computer. L1 must fail **before** accepting a paid computer if this is missing/wrong. Do not treat missing Xvfb as success. |
 | `FLOK_RUNLOOP_KEEP_ALIVE_SECONDS` | no | Timeout fallback 60–3600 (default 900). **Not** the cleanup path. `Ctrl+C` / MCP stop does not destroy the Devbox. |
+| `FLOK_CONTROL_PLANE_PATH` | no | Durable JSON store for ComputerRecord / pair / capability digests. Runloop MCP defaults to `.flok/control-plane.json`. Fake stays in-memory unless this is set. Raw tokens are never stored. |
+| `FLOK_RUNLOOP_ALLOW_COMPUTE_ONLY` | no | Opt-in for C3A live compute tests only. Agent Computer MCP must not set this. |
 
 ```bash
 FLOK_MCP_COMPUTERS_ENABLED=1 npm run start:mcp
