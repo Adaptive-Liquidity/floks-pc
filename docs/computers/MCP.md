@@ -1,6 +1,8 @@
 # MCP Gateway (C5)
 
-Public Bot surface for Flok Computers. **ComputerService** is the only path to compute. MCP / xAI account auth never authorizes computer access.
+Public Bot surface for **Agent Computers**. **ComputerService** is the only path to compute. MCP / xAI account auth never authorizes computer access. Launch keeps **exactly eight tools**. Do not add tools for L1 MVP.
+
+Live L0 proof (PR #17): a real Grok Bot called `computer_observe({ include_accessibility: true })` and received `accessibility_summary.source === "cdp"` with non-empty nodes from a Runloop Agent Computer. FakeProvider is **not** proof.
 
 ## Endpoint
 
@@ -64,10 +66,10 @@ ComputerProvider   (never called from the gateway)
 | `computer_status` | `status()` | No `providerDetail` / provider refs. |
 | `computer_exec` | `exec()` | Default argv. `mode: "shell"` needs `shell` scope. stdout/stderr clipped to 64k. |
 | `computer_fs` | `filesystem()` | Path jail. stat/list/read/write/mkdir/move/copy/delete. |
-| `computer_observe` | `observe()` | Screenshot only when requested. No fabricated accessibility. |
-| `computer_act` | `act()` | Bounded C3B actions. No VNC/takeover tool. |
-| `handoff_send` | — | `PHASE_NOT_STARTED` (C9). |
-| `handoff_receive` | — | `PHASE_NOT_STARTED` (C9). |
+| `computer_observe` | `observe()` | Screenshot only when requested. Optional `include_accessibility`. Live Runloop returns `accessibility_summary.source === "cdp"` with real nodes (L0). FakeProvider is not proof. `capabilities().accessibility` stays `false`. |
+| `computer_act` | `act()` | Bounded C3B actions (`open_url`, wait, coordinates, type, key, scroll). `click_element` fail-closed until L5. No VNC/takeover tool. |
+| `handoff_send` | — | `PHASE_NOT_STARTED` (L6 / former C9). |
+| `handoff_receive` | — | `PHASE_NOT_STARTED` (L6 / former C9). |
 
 ## Example (fake tokens only)
 
@@ -125,6 +127,8 @@ C6 extends the MCP gateway with hardened shell and filesystem operations:
 
 Both tools require valid capability with correct scope (`exec` or `fs`). Wrapper Bearer / account_id / session metadata alone cannot authorize.
 
+**Known L1 bug:** MCP `computer_fs` write can succeed (and the file exist on the Agent Computer disk) while a following MCP read returns empty. Do not treat FakeProvider fs tests as a substitute for the live fix. Launch MVP must fix this before private beta (L3).
+
 ## Env / config
 
 | Variable | Required for unit tests | Meaning |
@@ -136,15 +140,18 @@ Both tools require valid capability with correct scope (`exec` or `fs`). Wrapper
 | `FLOK_MCP_BASE_URL` | no | Public URL to document for Grok (e.g. `https://host/mcp`) |
 | `FLOK_MCP_PUBLIC_URL` | no | Live Grok gate only |
 | `FLOK_LIVE_MCP_GROK_TEST` | no | Opt-in live file; not CI |
-| `FLOK_MCP_BOOTSTRAP` | no | Opt-in local FakeProvider control-plane: provision one computer and print a one-time pair code to stdout. Not an MCP tool. |
+| `FLOK_MCP_BOOTSTRAP` | no | Opt-in control-plane: provision one computer and print a one-time pair code to stdout. Not an MCP tool. Works with Fake (default) or Runloop when `FLOK_MCP_PROVIDER=runloop`. |
 | `FLOK_MCP_BOOTSTRAP_BIRD_ID` | no | Bootstrap identity. Default `bird-local`. Must match `computer_pair`. |
 | `FLOK_MCP_BOOTSTRAP_FLOCK_ID` | no | Bootstrap identity. Default `flock-local`. Must match `computer_pair`. |
+| `FLOK_MCP_PROVIDER` | no | Default `fake`. Set `runloop` only with owner approval and `RUNLOOP_API_KEY`. FakeProvider is not Agent Computer / L0 proof. |
+| `FLOK_RUNLOOP_BLUEPRINT` | for Runloop | Interactive Agent Computers need `flok-runloop-interactive` (`flok-ui` + Chrome). Generic DnD Ubuntu is compute-only. |
+| `FLOK_RUNLOOP_KEEP_ALIVE_SECONDS` | no | Live keep-alive 60–3600 (default 900). MCP process stop does not always destroy the Devbox. |
 
 ```bash
 FLOK_MCP_COMPUTERS_ENABLED=1 npm run start:mcp
 ```
 
-Default provider for that process is **FakeProvider**. Paid Runloop is not started here.
+Default provider for that process is **FakeProvider**. Paid Runloop (`FLOK_MCP_PROVIDER=runloop`) is not started here and is **not** part of required PR CI. See README for the owner-approved Agent Computer snippet.
 
 ## Logging
 

@@ -2,7 +2,7 @@
   "name": "flok-node-runtime",
   "version": "0.0.1",
   "private": true,
-  "description": "Isolated Flok Node Computer runtime — per-Node VMs, MCP gateway, pairing, jobs, checkpoints, handoffs. Standalone until Gate G0.",
+  "description": "FLOKS Agent Computer Cloud — isolated Agent Computers for Grok Bots. Runloop Devbox is provider v1. MCP gateway, pairing, capability auth. Standalone until Gate G0.",
   "type": "module",
   "engines": {
     "node": ">=22.12.0 <23"

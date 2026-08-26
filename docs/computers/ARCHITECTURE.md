@@ -1,4 +1,8 @@
-# Architecture — Flok Node Computer
+# Architecture — Agent Computer
+
+Product: **FLOKS Agent Computer Cloud**. One bot, one isolated Agent Computer. See `docs/computers/agent-computer-cloud.md`.
+
+Runloop Devbox is **provider v1** (backend). Fake/DockerDev are test/dev. Kata / extra providers are **L8/L9**, not launch.
 
 ## Separation of concerns
 
@@ -7,31 +11,31 @@ Grok Bot (intelligence, skills, routines, conversation)
         │
         │  Remote MCP / HTTPS
         ▼
-Flok Node Runtime (this package)
+FLOKS Agent Computer Cloud (this package)
   ├─ Identity & pairing
   ├─ Capability tokens (digests only)
-  ├─ Job queue (Postgres outbox + LISTEN/NOTIFY)
+  ├─ Job queue (Postgres outbox + LISTEN/NOTIFY) — L7
   ├─ ComputerService (orchestration)
   ├─ ComputerProvider interface
-  │     ├─ FakeProvider          (unit / contract tests)
+  │     ├─ FakeProvider          (unit / contract tests; not C7/L0 proof)
   │     ├─ DockerDevProvider     (local integration only)
-  │     ├─ RunloopProvider       (production v1 — Devboxes)
-  │     │     filesystem, terminal, private display, in-Devbox browser
-  │     └─ KataProvider          (self-host, Phase 13)
-  ├─ MCP Gateway (eight tools)
-  ├─ Checkpoints → S3-compatible object storage
+  │     ├─ RunloopProvider       (provider v1 — Agent Computer backend)
+  │     │     filesystem, terminal, private display, in-guest Chrome, loopback CDP
+  │     └─ KataProvider          (self-host, L8/L9)
+  ├─ MCP Gateway (exactly eight tools)
+  ├─ Checkpoints → S3-compatible object storage — L4
   └─ Audit metadata (no private content by default)
 ```
 
 ## Why a separate package
 
-The main Flok application (`Floks-main`) remains the public product surface (Roosts, Tape, Grade, Contracts, etc.).  
-This runtime owns the isolated-computer substrate. After Gate G0 it can be imported by Flok without the two codebases having been entangled during development.
+The main Flok application (`Floks-main`) remains the public Flok product surface (Roosts, Tape, Grade, Contracts, etc.).  
+This runtime owns **Agent Computers**. After Gate G0 it can be imported by Flok without the two codebases having been entangled during development. L1–L3 launch does not wait on that mount.
 
 ## Control plane vs compute plane
 
 - **Control plane** (this package): pairing, capabilities, jobs, policies, audit, MCP endpoint.
-- **Compute plane**: one VM (or later microVM) per Node. Filesystem, processes, browser, and the private display live only there. C3B extends `runloop/universal-ubuntu-24.04-x86_64-dnd` so Docker/Node/Python/Git stay available; Chrome and the X stack run as `flok-ui`, not root. Grok remains the intelligence; Runloop is not the agent runtime.
+- **Compute plane**: one VM (or later microVM) per Node — the Agent Computer. Filesystem, processes, browser, and the private display live only there. C3B extends `runloop/universal-ubuntu-24.04-x86_64-dnd` so Docker/Node/Python/Git stay available; Chrome and the X stack run as `flok-ui`, not root. Grok remains the intelligence; Runloop is the computer backend, not the agent runtime. Do not call this “containerized” in customer copy: v1 isolation is VM-backed.
 
 No route or MCP tool may call a concrete provider. Everything goes through `ComputerService` → `ComputerProvider`. The C5 public surface is `POST /mcp` (`docs/computers/MCP.md`).
 
@@ -66,7 +70,13 @@ provider machine unavailable
 Production isolation is a **VM** (Runloop Devboxes, later Kata + Firecracker).  
 Ordinary containers share the host kernel and are not the production security architecture. Docker is useful for local testing and for optional tool containers *inside* a Node, not as the Node boundary itself.
 
-## Nexus-IQ (Phase 14+)
+## Launch vs later
+
+- **L1** uses the existing eight MCP tools, Runloop provider v1, and fail-closed `click_element`.
+- Dashboard is **L2**. Private beta signup is **L3**. Snapshots/recovery **L4**. Safer clicks **L5**. Handoffs **L6**. Quotas/worker **L7**. Extra providers **L8**. Enterprise **L9**.
+- Checkpoints, Kata, and the job queue in the diagram above are target architecture, not launch-blocking.
+
+## Nexus-IQ (Phase 14+, after G0)
 
 Only after Gate G0.  
 Nexus is a WASM/WASI execution kernel; it does **not** secure arbitrary Linux shell or browser activity.  

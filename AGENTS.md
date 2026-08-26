@@ -17,9 +17,9 @@ Violations are stop-the-line. Revert immediately.
 
 1. Current user instruction
 2. This `AGENTS.md`
-3. `AUTHORITY.md` — what the Flok Computer is
-4. `PHASES.md` — current phase + gates
-5. `docs/computers/` — architecture, security, provider contract
+3. `AUTHORITY.md` — what an Agent Computer is (FLOKS Agent Computer Cloud)
+4. `PHASES.md` — current **open** launch phase (L1) + L0–L9 + historical C0–C6 / G0 lock
+5. `docs/computers/agent-computer-cloud.md` then `docs/computers/` — product, architecture, MCP, security, provider contract
 6. `src/lib/computers/` — domain types and ComputerProvider interface
 7. `reference/flok-core/TAKE.md` — curated Flok conventions (read-only)
 
@@ -27,9 +27,10 @@ Violations are stop-the-line. Revert immediately.
 
 Work only on the currently open phase listed in `PHASES.md`.
 
-- Phase 0 / Gate C0: docs + types + interface only (this scaffold).
-- Do not implement FakeProvider body, DockerDev, Runloop, migrations, worker, or MCP server until the corresponding phase is open.
-- Do not enable or import Nexus-IQ, AEON, Graphiti, or any memory plane until Gate G0 is explicitly marked PASSED.
+- **Current open phase: L1 — Launch MVP (one bot, one Agent Computer).** L0 / C7 is CLOSED (PR #17).
+- Historical C0–C6 stay closed. Do not re-open them. Do not start L4+ (C8 snapshots, L5 click_element rewrite, L6 handoffs, quotas, extra providers, Nexus) while L1 is open.
+- Launch MVP does **not** add MCP tools (stay at eight). Do not add Fake AX, fake clicking, takeover, C8/C9 code, or proxy/bot-detection claims.
+- Do not enable or import Nexus-IQ, AEON, Graphiti, or any memory plane until Gate G0 is explicitly marked PASSED. G0 is not an L1–L3 blocker.
 
 ## Hard locks (never relax)
 
@@ -38,7 +39,7 @@ FLOK_NEXUS_IQ_ENABLED=false
 FLOK_GRAPH_MEMORY_ENABLED=false
 ```
 
-Nexus-IQ work begins only after the standalone Flok Computer has passed full end-to-end acceptance (Gate G0).
+Nexus-IQ work begins only after Gate G0 is marked PASSED. Users may join a private beta at L3 before G0.
 
 ## Technology constraints
 
@@ -82,7 +83,8 @@ Do not force-push main. Do not mix Computer PRs with Flok product work.
 
 - Re-scaffold or replace the main Flok application
 - Rename birds / chirps tables or routes
-- Use Docker containers as the production Node isolation boundary
+- Use Docker containers as the production Agent Computer isolation boundary
+- Describe the product as “just Devboxes,” “headless browser orchestration,” or claim residential proxies / bot-detection bypass / production-ready security
 - Trust a Grok Bot-provided Node ID without pairing + capability
 - Store provider secrets inside a Node
 - Use MCP transport sessions as Node identity

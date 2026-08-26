@@ -1,9 +1,155 @@
-# PHASES — Flok Node Runtime
+# PHASES — FLOKS Agent Computer Cloud
 
-Authoritative phase sequence and gates.  
-Work only on the currently open phase. Nexus-IQ / AEON / Graphiti are **forbidden** until Gate G0 is marked PASSED.
+Authoritative **launch** sequence is **L0–L9** below. Work only on the currently open launch phase.
+
+Historical C0–C6 remain the closed engineering record (do not re-open them). Landed C7 is **L0**. Original leftover C7 goals (three concurrent Bots, public VNC takeover) plus C8–C15 map into **L4–L9 / G0** so we do **not** overbuild before a Grok Bot can use one working Agent Computer.
+
+Nexus-IQ / AEON / Graphiti stay **forbidden** until **Gate G0** is marked PASSED.
+
+**Current open phase: L1 — Launch MVP (one bot, one Agent Computer).**  
+**L0 is CLOSED** — Adaptive-Liquidity/floks-pc#17 (`bda72e0`).
+
+Product language: `docs/computers/agent-computer-cloud.md`.  
+Runloop Devbox is **provider v1**, not the product name.
 
 ---
+
+## Launch sequence (L0–L9)
+
+### PHASE L0 — C7 landing / proof lock
+
+**Purpose:** Land the real Grok Bot → MCP → Runloop → Chrome/CDP proof.
+
+**Status:** CLOSED / PASSED (2026-08-26)
+
+**Must include (met):**
+- C7 PR #17 squash-merged after `verify` + `docker-c2` + `merge-gate` + classification replies
+- Live C7 proof: not FakeProvider
+- Exactly eight MCP tools; no new tools
+- `click_element` remains fail-closed
+- CDP loopback-only (`127.0.0.1:9222`); no `--no-sandbox`; no `0.0.0.0`
+- Interactive blueprint `flok-runloop-interactive` (`flok-ui`)
+- Devbox cleanup: live box `dbx_34DcbsIeIV236eUxzxKsR` shut down
+- Known bug logged: MCP fs write-ok / file on disk / MCP read empty
+
+**Gate:** A real Grok Bot calls `computer_observe({ include_accessibility: true })` and receives `accessibility_summary.source === "cdp"` with non-empty nodes from a real Runloop Agent Computer.
+
+**Evidence:** Pair `bird-local` / `flock-local`. Observe returned `source: "cdp"` with 6 nodes; root `RootWebArea` / `FLOKS C3B fixture` with bounds. No screenshot required. No `open_url` required (observe starts Chrome when CDP is down). `capabilities().accessibility` stays `false`.
+
+---
+
+### PHASE L1 — Launch MVP: one bot, one Agent Computer
+
+**Purpose:** Smallest usable product: each Grok Bot can pair to its own working Agent Computer.
+
+**Status:** OPEN
+
+**Required:**
+- Pair-code onboarding + capability token auth
+- One bot → one Agent Computer
+- Runloop provider v1 (`FLOK_MCP_PROVIDER=runloop`, interactive blueprint)
+- status, observe screenshot, observe CDP accessibility
+- `open_url` / wait / safe basic actions
+- terminal/exec
+- file write/read/list/stat (and remaining fs ops)
+- private workspace
+- lifecycle stop/destroy
+- cost/runtime visibility
+- cleanup safety
+- redacted logs
+- simple operator runbook
+
+**Must fix before beta (L3):**
+- MCP fs write-ok / read-empty
+- cleanup/destroy obvious and reliable (MCP stop ≠ Devbox destroy)
+- owner/operator can see active Agent Computers
+- startup instructions simple enough to run without a live walkthrough
+
+**Non-goals:** new MCP tools, Fake AX, fake clicking, takeover, C8/C9 code, proxies, Nexus/AEON/Graphiti, paid tests in required CI.
+
+**Gate:** A real Grok Bot can pair, use its assigned Agent Computer, observe browser state, use files/exec, and the operator can safely stop/destroy the computer.
+
+---
+
+### PHASE L2 — Beta dashboard: Bot Computers / Live Node Console
+
+**Purpose:** First product UI.
+
+**Layout**
+- Left: bot list, paired/unpaired, running/sleeping/stopped, current machine, last action
+- Center: selected Agent Computer, live observe preview, browser status, CDP/accessibility status, workspace, files/terminal summary
+- Right: provider Runloop, capability scopes, session expiry, runtime/cost, pair status, cleanup/destroy, warnings
+- Bottom event log: pair, status, observe, browser, file, exec, fail-closed, cleanup
+
+**Gate:** A non-engineer understands: this bot has this computer, it is running, this is what it sees, these are its permissions, this is how I stop it.
+
+---
+
+### PHASE L3 — Private beta launch
+
+**Purpose:** Let users sign up / join while upgrades continue.
+
+**Required:** controlled onboarding, waitlist or invite codes, pricing/cost warning, usage limits, max active machines, default auto-shutdown, support/debug packet, bug-report template, known-limitations page.
+
+**Must say clearly:** `click_element` not yet supported; proxies/residential egress not included; production scale not proven; no guaranteed bot-detection bypass; background jobs via exec/files; browser computer use is the first lane.
+
+**Gate:** Users can join, connect a bot, get an Agent Computer, run basic browser/files/exec workflows, and report bugs without a live explanation every time.
+
+---
+
+### PHASE L4 — Reliability / recovery
+
+**Purpose:** Agent Computers survive real use. Maps former Phase 8 (C8).
+
+Includes: provider-native snapshots, wake/pause/resume polish, failed-boot recovery, stale-machine cleanup, restore runbook, better errors, retry-safe observe.
+
+**Gate:** A bot can pause/wake/recover without losing its workspace; operators can recover common failures.
+
+---
+
+### PHASE L5 — Safer browser control
+
+**Purpose:** Structured clicks from real CDP/accessibility bounds. Never guessed clicks. Offscreen/subpixel fail-closed. Optional human approval for risky clicks. No FakeProvider proof.
+
+**Gate:** Bot can click real page elements through verified CDP mapping; bad mappings fail closed.
+
+---
+
+### PHASE L6 — Team / workflow layer
+
+**Purpose:** Maps former Phase 9 (C9). Explicit one-file handoff first. No automatic cookie/profile/.env/key sharing. Audit trail. Task-level machine assignment.
+
+**Gate:** One bot can hand a file/result to another without giving away its whole computer.
+
+---
+
+### PHASE L7 — Scale / quotas / billing controls
+
+**Purpose:** Maps former Phase 11. Quotas, max active machines, runtime limits, auto-destroy, cost visibility, worker queue if needed, observability, admin kill switch, provider capacity.
+
+**Gate:** Multiple users/bots without runaway spend or orphan machines.
+
+---
+
+### PHASE L8 — Provider fabric
+
+**Purpose:** Agent Computer stays the product. Runloop remains v1. Later: browser-only, cheaper background worker, microVM, private cloud / bare metal. Do not replace Runloop now.
+
+**Gate:** FLOKS can choose a backend without changing the customer-facing product.
+
+---
+
+### PHASE L9 — Enterprise / private infra
+
+Dedicated hosts, bare-metal-backed microVM fleet, stricter isolation, enterprise audit, custom egress policy, SSO/team permissions later.
+
+**Gate:** Enterprise customer can run Agent Computers with stronger isolation/control.
+
+---
+
+## Historical closed gates (C0–C6)
+
+These stay the evidence record. Do not re-open them to invent launch work.
 
 ## Phase 0 — Change the authoritative contract (this scaffold)
 
@@ -326,7 +472,7 @@ Grok Bot completes a real coding exercise entirely on its Flok Computer (clone �
 - Unpaid FakeProvider tests: full suite green (`npm test` 209 pass / 0 fail), including the pair → mkdir → write → list → read → exec → modify → artifact workflow through MCP tools only
 - Real public Grok Bot coding exercise: pending separate manual proof (same public-HTTPS gate as C5)
 
-**Status:** IMPLEMENTED (unpaid FakeProvider + MCP gate green; real Grok Bot / public URL remains manual and is **not** claimed here; C7/C8/C9 not started; paid Runloop not required and not run)
+**Status:** IMPLEMENTED (unpaid FakeProvider + MCP gate green; real Grok Bot / public URL remains manual and is **not** claimed here). Live C7 CDP AX later landed as **L0** (PR #17). Persistence (C8) and handoffs (C9) remain later launch phases L4 / L6. Paid Runloop was **not** required for unpaid C6.
 
 ### Evidence
 - Branch: `feat/c6-shell-files` → [Adaptive-Liquidity/floks-pc#10](https://github.com/Adaptive-Liquidity/floks-pc/pull/10)
@@ -341,57 +487,92 @@ Grok Bot completes a real coding exercise entirely on its Flok Computer (clone �
 - FakeProvider is in-memory (state resets on restart); persistence is C8
 - `.gitattributes` pins `*.sh` to `eol=lf` so byte-exact script comparisons stay green on Windows checkouts
 
-## Phase 7 — Browser + computer use + human takeover
+## Historical C7 — guest Chrome loopback CDP (landed as L0)
 
-**Goal:** Persistent desktop, accessibility-first actions, single-use VNC takeover URLs.
+**What actually shipped:** real Grok Bot → MCP → Runloop Agent Computer → guest Chrome CDP accessibility observe.
 
-### Gate C7
-Three concurrent Bots (NOEMA / Code / Research) browse independent sites with independent browser profiles.
+This is **not** the original Phase 7 gate (three concurrent Bots + public VNC takeover). Those leftovers are deferred (see mapping below). `click_element` stays fail-closed until **L5**.
+
+### Gate C7 / L0 (closed)
+
+A real Grok Bot calls `computer_observe({ include_accessibility: true })` and receives `accessibility_summary.source === "cdp"` with non-empty nodes from a real Runloop Agent Computer. FakeProvider is **not** proof.
+
+**Status:** CLOSED / PASSED (2026-08-26)
+
+**Evidence**
+- Merge: [Adaptive-Liquidity/floks-pc#17](https://github.com/Adaptive-Liquidity/floks-pc/pull/17) → `bda72e00b67d2667afcdc9fbe1138b6483fb6863`
+- Pair as `bird-local` / `flock-local`
+- Observe returned `source: "cdp"` with 6 nodes; root `RootWebArea` / `FLOKS C3B fixture` with bounds
+- No screenshot required; no `open_url` required (observe may start Chrome when CDP is down)
+- Exactly eight MCP tools; no new tools
+- CDP loopback-only (`127.0.0.1:9222`); no `--no-sandbox`; no `0.0.0.0`
+- Interactive blueprint `flok-runloop-interactive` (`flok-ui`)
+- `capabilities().accessibility` stays `false`
+- Live box `dbx_34DcbsIeIV236eUxzxKsR` shut down after proof
+- Isolation: zero writes under Floks-main
+- Nexus / graph flags remain false
+
+**Known limitations (not L0 blockers; L1 / later)**
+- MCP `computer_fs` write-ok / file on disk / MCP read empty
+- `click_element` fail-closed until L5
+- Takeover / authenticated VNC not implemented
+- In-memory ComputerService store until L4
+- Public HTTPS `POST /mcp` is still an operator/deploy choice
 
 ---
 
-## Phase 8 — Persistence and recovery
+## Original later phases (mapped — not the next work)
 
-**Goal:** Portable workspace checkpoints (tar + zstd) in object storage; recovery path when provider machine disappears.
+Do **not** treat the headings below as the currently open sequence. Launch work is **L1–L9** at the top of this file. Users may join at **L3** while these upgrades continue. Nexus-IQ / AEON / Graphiti stay forbidden until **Gate G0**.
 
-### Gate C8
-Destroy Node VM intentionally → provision replacement → restore latest checkpoint → model-created file survives.
+| Original | Launch mapping | Notes |
+|----------|----------------|-------|
+| C7 leftover: 3 concurrent Bots | After L3 / G0 evidence | Not L1. One bot, one Agent Computer first. |
+| C7 leftover: public VNC takeover | Deferred | Fail-closed. Not launch. |
+| C7 leftover: `click_element` from AX bounds | **L5** | Never guessed clicks. No FakeProvider proof. |
+| C8 persistence / recovery | **L4** | After users can join (L3). Provider-native snapshots first. |
+| C9 explicit handoffs | **L6** | One-file handoff first. No cookie/profile/.env sharing. |
+| C10 network + CredentialBroker | After L3 | Do not claim residential proxies or bot-detection bypass. |
+| C11 worker / quotas / observability | **L7** | Needed before runaway spend. |
+| G0 standalone acceptance | Nexus lock | **Not** an L3 private-beta blocker. |
+| Phase 13 Kata / Firecracker | **L8 / L9** | Keep Runloop as provider v1. |
+| Phase 14–15 Nexus / AEON / Graphiti | After G0 only | Hard flags stay false. |
 
----
+### Former Phase 8 — Persistence and recovery → L4
 
-## Phase 9 — Explicit Node handoffs
+**Goal:** Agent Computers survive real use. Provider-native snapshots, wake/pause/resume polish, failed-boot recovery, stale-machine cleanup, restore runbook, retry-safe observe.
 
-**Goal:** Private by default, explicit sharing by design. Never auto-transfer browser profiles, cookies, keys, .env, capability tokens.
+**Historical Gate C8:** Destroy Node VM intentionally → provision replacement → restore latest checkpoint → model-created file survives.
 
-### Gate C9
-Code shares one file with NOEMA; NOEMA receives only that file and still cannot browse Code’s filesystem.
+Do not start C8/L4 code while L1 is open.
 
----
+### Former Phase 9 — Explicit Node handoffs → L6
 
-## Phase 10 — Network and credential security
+**Goal:** Private by default, explicit sharing by design. Never auto-transfer browser profiles, cookies, keys, `.env`, capability tokens.
+
+**Historical Gate C9:** Code shares one file with NOEMA; NOEMA receives only that file and still cannot browse Code’s filesystem.
+
+`handoff_send` / `handoff_receive` stay listed as two of the eight MCP tools and remain `PHASE_NOT_STARTED` until L6. Launch MVP does **not** add tools.
+
+### Former Phase 10 — Network and credential security
 
 **Goal:** CredentialBroker (service-specific, not general MITM), network policy defaults (inbound deny, metadata deny, cross-Node deny).
 
-### Gate C10
-Secret scanning proves provider/API credentials never appear in Node environment, workspace, terminal logs, MCP logs, audit table, or Pulse.
+**Historical Gate C10:** Secret scanning proves provider/API credentials never appear in Node environment, workspace, terminal logs, MCP logs, audit table, or Pulse.
 
----
+Do **not** claim residential proxies, custom egress as a current product, or “never trips bot detection.”
 
-## Phase 11 — Worker, quotas and observability
+### Former Phase 11 — Worker, quotas and observability → L7
 
-**Goal:** `services/compute-worker` with Postgres queue + LISTEN/NOTIFY + SKIP LOCKED. Quotas. OpenTelemetry traces from MCP → provider.
+**Goal:** Quotas, max active machines, runtime limits, auto-destroy, cost visibility, worker queue if needed, observability, admin kill switch, provider capacity.
 
-### Gate C11
-Complete trace for one Grok action can be followed from MCP request to provider result without containing secrets or private terminal contents.
+**Historical Gate C11:** Complete trace for one Grok action from MCP request to provider result without secrets or private terminal contents.
 
----
+### Gate G0 — Nexus lock (unchanged)
 
-## Phase 12 — FULL SYSTEM ACCEPTANCE GATE
+**Nexus-IQ still disabled.** G0 is the lock before Nexus / AEON / Graphiti may enter the architecture. It is **not** a blocker for L1 launch MVP or L3 private beta.
 
-**Nexus-IQ still disabled.**
-
-### Gate G0 — “Standalone Flok Computer is working”
-All of the following must PASS:
+All of the following must PASS before G0:
 
 - Real Grok Bot integration
 - 3 isolated Nodes concurrent
@@ -404,34 +585,35 @@ All of the following must PASS:
 
 **Only after G0 is green may Nexus-IQ enter the architecture.**
 
----
+```
+FLOK_NEXUS_IQ_ENABLED=false
+FLOK_GRAPH_MEMORY_ENABLED=false
+```
 
-## Phase 13 — Self-hosted high-performance compute (optional optimization)
+### Former Phase 13 — Self-hosted compute → L8 / L9
 
-KataProvider + containerd + Kata 4 + Firecracker.  
-Provider parity tests against Fake / DockerDev / Runloop / Kata.
+KataProvider + containerd + Kata 4 + Firecracker, then enterprise private cloud / dedicated hosts / bare-metal-backed microVMs.
 
----
+Do **not** replace Runloop now. Runloop Devbox is the working **provider v1**. The Agent Computer stays the customer-facing product.
 
-## Phase 14 — Nexus-IQ integration (first allowed touch)
+### Former Phase 14 — Nexus-IQ integration (first allowed touch, after G0)
 
-14A — Nexus core only (`NEXUS_AEON_ENABLED=false`)  
-14B — Proof Capsules  
-14C — AEON-IQ (shared governed plane)  
+14A — Nexus core only (`NEXUS_AEON_ENABLED=false`)
+14B — Proof Capsules
+14C — AEON-IQ (shared governed plane)
 14D — Attestation (pin verifying key)
 
 Still: Grok → Flok MCP → ComputerService. Never expose nexus-mcp directly.
 
----
+### Former Phase 15 — Temporal graph memory (after G0)
 
-## Phase 15 — Temporal graph memory
-
-Graphiti under AEON-IQ (not a competing brain).  
-L0–L6 memory scopes. Asynchronous outbox ingestion. Rank/fuse retrieval.
+Graphiti under AEON-IQ (not a competing brain). Memory scopes, asynchronous outbox ingestion, rank/fuse retrieval.
 
 ---
 
-## Final MCP surface (after full integration)
+## MCP surface
+
+Launch (L1–L3) keeps **exactly eight tools**. Do not add tools for MVP.
 
 ```
 computer_pair
@@ -440,16 +622,22 @@ computer_exec
 computer_fs
 computer_observe
 computer_act
-handoff_send
-handoff_receive
-memory_context
-memory_remember
+handoff_send          ← PHASE_NOT_STARTED until L6
+handoff_receive       ← PHASE_NOT_STARTED until L6
 ```
 
-Infrastructure tools (runloop_*, firecracker_*, nexus_*, graphiti_*, postgres_*) remain internal.
+`memory_context` / `memory_remember` exist only after G0. Infrastructure tools (`runloop_*`, `firecracker_*`, `nexus_*`, `graphiti_*`, `postgres_*`) remain internal.
 
 ---
 
-## Definition of done (entire build)
+## Launch definition of done (L1–L3)
+
+FLOKS Agent Computer Cloud: a user can pair a Grok Bot to one isolated Agent Computer (Runloop provider v1), observe real Chrome (screenshot + CDP accessibility), use files and exec, see cost/runtime, and an operator can stop/destroy the machine. Users can join a private beta while later upgrades (snapshots, structured click, handoffs, quotas, extra providers) continue.
+
+Do not claim: residential proxies, bot-detection bypass, full root / uncensored terminal, unthrottled infra, production-ready security, or that `click_element` works.
+
+---
+
+## Full-system definition of done (G0, not launch)
 
 A user can create NOEMA / Code / Research / Design inside Grok Bot and receive four different isolated computers, filesystems, browser profiles, authenticated sessions, and working histories, while still allowing explicit handoffs, persistence, human takeover, pause/resume, disaster recovery, scoped credentials, audit, bounded graph memory, Nexus-secured WASM tools, AEON-IQ recall, and Proof Capsules — without Flok replacing Grok Bot itself.

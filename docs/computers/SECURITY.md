@@ -1,4 +1,6 @@
-# Security — Flok Node Computer
+# Security — Agent Computer
+
+This is fail-closed **launch** security, not a claim of production-ready multi-tenant security. Do not claim residential proxies, bot-detection bypass, full root, or an uncensored terminal.
 
 ## Core principles
 
@@ -85,7 +87,7 @@ Devbox remains root so Docker-in-Docker still works. `--no-sandbox` is not
 used. Browser profile `/home/user/flok/.browser/profile` is `700` and owned by
 `flok-ui`. x11vnc/noVNC bind `127.0.0.1` only.
 
-Later (C7): single-use, short-lived signed URL. Never exposes provider credentials.
+Authenticated takeover (single-use, short-lived signed URL) is **deferred**, not L0/L1. Never exposes provider credentials. C7/L0 landed loopback CDP observe only; it did **not** land VNC.
 
 ## Provider secrets
 

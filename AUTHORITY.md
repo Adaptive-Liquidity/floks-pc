@@ -3,22 +3,23 @@
 This file is the product and architecture authority **for the isolated computer system**.  
 It deliberately does **not** edit the main Flok `FINAL_DESIGN.md` or `BUILD.md`. Those remain the authority for the public Flok product. After Gate G0 the two contracts will be reconciled.
 
+Launch sequence and customer-facing object: `PHASES.md` (L0–L9) and `docs/computers/agent-computer-cloud.md`.
+
 ## 1. What this package is
 
-**Flok Computer** = a genuine isolated computer that belongs to exactly one Flok Node (one Grok Bot).
+**FLOKS Agent Computer Cloud** gives every AI agent its own isolated computer: real Chrome, private files, terminal execution, screenshot observe, CDP accessibility, scoped capability access, lifecycle control, and fail-closed security.
 
-It provides:
+**Agent Computer** (also Isolated Agent Computer, Bot Computer, historically Flok Computer) = a provider-backed machine assigned to **exactly one** Flok Node (one Grok Bot) through pair-code onboarding and scoped capability tokens.
 
-- Persistent filesystem and workspace
-- Terminal / process execution
-- Browser + computer-use + accessibility
-- Human desktop takeover (VNC)
-- Checkpoint / restore
-- Explicit handoffs between Nodes
-- Capability-based security
-- Audit metadata (no private content by default)
+**Runloop Devbox** = backend **provider v1**. It is infrastructure, not the product name. Do not describe the product as “just Devboxes,” “headless browser orchestration,” or “containerized.”
 
-**Native Computer** = xAI’s user-level shared machine. All of a user’s Grok Bots share files, browser sessions, and logins on the Native Computer. Flok Computers exist precisely so that private Node state does not have to live there.
+**Now (L0 proven / L1 launch):** pair + capability, one bot → one Agent Computer, Runloop v1, status, screenshot observe, CDP accessibility observe, `open_url` / wait / basic act, exec, files, private workspace, stop/destroy, fail-closed `click_element`.
+
+**Later (after users can join):** dashboard (L2), private beta signup (L3), snapshots / recovery (L4), AX-bounds `click_element` (L5), one-file handoff (L6), quotas (L7), extra providers (L8), enterprise / private infra (L9), authenticated VNC takeover.
+
+Do not claim residential proxies, bot-detection bypass, full root / uncensored terminal, unthrottled infra, or production-ready security.
+
+**Native Computer** = xAI’s user-level shared machine. All of a user’s Grok Bots share files, browser sessions, and logins on the Native Computer. Agent Computers exist precisely so that private Node state does not have to live there.
 
 ## 2. Hard product rules (preserved from Flok)
 
@@ -44,7 +45,7 @@ It provides:
                            │
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                   FLOK NODE RUNTIME                          │
+│           FLOKS AGENT COMPUTER CLOUD (this package)          │
 │                                                              │
 │  Public product surface         Private control plane        │
 │  ─────────────────────          ─────────────────────         │
@@ -67,7 +68,7 @@ It provides:
            │                   │                    │
            ▼                   ▼                    ▼
      Fake / DockerDev       Runloop Devbox    Kata / Firecracker
-          DEV              PRODUCTION V1       OWN COMPUTE
+          DEV              PROVIDER V1         L8 / L9 later
                                │
                          one VM per Node
                                │
@@ -90,7 +91,10 @@ Only **after Gate G0** may Nexus-IQ, AEON-IQ, and Graphiti enter the architectur
 | Flok            | Product + one registered crew at `@handle`         |
 | Cluster         | Named subgroup, max 12 live tiles                  |
 | Node            | One Grok Bot (internal ID remains `birds.id`)      |
-| Flok Computer   | Isolated computer belonging to one Node            |
+| Agent Computer  | Isolated computer belonging to one Node (product object) |
+| Bot Computer    | Same object, operator/UI language                    |
+| Flok Computer   | Historical alias for Agent Computer                |
+| Runloop Devbox  | Provider v1 backend for an Agent Computer          |
 | Native Computer | xAI’s shared user-level machine                    |
 | Pulse           | One public-safe status line                        |
 | Capability      | Scoped, digests-only token that authorizes a Bot   |
@@ -136,4 +140,4 @@ Flok will supply `bird_id` / `flock_id` and mount the MCP endpoint. Until that d
 
 ## 8. Divergence note
 
-Main Flok `FINAL_DESIGN.md` currently states that all Nodes share one computer and that per-Bot isolation is theater. That statement is true of the **Native Computer**. This package intentionally creates a second, real isolation boundary. The main product contracts will be updated after Gate G0 demonstrates that the Flok Computer works.
+Main Flok `FINAL_DESIGN.md` currently states that all Nodes share one computer and that per-Bot isolation is theater. That statement is true of the **Native Computer**. This package intentionally creates a second, real isolation boundary (one bot, one Agent Computer). The main product contracts will be updated after Gate G0. G0 is the Nexus lock; it is not a blocker for L1–L3 launch.

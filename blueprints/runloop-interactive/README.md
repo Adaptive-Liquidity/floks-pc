@@ -1,7 +1,9 @@
 # FLOKS interactive Runloop Blueprint (C3B)
 
-Canonical personal-computer image for a FLOKS Node. The browser runs **inside**
-the Devbox. Browserbase and Kernel are not used.
+Canonical **Agent Computer** image (provider v1 backend). The product is
+FLOKS Agent Computer Cloud, not “a Devbox experiment.” Chrome runs **inside**
+the guest. Browserbase and Kernel are not used. Generic DnD Ubuntu is
+compute-only and is **not** an Agent Computer.
 
 ## Base
 

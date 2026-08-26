@@ -2,9 +2,10 @@
 
 **Repository:** `Adaptive-Liquidity/floks-pc`  
 **Working project:** `flok-node-runtime` / `floks-pc` only  
+**Product:** FLOKS Agent Computer Cloud (one bot, one Agent Computer; Runloop is provider v1)  
 **Main Flok source:** `/workspace/artifacts/Floks-main/` or `/home/workdir/artifacts/Floks-main/` — READ ONLY  
-**Current phase:** Determined exclusively by `PHASES.md`  
-**Hard gate:** Nexus-IQ / AEON / Graphiti remain disabled until Gate G0 is explicitly PASSED.
+**Current phase:** Determined exclusively by `PHASES.md` — **open: L1 Launch MVP**. L0/C7 is CLOSED (PR #17).  
+**Hard gate:** Nexus-IQ / AEON / Graphiti remain disabled until Gate G0 is explicitly PASSED. G0 is not an L1–L3 launch blocker.
 
 This document defines the mandatory operating procedure for Grok Build, subagents, worktrees, commits, CI, PR reviews, review-comment verification, fixes, gate closure, and merges.
 
