@@ -29,7 +29,7 @@ Runloop Devbox is **provider v1**, not the product name.
 - `click_element` remains fail-closed
 - CDP loopback-only (`127.0.0.1:9222`); no `--no-sandbox`; no `0.0.0.0`
 - Interactive blueprint `flok-runloop-interactive` (`flok-ui`)
-- Devbox cleanup: live box `dbx_34DcbsIeIV236eUxzxKsR` shut down
+- L0 cleanup proof: Devbox shutdown was verified through the Runloop provider/API. Provider ID redacted.
 - Known bug logged: MCP fs write-ok / file on disk / MCP read empty
 
 **Gate:** A real Grok Bot calls `computer_observe({ include_accessibility: true })` and receives `accessibility_summary.source === "cdp"` with non-empty nodes from a real Runloop Agent Computer.
@@ -57,18 +57,24 @@ Runloop Devbox is **provider v1**, not the product name.
 - cost/runtime visibility
 - redacted logs
 - simple operator runbook
-- **Obvious cleanup/destroy** — see paid Runloop shutdown runbook in `docs/computers/agent-computer-cloud.md`. MCP **cannot** destroy a Devbox today (no stop/destroy tool; do not add one for L1). `Ctrl+C` / stopping MCP does **not** shut the machine down.
+- **Durable control-plane records or provider reconciliation** before private beta. In-memory `ComputerService` is local/dev only. If MCP restarts, FLOKS must not forget active Agent Computers. Active-machine caps require durable records or provider reconciliation. Provider workspace snapshots remain L4.
+- **Identifying Devbox metadata** so cleanup can target only this run: `floks_run_id`, workspace/user, `bird_id`, `flock_id`, `purpose=agent-computer`.
+- **Obvious cleanup/destroy** — see paid Runloop shutdown runbook in `docs/computers/agent-computer-cloud.md`. MCP **cannot** destroy a Devbox today (no stop/destroy tool; do not add one for L1). `Ctrl+C` / stopping MCP does **not** shut the machine down. Only shut down the Devbox created by this FLOKS run.
+- **Two MCP exposure paths** — loopback `127.0.0.1` is local/operator smoke only. A remote Grok Bot needs authenticated HTTPS. See `docs/computers/agent-computer-cloud.md`.
 
 **Must fix before beta (L3):**
 - MCP fs write-ok / read-empty
-- Operator can list and shutdown/destroy every paid Agent Computer they started (Runloop API runbook, not process exit)
+- Persist or reconcile ComputerRecord / pair / capability / active-machine accounting (in-memory is not beta)
+- Operator can shut down **only** the Devbox created by this FLOKS run (not the whole Runloop account)
 - Interactive blueprint fail-closed before a paid computer is accepted
 - owner/operator can see active Agent Computers
 - startup instructions simple enough to run without a live walkthrough
 
+Before L3 private beta, FLOKS must persist or reconcile ComputerRecord, providerRef, bird_id, flock_id, owner/workspace, pair-code digest state, capability digest/scope/expiry/revocation state, and active-machine accounting. Raw capability tokens are never stored. Provider workspace snapshots remain L4.
+
 **Non-goals:** new MCP tools, Fake AX, fake clicking, takeover, C8/C9 code, proxies, Nexus/AEON/Graphiti, paid tests in required CI.
 
-**Gate:** A real Grok Bot can pair, use its assigned **interactive** Agent Computer, observe browser state, use files/exec, and the operator can **safely stop/destroy the Runloop Devbox** using the documented shutdown path (not MCP, not `Ctrl+C`).
+**Gate:** A real Grok Bot can pair (via authenticated HTTPS, not `127.0.0.1`), use its assigned **interactive** Agent Computer, observe browser state, use files/exec, and the operator can **safely stop/destroy only this run’s Runloop Devbox** using the documented shutdown path (not MCP, not `Ctrl+C`, not a bulk account list). Local/dev may still use in-memory ComputerService; L3 may not.
 
 ---
 
@@ -94,9 +100,11 @@ Runloop Devbox is **provider v1**, not the product name.
 
 - controlled onboarding: waitlist **or** manual invite / approval
 - visible pricing / cost warning for running machines
-- max **active** Agent Computers **per beta user** (a small hard cap, operator-enforced is enough)
+- max **active** Agent Computers **per beta user** (a small hard cap). Caps require **durable** computer/pair/capability records or provider reconciliation — in-memory `ComputerService` is **not** acceptable for private beta
 - default **auto-shutdown** (keep-alive / TTL so an abandoned box dies)
 - support/debug packet, bug-report template, known-limitations page
+
+In-memory ComputerService is acceptable for local/dev only. It is not acceptable for private beta. If MCP restarts, FLOKS must not forget active Agent Computers.
 
 Do **not** build L7 here: no billing ledger, no worker queue, no OpenTelemetry platform, no admin kill-switch fleet, no provider-capacity scheduler. Those are **L7**.
 
@@ -108,7 +116,7 @@ Do **not** build L7 here: no billing ledger, no worker queue, no OpenTelemetry p
 
 ### PHASE L4 — Reliability / recovery
 
-**Purpose:** Agent Computers survive real use. Maps former Phase 8 (C8).
+**Purpose:** Agent Computers survive real use. Maps former Phase 8 (C8). **Provider workspace snapshots** (pause/wake/restore of guest disk), not control-plane ComputerRecord/pair/capability persistence — that must already exist before L3.
 
 Includes: provider-native snapshots, wake/pause/resume polish, failed-boot recovery, stale-machine cleanup, restore runbook, better errors, retry-safe observe.
 
@@ -521,7 +529,7 @@ A real Grok Bot calls `computer_observe({ include_accessibility: true })` and re
 - CDP loopback-only (`127.0.0.1:9222`); no `--no-sandbox`; no `0.0.0.0`
 - Interactive blueprint `flok-runloop-interactive` (`flok-ui`)
 - `capabilities().accessibility` stays `false`
-- Live box `dbx_34DcbsIeIV236eUxzxKsR` shut down after proof
+- L0 cleanup proof: Devbox shutdown was verified through the Runloop provider/API. Provider ID redacted.
 - Isolation: zero writes under Floks-main
 - Nexus / graph flags remain false
 
@@ -529,8 +537,8 @@ A real Grok Bot calls `computer_observe({ include_accessibility: true })` and re
 - MCP `computer_fs` write-ok / file on disk / MCP read empty
 - `click_element` fail-closed until L5
 - Takeover / authenticated VNC not implemented
-- In-memory ComputerService store until L4
-- Public HTTPS `POST /mcp` is still an operator/deploy choice
+- In-memory ComputerService is acceptable for local/dev only. It is **not** acceptable for private beta. Persist or reconcile control-plane records before L3. Provider workspace snapshots remain L4.
+- `127.0.0.1` is not a real remote Grok Bot endpoint. A remote Grok Bot needs an authenticated HTTPS endpoint that forwards to the MCP server and requires `FLOK_MCP_AUTH_TOKEN`.
 
 ---
 

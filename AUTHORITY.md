@@ -13,9 +13,9 @@ Launch sequence and customer-facing object: `PHASES.md` (L0–L9) and `docs/comp
 
 **Runloop Devbox** = backend **provider v1**. It is infrastructure, not the product name. Do not describe the product as “just Devboxes,” “headless browser orchestration,” or “containerized.”
 
-**Now (L0 proven / L1 launch):** pair + capability, one bot → one Agent Computer, Runloop v1, status, screenshot observe, CDP accessibility observe, `open_url` / wait / basic act, exec, files, private workspace, stop/destroy, fail-closed `click_element`.
+**Now (L0 proven / L1 launch):** pair + capability, one bot → one Agent Computer, Runloop v1, status, screenshot observe, CDP accessibility observe, `open_url` / wait / basic act, exec, files, private workspace, fail-closed `click_element`. In-memory ComputerService is local/dev only; durable computer/pair/capability records (or provider reconciliation) must exist before L3. Workspace snapshots remain L4.
 
-**Later (after users can join):** dashboard (L2), private beta signup with **L3 safety caps** (invite, per-user active-machine cap, default auto-shutdown, cost warning), snapshots / recovery (L4), AX-bounds `click_element` (L5), one-file handoff (L6), **real quotas/billing (L7)**, extra providers (L8), enterprise / private infra (L9), authenticated VNC takeover.
+**Later (after users can join):** dashboard (L2), private beta signup with **L3 safety caps** (invite, per-user active-machine cap, default auto-shutdown, cost warning — caps need durable records), provider workspace snapshots / recovery (L4), AX-bounds `click_element` (L5), one-file handoff (L6), **real quotas/billing (L7)**, extra providers (L8), enterprise / private infra (L9), authenticated VNC takeover.
 
 Do not claim residential proxies, bot-detection bypass, full root / uncensored terminal, unthrottled infra, or production-ready security.
 

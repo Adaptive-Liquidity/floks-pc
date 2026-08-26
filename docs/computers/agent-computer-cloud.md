@@ -47,54 +47,74 @@ L9  Enterprise / private infra
 
 Users may join at L3 with **minimal safety caps** (invite, per-user active-machine cap, default auto-shutdown, visible cost). Snapshots, click_element, handoffs, **real quotas/billing (L7)**, and extra providers ship after that. Nexus-IQ / AEON / Graphiti remain forbidden until Gate G0 in `PHASES.md`. G0 is the pre-Nexus acceptance gate; it is not defined by Nexus/AEON features.
 
-L1 operator start (owner-approved paid Runloop; not CI). **Do not omit the interactive blueprint.**
+L1 MCP has **two** start paths. Default listen host is loopback. Do not omit the interactive blueprint.
+
+**A. Local/operator smoke test** — `FLOK_MCP_LISTEN_HOST=127.0.0.1` (the default). Local-only. A remote Grok Bot **cannot** connect. Use this for local curl or a local connector only.
 
 ```bash
 FLOK_MCP_COMPUTERS_ENABLED=1 \
 FLOK_MCP_PROVIDER=runloop \
 FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive \
+FLOK_MCP_LISTEN_HOST=127.0.0.1 \
 FLOK_MCP_BOOTSTRAP=1 \
 FLOK_MCP_BOOTSTRAP_BIRD_ID=bird-local \
 FLOK_MCP_BOOTSTRAP_FLOCK_ID=flock-local \
 npm run start:mcp
 ```
 
-Pair with those exact identities. Then **shut the Devbox down** using the runbook below. Stopping MCP is not shutdown.
+**B. Real remote Grok Bot test** — requires an **authenticated HTTPS** tunnel or reverse proxy in front of the MCP server, `FLOK_MCP_AUTH_TOKEN` set, and an external MCP URL that is HTTPS. Do not expose unauthenticated public MCP. Do not imply `127.0.0.1` works for a remote Grok Bot. MCP runs on the operator host (not inside the Devbox); use an operator HTTPS tunnel/proxy. Do not pick a single vendor here.
+
+```bash
+FLOK_MCP_COMPUTERS_ENABLED=1 \
+FLOK_MCP_PROVIDER=runloop \
+FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive \
+FLOK_MCP_AUTH_TOKEN="<wrapper-bearer>" \
+FLOK_MCP_BASE_URL="https://<operator-https-host>/mcp" \
+FLOK_MCP_BOOTSTRAP=1 \
+FLOK_MCP_BOOTSTRAP_BIRD_ID=bird-local \
+FLOK_MCP_BOOTSTRAP_FLOCK_ID=flock-local \
+npm run start:mcp
+```
+
+Point the Grok Bot MCP connector at that HTTPS URL and send `Authorization: Bearer <FLOK_MCP_AUTH_TOKEN>`. Binding a non-loopback listen host also requires `FLOK_MCP_AUTH_TOKEN`.
+
+**127.0.0.1 is not a real remote Grok Bot endpoint. A remote Grok Bot needs an authenticated HTTPS endpoint that forwards to the MCP server and requires FLOK_MCP_AUTH_TOKEN.**
+
+Pair with the bootstrap identities. Then **shut down only the Devbox created by this run** using the runbook below. Stopping MCP is not shutdown.
+
+### Control-plane persistence (before L3)
+
+In-memory `ComputerService` is acceptable for **local/dev only**. It is **not** acceptable for private beta. If MCP restarts, FLOKS must not forget active Agent Computers. Active-machine caps require durable records or provider reconciliation. Durable **provider workspace snapshots** remain **L4**. Durable computer/pair/capability records must be **L1/L3**.
+
+Before L3 private beta, FLOKS must persist or reconcile ComputerRecord, providerRef, bird_id, flock_id, owner/workspace, pair-code digest state, capability digest/scope/expiry/revocation state, and active-machine accounting. Raw capability tokens are never stored. Provider workspace snapshots remain L4.
 
 ### Paid Runloop shutdown / destroy runbook
 
-**MCP cannot destroy a Devbox.** The eight MCP tools do not call `ComputerService.stop()` or `transition(..., "deleted")`. `computer_status` returns only `state` / `last_active_at` — never a `dbx_` id. Do **not** add a ninth MCP tool for L1.
+**MCP cannot destroy a Devbox.** The eight MCP tools do not call `ComputerService.stop()` or `transition(..., "deleted")`. `computer_status` returns only `state` / `last_active_at` — never a provider id. Do **not** add a ninth MCP tool for L1. Do not publish real provider IDs.
 
-**`Ctrl+C`, SIGTERM, and stopping `npm run start:mcp` do not destroy the Devbox.** The in-memory service and provider session are discarded. The billable machine stays up until you shut it down, or until keep-alive expires. Keep-alive (default 900s, `FLOK_RUNLOOP_KEEP_ALIVE_SECONDS` 60–3600) is a **timeout fallback**, not the cleanup path.
+**`Ctrl+C`, SIGTERM, and stopping `npm run start:mcp` do not destroy the Devbox.** Keep-alive (default 900s, `FLOK_RUNLOOP_KEEP_ALIVE_SECONDS` 60–3600) is a **timeout fallback**, not the cleanup path.
 
-Safe operator procedure (control-plane API; key stays in your shell):
+**Only shut down the Devbox created by this FLOKS run. Never bulk-shutdown all Devboxes returned by the Runloop account.**
+
+Safe selection (control-plane API; key stays in your shell):
 
 1. Keep `RUNLOOP_API_KEY` in the operator environment only. Never commit it, never paste it into chat/PRs/logs, never put it in the guest.
-2. As soon as a box exists, **list and record every Devbox id** (`dbx_…`). Bootstrap stdout `computer=` is the internal ComputerService id, **not** the Runloop id.
+2. **Prefer the captured `providerRef` from this run’s creation response or local operator log.** Bootstrap stdout `computer=` is the internal ComputerService id, **not** the Runloop id. Do not paste real provider IDs into docs or PRs.
+3. If you do not have that id, filter the account list by FLOKS metadata/name and creation time (`purpose=agent-computer`, `bird_id`, `flock_id`, workspace/user, `floks_run_id`). An unfiltered `GET /v1/devboxes` is **not** a shutdown list.
+4. If more than one candidate matches, **stop and manually verify**. If unsure, **do not shut down anything**. Never shut down unrelated Runloop workloads.
 
 ```bash
-curl -sS -H "Authorization: Bearer ${RUNLOOP_API_KEY}" \
-  https://api.runloop.ai/v1/devboxes
-```
-
-3. Shutdown each recorded id. This permanently stops the Devbox (SDK `devboxes.shutdown`).
-
-```bash
+# Shutdown only the captured id from THIS run (placeholder, not a real id).
 curl -sS -X POST \
   -H "Authorization: Bearer ${RUNLOOP_API_KEY}" \
-  "https://api.runloop.ai/v1/devboxes/dbx_REPLACE/shutdown"
+  "https://api.runloop.ai/v1/devboxes/dbx_REDACTED/shutdown"
 ```
 
-4. Verify. Expect `status` `shutdown`, or the id gone from the running list. Repeat until no unexpected running FLOKS boxes remain.
+5. Verify that **this** id is `shutdown`. Do not sweep the rest of the account.
 
-```bash
-curl -sS -H "Authorization: Bearer ${RUNLOOP_API_KEY}" \
-  "https://api.runloop.ai/v1/devboxes/dbx_REPLACE"
-```
+**L1 implementation requirement:** FLOKS-created Runloop Devboxes must carry identifying metadata such as `floks_run_id`, workspace/user, `bird_id`, `flock_id`, and `purpose=agent-computer` so cleanup and reconciliation can target only owned machines.
 
-Do not leave boxes for keep-alive to expire as the primary cleanup. Do not treat FakeProvider as cleanup proof.
-
-**L1 before beta:** an operator who did not write this repo must be able to list and shutdown every paid Agent Computer they started. L2 may later put a destroy button on the dashboard that calls the same control-plane `destroy`. Until then, this API is the path.
+**L1 before beta:** an operator who did not write this repo must be able to shut down **this run’s** Agent Computer without touching other workloads. L2 may later put a destroy button on the dashboard that calls the same control-plane `destroy` for the selected computer only.
 
 ### L1 interactive blueprint validation
 
@@ -126,10 +146,11 @@ Required: `FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive` or an equivalent **o
 | Private files (stat/list/read/write/mkdir/move/copy/delete) | Implemented; **MCP fs write-ok / read-empty is a known bug** (fix in L1). |
 | Lifecycle stop/destroy | Control-plane `ComputerService.stop` / `destroy` exist. **MCP cannot invoke them.** Operator uses the Runloop shutdown API (this doc). L1 must make that obvious before beta. |
 | Fail-closed `click_element` | Current. Not a launch blocker. Real AX-bounds click is L5. |
-| Cleanup / Devbox shutdown | Proven on the L0 live box (`dbx_34DcbsIeIV236eUxzxKsR`) via provider shutdown — **not** via MCP or `Ctrl+C`. |
+| Cleanup / Devbox shutdown | L0 cleanup proof: Devbox shutdown was verified through the Runloop provider/API. Provider ID redacted. Not via MCP or `Ctrl+C`. Never bulk-shutdown the account. |
+| Durable ComputerRecord / pair / capability / active-machine accounting | **Required before L3.** In-memory is local/dev only. Raw capability tokens are never stored. |
+| Provider workspace snapshots | **L4.** Not a substitute for control-plane records. |
 | Takeover / public VNC | Fail-closed. Not launch. |
 | Handoffs | `PHASE_NOT_STARTED` (L6). Still listed as two of the eight tools. |
-| Snapshots / pause-wake polish | L4. |
 | Dashboard / cost / pair UI | L2. |
 | Sign-up / invite / L3 safety caps | L3: per-beta-user active-machine cap, default auto-shutdown, visible cost warning, manual invite. |
 | Real quotas / billing / observability | **L7** (not L3). |
@@ -140,21 +161,21 @@ Required: `FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive` or an equivalent **o
 
 **L0 (closed).** A real Grok Bot called `computer_observe({ include_accessibility: true })` and received `accessibility_summary.source === "cdp"` with non-empty nodes from a real Runloop Agent Computer. Evidence: Adaptive-Liquidity/floks-pc#17 squash `bda72e0` (2026-08-26). Pair as `bird-local` / `flock-local`. No FakeProvider. No new MCP tools.
 
-**L1.** A real Grok Bot can pair to an **interactive** Agent Computer (`flok-runloop-interactive` or equivalent; generic DnD rejected), observe browser state, use files/exec, and the operator can shut the Devbox down with the Runloop API runbook (MCP cannot destroy; `Ctrl+C` does not).
+**L1.** A real Grok Bot can pair to an **interactive** Agent Computer (`flok-runloop-interactive` or equivalent; generic DnD rejected), observe browser state, use files/exec, and the operator can shut down **this run’s** Devbox with the Runloop API runbook (MCP cannot destroy; `Ctrl+C` does not). `127.0.0.1` is local smoke only; a remote Grok Bot needs authenticated HTTPS + `FLOK_MCP_AUTH_TOKEN`.
 
 **L2.** A non-engineer can see: this bot has this computer, it is running, this is what it sees, these are its permissions, this is how I stop it.
 
-**L3.** Users can join via invite/approval, connect a bot, get an Agent Computer, run basic browser/files/exec workflows, see a cost warning, stay under a per-user active-machine cap with default auto-shutdown, and report bugs without a live walkthrough every time.
+**L3.** Users can join via invite/approval, connect a bot, get an Agent Computer, run basic browser/files/exec workflows, see a cost warning, stay under a per-user active-machine cap with default auto-shutdown, and report bugs without a live walkthrough every time. Control-plane records are durable (or reconciled with the provider); in-memory ComputerService is not beta.
 
 ## 6. Known limitations
 
 - `click_element` is fail-closed until L5. Do not treat FakeProvider trees as proof.
 - `capabilities().accessibility` remains `false` until an explicit later lift.
 - MCP `computer_fs`: write can succeed and the file exist on disk while a following MCP read returns empty. Separate from C7 AX. **L1 blocker.**
-- In-memory ComputerService store until L4.
+- In-memory `ComputerService` is acceptable for local/dev only. It is **not** acceptable for private beta. Persist or reconcile control-plane records before L3. Provider workspace snapshots remain L4.
 - Handoffs are not implemented.
 - Takeover / authenticated VNC is not implemented.
-- Public HTTPS `POST /mcp` is still an operator/deploy choice, not a claim that FLOKS hosts a production cloud.
+- Public HTTPS `POST /mcp` is an operator tunnel/proxy choice, not a claim that FLOKS hosts a production cloud. **127.0.0.1 is not a real remote Grok Bot endpoint. A remote Grok Bot needs an authenticated HTTPS endpoint that forwards to the MCP server and requires FLOK_MCP_AUTH_TOKEN.**
 - Interactive Agent Computers need `FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive` (or equivalent validated stack). Generic DnD Ubuntu has no `flok-ui` and is not an Agent Computer. L1 must fail closed before accepting that image. Today’s `fromEnv()` fallback / missing-Xvfb `exit 0` is an **L1 implementation gap**.
 - MCP has **no** stop/destroy tool. `Ctrl+C` does not shut the Devbox down. Use the shutdown runbook.
 - Default live keep-alive is 15 minutes unless `FLOK_RUNLOOP_KEEP_ALIVE_SECONDS` is set (60–3600). That is a fallback, not cleanup.
@@ -169,7 +190,7 @@ Required: `FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive` or an equivalent **o
 - Fail closed: empty CDP dumps, guessed clicks, path escapes, cross-bot access, missing `flok-ui`.
 - Never persist terminal output, screenshots, cookies, or page contents by default.
 - Never put `RUNLOOP_API_KEY` in the guest, logs, or MCP responses.
-- Destroy/shutdown must be obvious. MCP cannot destroy. Process stop does not destroy the Devbox. Use the Runloop shutdown API and verify `status: shutdown`.
+- Destroy/shutdown must be obvious. MCP cannot destroy. Process stop does not destroy the Devbox. Only shut down the Devbox created by this FLOKS run. Never bulk-shutdown all Devboxes returned by the Runloop account.
 - Do not run paid Runloop in required PR CI.
 
 ## 8. What not to claim
@@ -180,6 +201,7 @@ Required: `FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive` or an equivalent **o
 - FakeProvider observe/act as C7 or L0 proof.
 - That `click_element` works.
 - That fs read is proven end-to-end on live Runloop until the write-ok/read-empty bug is fixed.
-- That MCP or `Ctrl+C` destroys a paid Devbox.
+- That MCP or `Ctrl+C` destroys a paid Devbox, or that an unfiltered account list is a shutdown list.
+- That `127.0.0.1` is a remote Grok Bot endpoint.
 - That generic DnD Ubuntu is an Agent Computer.
 - That this repo has replaced the main Flok application (see `AGENTS.md` zero-write rule).
