@@ -31,7 +31,7 @@ import type {
 } from "../types.js";
 import { ComputerError, PathEscape, ProviderUnavailable } from "../errors.js";
 import { assertInsideRoot } from "../path.js";
-import { logCdpAxObserve, mapCdpAxDump, validateAction } from "./runloop-interactive.js";
+import { logCdpAxObserve, mapCdpAxDump, sanitizeCdpAxHint, validateAction } from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
   DEFAULT_RUNLOOP_ARCH,
@@ -137,6 +137,8 @@ export class RunloopProvider implements ComputerProvider {
     }
     const params = this.createParams(spec);
     const existingId = process.env.FLOK_RUNLOOP_EXISTING_DEVBOX_ID?.trim();
+    if (existingId) delete process.env.FLOK_RUNLOOP_EXISTING_DEVBOX_ID;
+    logCdpAxObserve("provision", { attach: Boolean(existingId) });
     const session = existingId
       ? await this.plane.get(existingId)
       : await this.plane.create(params);
@@ -145,7 +147,12 @@ export class RunloopProvider implements ComputerProvider {
       await session.fsMkdir(RUNLOOP_WORKSPACE_ROOT).catch(() => undefined);
       await session.ensureInteractiveStack();
     } catch (e) {
-      await this.abandonSession(session.id);
+      if (existingId) {
+        this.sessions.delete(session.id);
+        logCdpAxObserve("attach-fail", { keep: true });
+      } else {
+        await this.abandonSession(session.id);
+      }
       throw e;
     }
     return { providerRef: session.id, status: "ready" };
@@ -375,9 +382,10 @@ export class RunloopProvider implements ComputerProvider {
           nodes: summary.nodes.length,
         });
       } catch (err) {
-        const detail = (err instanceof Error ? err.message : "unknown")
-          .replace(/[A-Za-z0-9_-]{32,}/g, "[redacted]")
-          .slice(0, 180);
+        const detail = sanitizeCdpAxHint(
+          err instanceof Error ? err.message : "unknown",
+          180,
+        );
         logCdpAxObserve("fail", {
           err: err instanceof Error ? err.name : "unknown",
           reason: detail.slice(0, 80),

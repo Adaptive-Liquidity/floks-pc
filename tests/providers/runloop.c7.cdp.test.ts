@@ -91,8 +91,8 @@ describe("C7 Chrome loopback CDP argv", () => {
     assert.ok(writeAt >= 0);
     assert.ok(lockAt >= 0);
     assert.ok(lastLock > writeAt);
-    assert.match(sdk, /argv: \[nodeBin, CDP_HELPER_PATH\]/);
-    assert.match(sdk, /command -v node/);
+    assert.match(sdk, /argv: \["node", CDP_HELPER_PATH\]/);
+    assert.match(sdk, /argv: \[CDP_NODE_BIN, CDP_HELPER_PATH\]/);
     assert.doesNotMatch(sdk, /argvAsUiUser\(\[CDP_NODE_BIN, CDP_HELPER_PATH\]\)/);
     assert.doesNotMatch(sdk, /argvAsUiUser\(\["node", CDP_HELPER_PATH\]\)/);
     assert.equal(CDP_NODE_BIN, "/usr/bin/node");
@@ -333,5 +333,42 @@ describe("C7 leftover click_element stays fail-closed", () => {
     assert.equal(bad.ok, false);
     assert.equal(bad.results[0]?.success, false);
     assert.match(bad.results[0]?.error ?? "", /unsupported/);
+  });
+
+  it("observe returns helper CDP nodes instead of C3B_TAKEOVER_UNAVAILABLE", async () => {
+    const plane = new MemoryRunloopControlPlane();
+    const p = new RunloopProvider({ client: plane, blueprint: "memory-linux-vm" });
+    const a = await p.provision({ birdId: "c7-ax-ok", flockId: "f" });
+    const session = await plane.get(a.providerRef);
+    (
+      session as unknown as { cdpAxDumpResult: { nodes: unknown[] } }
+    ).cdpAxDumpResult = {
+      nodes: Array.from({ length: 8 }, (_, i) => ({
+        backendDOMNodeId: i + 1,
+        role: "link",
+        name: `n${i}`,
+      })),
+    };
+    const obs = await p.observe(a.providerRef, { includeAccessibility: true });
+    const summary = obs.accessibilitySummary as { source: string; nodes: unknown[] };
+    assert.equal(summary.source, "cdp");
+    assert.equal(summary.nodes.length, 8);
+  });
+
+  it("does not shutdown an attached Devbox if ensure fails", async () => {
+    const plane = new MemoryRunloopControlPlane();
+    const p = new RunloopProvider({ client: plane, blueprint: "memory-linux-vm" });
+    const a = await p.provision({ birdId: "keep-box", flockId: "f" });
+    plane.failNextEnsure = true;
+    process.env.FLOK_RUNLOOP_EXISTING_DEVBOX_ID = a.providerRef;
+    try {
+      const p2 = new RunloopProvider({ client: plane, blueprint: "memory-linux-vm" });
+      await assert.rejects(() => p2.provision({ birdId: "keep-box-2", flockId: "f" }));
+      const still = await plane.get(a.providerRef);
+      assert.equal((still as unknown as { destroyed: boolean }).destroyed, false);
+      assert.equal(process.env.FLOK_RUNLOOP_EXISTING_DEVBOX_ID, undefined);
+    } finally {
+      delete process.env.FLOK_RUNLOOP_EXISTING_DEVBOX_ID;
+    }
   });
 });

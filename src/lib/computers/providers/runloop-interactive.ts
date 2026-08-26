@@ -23,6 +23,7 @@ export {
   logCdpAxObserve,
   mapCdpAxDump,
   parseCdpAxHelperStdout,
+  sanitizeCdpAxHint,
 } from "./runloop-cdp.js";
 
 export const FLOK_DISPLAY = ":99";

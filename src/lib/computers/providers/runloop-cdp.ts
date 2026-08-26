@@ -122,6 +122,15 @@ function stringValue(raw: unknown): string | undefined {
   return undefined;
 }
 
+/** Counts-only diagnostics. Never pass helper stdout or a CDP dump. */
+export function sanitizeCdpAxHint(text: string, max = 80): string {
+  return text
+    .replace(/[A-Za-z0-9_-]{32,}/g, "[redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
 export function logCdpAxObserve(event: string, fields: Record<string, string | number | boolean>): void {
   const parts = Object.entries(fields).map(([k, v]) => `${k}=${v}`);
   process.stderr.write(`flok-cdp-ax ${event} ${parts.join(" ")}\n`);

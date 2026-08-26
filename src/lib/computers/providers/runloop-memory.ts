@@ -59,6 +59,10 @@ export class MemoryRunloopControlPlane implements RunloopControlPlane {
     if (!s || s.destroyed) {
       throw new Error(`runloop devbox ${id} not found`);
     }
+    if (this.failNextEnsure) {
+      s.failEnsureOnce = true;
+      this.failNextEnsure = false;
+    }
     return s;
   }
 
@@ -84,6 +88,8 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
   /** How many times ensureInteractiveStack actually (re)started. */
   stackStarts = 0;
   failEnsureOnce = false;
+  /** Test hook: live-shaped CDP dump. Null keeps the memory-plane fail-closed throw. */
+  cdpAxDumpResult: { nodes: unknown[] } | null = null;
   private stackUp = false;
   private current: RunloopDevboxState = "running";
   private fs: Map<string, MemFile>;
@@ -306,6 +312,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
 
   async cdpAxDump(): Promise<{ nodes: unknown[] }> {
     this.assertRunning();
+    if (this.cdpAxDumpResult) return this.cdpAxDumpResult;
     throw new Error("guest Chrome CDP is not available on the memory plane");
   }
 
