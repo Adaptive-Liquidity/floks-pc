@@ -154,6 +154,21 @@ describe("C7 CDP AX mapping", () => {
     assert.throws(() => mapCdpAxDump({ nodes: [], error: "nope" }));
   });
 
+  it("fail-closes empty or fully-filtered dumps", () => {
+    assert.throws(() => mapCdpAxDump({ nodes: [] }), /cdp ax tree empty/);
+    assert.throws(
+      () =>
+        mapCdpAxDump({
+          nodes: [{ ignored: true, backendDOMNodeId: 1, role: "button" }],
+        }),
+      /cdp ax tree empty/,
+    );
+    assert.throws(
+      () => mapCdpAxDump({ nodes: [{ backendDOMNodeId: 2, role: 1 }] }),
+      /cdp ax tree empty/,
+    );
+  });
+
   it("skips one bad sibling and truncates long roles instead of dropping the dump", () => {
     const mapped = mapCdpAxDump({
       nodes: [

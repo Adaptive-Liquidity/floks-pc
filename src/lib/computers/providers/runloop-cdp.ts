@@ -116,6 +116,9 @@ function boundsFromQuad(quad: number[] | undefined): CdpAxBounds | undefined {
 /** Map a guest CDP dump. Nodes without a box model keep no bounds (no guessed clicks). */
 export function mapCdpAxDump(dump: unknown): CdpAxSummary {
   const parsed = CdpAxDumpSchema.parse(dump);
+  if (parsed.nodes.length === 0) {
+    throw new Error("cdp ax tree empty");
+  }
   const nodes: CdpAxNode[] = [];
   for (const candidate of parsed.nodes) {
     const rawResult = CdpAxDumpNodeSchema.safeParse(candidate);
@@ -139,6 +142,9 @@ export function mapCdpAxDump(dump: unknown): CdpAxSummary {
     if (bounds) node.bounds = bounds;
     nodes.push(node);
     if (nodes.length >= CDP_AX_NODE_CAP) break;
+  }
+  if (nodes.length === 0) {
+    throw new Error("cdp ax tree empty");
   }
   const summary: CdpAxSummary = { source: "cdp", nodes };
   AccessibilitySummarySchema.parse(summary);
