@@ -10,9 +10,21 @@ import { ComputerError } from "../../src/lib/computers/errors.js";
 import {
   assertSafeMcpBind,
   bootstrapLocalComputer,
+  createMcpProvider,
 } from "../../src/mcp-server.js";
 
 describe("MCP local bootstrap", () => {
+  it("defaults to FakeProvider and rejects unknown FLOK_MCP_PROVIDER", async () => {
+    const fake = await createMcpProvider({});
+    assert.equal(fake.name, "fake");
+    const alsoFake = await createMcpProvider({ FLOK_MCP_PROVIDER: "fake" });
+    assert.equal(alsoFake.name, "fake");
+    await assert.rejects(
+      () => createMcpProvider({ FLOK_MCP_PROVIDER: "cdp" }),
+      (err: unknown) => err instanceof ComputerError && err.code === "MCP_PROVIDER_UNKNOWN",
+    );
+  });
+
   it("does nothing unless FLOK_MCP_BOOTSTRAP is set", async () => {
     const service = new ComputerService(new FakeProvider());
     const result = await bootstrapLocalComputer(service, {});

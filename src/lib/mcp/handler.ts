@@ -376,6 +376,7 @@ export class McpGateway {
     const parsed = ComputerObserveArgsSchema.parse(args ?? {});
     const request: ObserveRequest = {};
     if (parsed.include_screenshot === true) request.includeScreenshot = true;
+    if (parsed.include_accessibility === true) request.includeAccessibility = true;
     const observation = await this.service.observe(
       cap(requireToken(parsed.capability_token)),
       parsed.computer_handle,
@@ -390,6 +391,9 @@ export class McpGateway {
     }
     if (parsed.include_screenshot === true && observation.screenshotBase64) {
       payload.screenshot_base64 = observation.screenshotBase64;
+    }
+    if (parsed.include_accessibility === true && observation.accessibilitySummary !== undefined) {
+      payload.accessibility_summary = observation.accessibilitySummary;
     }
     return { isError: false, payload };
   }

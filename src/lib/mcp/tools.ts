@@ -75,6 +75,10 @@ export const ComputerObserveArgsSchema = z.object({
   capability_token: capabilityToken,
   computer_handle: handle,
   include_screenshot: z.boolean().optional(),
+  include_accessibility: z
+    .boolean()
+    .optional()
+    .describe("When true, request a live accessibility summary. Never fabricated."),
 });
 
 export const ComputerActArgsSchema = z.object({
@@ -157,7 +161,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "computer_observe",
     description:
-      "Observe the computer display. Screenshot only when include_screenshot is true. Accessibility is not fabricated.",
+      "Observe the computer display. Screenshot only when include_screenshot is true. Accessibility only when include_accessibility is true; capability-gated, never fabricated.",
     inputSchema: advertisedSchema(ComputerObserveArgsSchema, ["capability_token", "computer_handle"]),
   },
   {
