@@ -1,6 +1,8 @@
 /**
- * Opt-in MCP HTTP listener. FakeProvider only — no paid Runloop.
- * Requires FLOK_MCP_COMPUTERS_ENABLED=1. Does not read ~/flok/token.
+ * Opt-in MCP HTTP listener. FakeProvider by default — no paid Runloop.
+ * Set FLOK_MCP_PROVIDER=runloop (and RUNLOOP_API_KEY) only when the owner
+ * explicitly approves a paid Devbox. Requires FLOK_MCP_COMPUTERS_ENABLED=1.
+ * Does not read ~/flok/token.
  *
  * Optional local bootstrap (control-plane, not an MCP tool):
  *   FLOK_MCP_BOOTSTRAP=1
@@ -14,8 +16,10 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { ComputerService } from "./lib/computers/service.js";
 import { FakeProvider } from "./lib/computers/providers/fake.js";
+import { RunloopProvider } from "./lib/computers/providers/runloop.js";
 import { ComputerError } from "./lib/computers/errors.js";
 import { assertNexusDisabled } from "./lib/computers/flags.js";
+import type { ComputerProvider } from "./lib/computers/providers/provider.js";
 import {
   handleMcpHttp,
   loadMcpGatewayConfig,
@@ -50,6 +54,23 @@ const BootstrapIdentitySchema = z.object({
   birdId: z.string().min(1).max(128),
   flockId: z.string().min(1).max(128),
 });
+
+/** Default Fake. `runloop` is paid and must be chosen explicitly. */
+export async function createMcpProvider(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ComputerProvider> {
+  const name = env.FLOK_MCP_PROVIDER?.trim().toLowerCase() ?? "";
+  if (name === "" || name === "fake") {
+    return new FakeProvider();
+  }
+  if (name === "runloop") {
+    return RunloopProvider.fromEnv();
+  }
+  throw new ComputerError(
+    "MCP_PROVIDER_UNKNOWN",
+    "FLOK_MCP_PROVIDER must be unset, fake, or runloop",
+  );
+}
 
 export async function bootstrapLocalComputer(
   service: ComputerService,
@@ -98,7 +119,7 @@ async function main(): Promise<void> {
   const host = config.listenHost ?? "127.0.0.1";
   const port = config.listenPort ?? 8787;
   assertSafeMcpBind(host, config.authToken);
-  const service = new ComputerService(new FakeProvider());
+  const service = new ComputerService(await createMcpProvider());
   const gateway = new McpGateway(service);
   const boot = await bootstrapLocalComputer(service);
 

@@ -22,6 +22,13 @@ import {
   pngDimensions,
   uniqueObsShotPath,
   CHROME_LOG_PATH,
+  CDP_AX_HELPER_JS,
+  CDP_HELPER_PATH,
+  CDP_NODE_BIN,
+  CdpAxDumpSchema,
+  logCdpAxObserve,
+  parseCdpAxHelperStdout,
+  sanitizeCdpAxHint,
 } from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
@@ -367,6 +374,10 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       await this.fsWrite(FIXTURE_PATH, Buffer.from(FIXTURE_HTML, "utf8")),
       "ensureInteractiveStack write fixture",
     );
+    this.requireFs(
+      await this.fsWrite(CDP_HELPER_PATH, Buffer.from(CDP_AX_HELPER_JS, "utf8")),
+      "ensureInteractiveStack write cdp helper",
+    );
     this.requireFs(await this.fsMkdir(BROWSER_PROFILE_DIR), "ensureInteractiveStack mkdir profile");
     await this.lockRootExecutedAssets();
     const r = await this.exec({
@@ -444,6 +455,114 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     return r.exitCode === 0 && r.stdout.includes("ok");
   }
 
+  private chromePopenArgv(url: string): string[] {
+    const chromeCode = [
+      "import subprocess,sys",
+      `log=open(${JSON.stringify(CHROME_LOG_PATH)},"ab",buffering=0)`,
+      "subprocess.Popen(sys.argv[1:], start_new_session=True, stdout=log, stderr=subprocess.STDOUT)",
+      "print('launched')",
+      "",
+    ].join("\n");
+    return ["python3", "-c", chromeCode, ...chromeLaunchArgv(url)];
+  }
+
+  private async runCdpHelper(): Promise<RunloopExecResult> {
+    let r = await this.exec({
+      argv: ["node", CDP_HELPER_PATH],
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      timeoutMs: 15_000,
+    });
+    if (r.exitCode === 127) {
+      r = await this.exec({
+        argv: [CDP_NODE_BIN, CDP_HELPER_PATH],
+        cwd: RUNLOOP_WORKSPACE_ROOT,
+        timeoutMs: 15_000,
+      });
+    }
+    logCdpAxObserve("helper", {
+      exit: r.exitCode,
+      timedOut: r.timedOut,
+      stdoutLen: r.stdout.length,
+      stderrLen: r.stderr.length,
+      asUi: false,
+    });
+    return r;
+  }
+
+  private async launchChromeForCdp(): Promise<void> {
+    logCdpAxObserve("chrome-launch", { via: "observe" });
+    const r = await this.exec({
+      argv: this.chromePopenArgv(`file://${FIXTURE_PATH}`),
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      env: { DISPLAY: FLOK_DISPLAY },
+      timeoutMs: 20_000,
+    });
+    if (r.exitCode !== 0) {
+      throw new ProviderUnavailable("runloop", "chrome launch failed");
+    }
+  }
+
+  private async waitForCdp(): Promise<boolean> {
+    const py = [
+      "import urllib.request,time,sys",
+      "deadline=time.time()+20",
+      "while time.time()<deadline:",
+      "  try:",
+      "    urllib.request.urlopen('http://127.0.0.1:9222/json/version', timeout=1)",
+      "    print('cdp-ready')",
+      "    sys.exit(0)",
+      "  except Exception:",
+      "    time.sleep(1)",
+      "print('cdp-down')",
+      "sys.exit(1)",
+      "",
+    ].join("\n");
+    const r = await this.exec({
+      argv: ["python3", "-c", py],
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      timeoutMs: 25_000,
+    });
+    logCdpAxObserve("cdp-wait", { ready: r.exitCode === 0 });
+    return r.exitCode === 0;
+  }
+
+  async cdpAxDump(): Promise<{ nodes: unknown[] }> {
+    await this.ensureInteractiveStack();
+    // Same argv the live tester proved via computer_exec: node /home/user/flok/.flok/cdp-ax.mjs
+    let r = await this.runCdpHelper();
+    const refused = /ECONNREFUSED|9222/.test(r.stderr);
+    if (r.exitCode !== 0 && refused) {
+      await this.launchChromeForCdp();
+      const ready = await this.waitForCdp();
+      if (!ready) {
+        throw new ProviderUnavailable(
+          "runloop",
+          "cdp ax helper failed (connect ECONNREFUSED 127.0.0.1:9222)",
+        );
+      }
+      r = await this.runCdpHelper();
+    }
+    if (r.exitCode !== 0) {
+      const hint = sanitizeCdpAxHint(r.stderr || "");
+      if (hint) logCdpAxObserve("helper-fail", { exit: r.exitCode, hint });
+      throw new ProviderUnavailable(
+        "runloop",
+        hint ? `cdp ax helper failed (${hint})` : "cdp ax helper failed",
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = parseCdpAxHelperStdout(r.stdout);
+    } catch {
+      throw new ProviderUnavailable("runloop", "cdp ax helper returned non-JSON");
+    }
+    const checked = CdpAxDumpSchema.safeParse(parsed);
+    if (!checked.success) {
+      throw new ProviderUnavailable("runloop", "cdp ax helper dump invalid");
+    }
+    return { nodes: checked.data.nodes };
+  }
+
   async uiAction(action: Action): Promise<void> {
     const env = { DISPLAY: FLOK_DISPLAY };
     let argv: string[];
@@ -487,17 +606,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
             ? (action.url ?? `file://${FIXTURE_PATH}`)
             : `file://${FIXTURE_PATH}`;
         // Detach so exec returning does not SIGHUP Chrome. No --no-sandbox.
-        // Launch accepted ≠ Chrome ready; live gate polls readiness separately.
-        // runuser drops to flok-ui; python launcher stays the Devbox user (root on DnD).
-        // Startup stderr goes to a guest tmp log (not FLOKS audit).
-        const chromeCode = [
-          "import subprocess,sys",
-          `log=open(${JSON.stringify(CHROME_LOG_PATH)},"ab",buffering=0)`,
-          "subprocess.Popen(sys.argv[1:], start_new_session=True, stdout=log, stderr=subprocess.STDOUT)",
-          "print('launched')",
-          "",
-        ].join("\n");
-        argv = ["python3", "-c", chromeCode, ...chromeLaunchArgv(url)];
+        argv = this.chromePopenArgv(url);
         break;
       }
       default:
@@ -553,6 +662,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const execvp = shellSingle(EXECVP_PATH);
     const script = shellSingle(ENSURE_SCRIPT_PATH);
     const fixture = shellSingle(FIXTURE_PATH);
+    const cdpHelper = shellSingle(CDP_HELPER_PATH);
     const lock = await this.box.cmd.exec(
       [
         `chown root:root ${dir}`,
@@ -560,6 +670,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
         `if [ -f ${execvp} ]; then chown root:root ${execvp} && chmod 755 ${execvp}; fi`,
         `if [ -f ${script} ]; then chown root:root ${script} && chmod 755 ${script}; fi`,
         `if [ -f ${fixture} ]; then chown root:root ${fixture} && chmod 644 ${fixture}; fi`,
+        `if [ -f ${cdpHelper} ]; then chown root:root ${cdpHelper} && chmod 755 ${cdpHelper}; fi`,
       ].join(" && "),
     );
     if ((lock.exitCode ?? 1) !== 0) {

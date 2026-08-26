@@ -9,12 +9,14 @@ import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
 import {
   ComputerService,
+  ComputerUseNotAvailable,
   FLAGS,
   FakeProvider,
   MemoryRunloopControlPlane,
   RunloopProvider,
   assertNexusDisabled,
 } from "../../src/lib/computers/index.js";
+import type { ObserveRequest } from "../../src/lib/computers/types.js";
 import {
   MCP_MAX_BODY_BYTES,
   MCP_MAX_ENV_KEYS,
@@ -396,6 +398,148 @@ describe("C5 MCP gateway", () => {
     assert.equal("accessibility_summary" in body, false);
     assert.equal("screenshot_base64" in body, false);
     assert.equal(typeof body.screen_width, "number");
+  });
+
+  it("computer_observe advertises optional include_accessibility and stays eight tools", async () => {
+    const res = await rpc("tools/list");
+    const result = res.result as {
+      tools: Array<{ name: string; inputSchema: Record<string, unknown>; description?: string }>;
+    };
+    assert.equal(result.tools.length, 8);
+    assert.deepEqual(result.tools.map((t) => t.name), [...MCP_TOOL_NAMES]);
+    const observe = result.tools.find((t) => t.name === "computer_observe");
+    assert.ok(observe);
+    const props = observe.inputSchema.properties as Record<string, Record<string, unknown>>;
+    assert.equal(typeof props.include_screenshot, "object");
+    assert.equal(typeof props.include_accessibility, "object");
+    const required = observe.inputSchema.required as string[];
+    assert.equal(required.includes("include_accessibility"), false);
+    assert.equal(required.includes("include_screenshot"), false);
+    assert.match(String(observe.description), /never fabricated/i);
+    assert.equal(MCP_TOOL_NAMES.length, 8);
+  });
+
+  it("computer_observe passes includeAccessibility only when requested", async () => {
+    class ProbeFake extends FakeProvider {
+      lastObserve: ObserveRequest | undefined;
+      override async observe(ref: string, request: ObserveRequest) {
+        this.lastObserve = request;
+        return super.observe(ref, request);
+      }
+    }
+    const probe = new ProbeFake();
+    const svc = new ComputerService(probe);
+    const gw = new McpGateway(svc, { logger: new RecordingLogger() });
+    const computer = await svc.requestComputer({ birdId: "probe-ax", flockId: FLOCK });
+    const issued = await svc.issuePairCode(computer.id);
+    const pairRes = await gw.handleJsonRpc(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "computer_pair",
+          arguments: { pair_code: issued.code, bird_id: "probe-ax", flock_id: FLOCK },
+        },
+      },
+      {},
+    );
+    const pairBody = ((pairRes as Record<string, unknown>).result as { structuredContent: Record<string, unknown> })
+      .structuredContent;
+    const token = String(pairBody.capability_token);
+    const handle = String(pairBody.computer_handle);
+
+    const omitted = await gw.handleJsonRpc(
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "computer_observe",
+          arguments: { capability_token: token, computer_handle: handle },
+        },
+      },
+      {},
+    );
+    assert.equal(probe.lastObserve?.includeAccessibility, undefined);
+    const omittedBody = ((omitted as Record<string, unknown>).result as { structuredContent: Record<string, unknown> })
+      .structuredContent;
+    assert.equal("accessibility_summary" in omittedBody, false);
+
+    const asked = await gw.handleJsonRpc(
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "computer_observe",
+          arguments: {
+            capability_token: token,
+            computer_handle: handle,
+            include_accessibility: true,
+          },
+        },
+      },
+      {},
+    );
+    assert.equal(probe.lastObserve?.includeAccessibility, true);
+    const askedBody = ((asked as Record<string, unknown>).result as { structuredContent: Record<string, unknown> })
+      .structuredContent;
+    // Fake still has { nodes: 0 }. That is not C7 CDP proof.
+    assert.equal("accessibility_summary" in askedBody, true);
+    const summary = askedBody.accessibility_summary as { source?: string; nodes?: unknown };
+    assert.notEqual(summary.source, "cdp");
+  });
+
+  it("computer_observe include_accessibility fail-closes without guest Chrome CDP", async () => {
+    const runloop = new RunloopProvider({
+      client: new MemoryRunloopControlPlane(),
+      blueprint: "memory-linux-vm",
+    });
+    const svc = new ComputerService(runloop);
+    const gw = new McpGateway(svc, { logger: new RecordingLogger() });
+    const computer = await svc.requestComputer({ birdId: "runloop-ax", flockId: FLOCK });
+    const issued = await svc.issuePairCode(computer.id);
+    const pairRes = await gw.handleJsonRpc(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "computer_pair",
+          arguments: { pair_code: issued.code, bird_id: "runloop-ax", flock_id: FLOCK },
+        },
+      },
+      {},
+    );
+    const pairBody = ((pairRes as Record<string, unknown>).result as { structuredContent: Record<string, unknown> })
+      .structuredContent;
+    const observed = await gw.handleJsonRpc(
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "computer_observe",
+          arguments: {
+            capability_token: String(pairBody.capability_token),
+            computer_handle: String(pairBody.computer_handle),
+            include_screenshot: true,
+            include_accessibility: true,
+          },
+        },
+      },
+      {},
+    );
+    const env = observed as Record<string, unknown>;
+    const result = env.result as { isError: boolean; structuredContent: Record<string, unknown> };
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.code, new ComputerUseNotAvailable().code);
+    assert.match(
+      String(result.structuredContent.message),
+      /guest Chrome CDP is not available on the memory plane/,
+    );
+    assert.equal("accessibility_summary" in result.structuredContent, false);
   });
 
   it("computer_act fail-closes click_element and still omits fake AX after open_url", async () => {

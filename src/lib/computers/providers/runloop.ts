@@ -31,7 +31,7 @@ import type {
 } from "../types.js";
 import { ComputerError, PathEscape, ProviderUnavailable } from "../errors.js";
 import { assertInsideRoot } from "../path.js";
-import { validateAction } from "./runloop-interactive.js";
+import { logCdpAxObserve, mapCdpAxDump, sanitizeCdpAxHint, validateAction } from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
   DEFAULT_RUNLOOP_ARCH,
@@ -107,13 +107,18 @@ export class RunloopProvider implements ComputerProvider {
     if (!blueprint) {
       throw new RunloopBlueprintRequired("FLOK_RUNLOOP_BLUEPRINT is required");
     }
+    const keepRaw = Number(process.env.FLOK_RUNLOOP_KEEP_ALIVE_SECONDS?.trim());
+    const keepAliveSeconds =
+      Number.isInteger(keepRaw) && keepRaw >= 60 && keepRaw <= 3600
+        ? keepRaw
+        : LIVE_KEEP_ALIVE_SECONDS;
     const { createSdkRunloopPlane } = await import("./runloop-sdk.js");
     const client = await createSdkRunloopPlane({
       apiKey,
       blueprint,
-      keepAliveSeconds: LIVE_KEEP_ALIVE_SECONDS,
+      keepAliveSeconds,
     });
-    return new RunloopProvider({ client, blueprint, apiKey });
+    return new RunloopProvider({ client, blueprint, apiKey, keepAliveSeconds });
   }
 
   capabilities(): ProviderCapabilities {
@@ -136,13 +141,23 @@ export class RunloopProvider implements ComputerProvider {
       throw new ProviderUnavailable("runloop", "linux only");
     }
     const params = this.createParams(spec);
-    const session = await this.plane.create(params);
+    const existingId = process.env.FLOK_RUNLOOP_EXISTING_DEVBOX_ID?.trim();
+    if (existingId) delete process.env.FLOK_RUNLOOP_EXISTING_DEVBOX_ID;
+    logCdpAxObserve("provision", { attach: Boolean(existingId) });
+    const session = existingId
+      ? await this.plane.get(existingId)
+      : await this.plane.create(params);
     this.sessions.set(session.id, session);
     try {
       await session.fsMkdir(RUNLOOP_WORKSPACE_ROOT).catch(() => undefined);
       await session.ensureInteractiveStack();
     } catch (e) {
-      await this.abandonSession(session.id);
+      if (existingId) {
+        this.sessions.delete(session.id);
+        logCdpAxObserve("attach-fail", { keep: true });
+      } else {
+        await this.abandonSession(session.id);
+      }
       throw e;
     }
     return { providerRef: session.id, status: "ready" };
@@ -346,9 +361,6 @@ export class RunloopProvider implements ComputerProvider {
   async observe(ref: string, request: ObserveRequest): Promise<Observation> {
     const s = await this.requireSession(ref);
     await s.ensureInteractiveStack();
-    if (request.includeAccessibility) {
-      throw new ComputerUseNotAvailable("accessibility addressing is not implemented");
-    }
     const shot = await s.screenshot();
     const obs: Observation = {
       screenWidth: shot.width,
@@ -357,6 +369,41 @@ export class RunloopProvider implements ComputerProvider {
     if (shot.activeWindow) obs.activeWindow = shot.activeWindow;
     if (request.includeScreenshot !== false) {
       obs.screenshotBase64 = shot.png.toString("base64");
+    }
+    if (request.includeAccessibility) {
+      logCdpAxObserve("begin", {
+        provider: this.name,
+        ref: ref.slice(0, 24),
+        session: s.constructor.name,
+        hasCdpAxDump: typeof s.cdpAxDump === "function",
+      });
+      try {
+        const dump = await s.cdpAxDump();
+        logCdpAxObserve("dump", { nodes: dump.nodes.length, parsed: true });
+        const summary = mapCdpAxDump(dump);
+        obs.accessibilitySummary = summary;
+        logCdpAxObserve("mapped", {
+          source: summary.source,
+          nodes: summary.nodes.length,
+        });
+      } catch (err) {
+        const detail = sanitizeCdpAxHint(
+          err instanceof Error ? err.message : "unknown",
+          180,
+        );
+        logCdpAxObserve("fail", {
+          err: err instanceof Error ? err.name : "unknown",
+          reason: detail.slice(0, 80),
+        });
+        if (err instanceof ComputerError && !(err instanceof ProviderUnavailable)) {
+          throw err;
+        }
+        throw new ComputerUseNotAvailable(
+          detail
+            ? `accessibility addressing requires guest Chrome CDP (${detail})`
+            : "accessibility addressing requires guest Chrome CDP",
+        );
+      }
     }
     return obs;
   }

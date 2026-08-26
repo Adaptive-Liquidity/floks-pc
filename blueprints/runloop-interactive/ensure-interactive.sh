@@ -53,6 +53,10 @@ if [ -f /home/user/flok/.flok/fixture.html ]; then
   chown root:root /home/user/flok/.flok/fixture.html
   chmod 644 /home/user/flok/.flok/fixture.html
 fi
+if [ -f /home/user/flok/.flok/cdp-ax.mjs ]; then
+  chown root:root /home/user/flok/.flok/cdp-ax.mjs
+  chmod 755 /home/user/flok/.flok/cdp-ax.mjs
+fi
 chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser
 chmod 700 /home/user/flok/.browser
 chmod 700 "$PROFILE" || true
