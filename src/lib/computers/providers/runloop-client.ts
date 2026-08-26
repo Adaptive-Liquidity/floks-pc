@@ -96,6 +96,8 @@ export interface RunloopDevboxSession {
   screenshot(): Promise<{ width: number; height: number; png: Buffer; activeWindow?: string }>;
   novncLocalOk(): Promise<boolean>;
   uiAction(action: Action): Promise<void>;
+  /** Guest Chrome CDP dump. Memory plane has no Chrome and must fail closed. */
+  cdpAxDump(): Promise<{ nodes: unknown[] }>;
 }
 
 export interface RunloopControlPlane {

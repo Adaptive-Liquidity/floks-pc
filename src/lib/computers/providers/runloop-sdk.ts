@@ -22,6 +22,8 @@ import {
   pngDimensions,
   uniqueObsShotPath,
   CHROME_LOG_PATH,
+  CDP_AX_HELPER_JS,
+  CDP_HELPER_PATH,
 } from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
@@ -367,6 +369,10 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       await this.fsWrite(FIXTURE_PATH, Buffer.from(FIXTURE_HTML, "utf8")),
       "ensureInteractiveStack write fixture",
     );
+    this.requireFs(
+      await this.fsWrite(CDP_HELPER_PATH, Buffer.from(CDP_AX_HELPER_JS, "utf8")),
+      "ensureInteractiveStack write cdp helper",
+    );
     this.requireFs(await this.fsMkdir(BROWSER_PROFILE_DIR), "ensureInteractiveStack mkdir profile");
     await this.lockRootExecutedAssets();
     const r = await this.exec({
@@ -442,6 +448,35 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       timeoutMs: 5_000,
     });
     return r.exitCode === 0 && r.stdout.includes("ok");
+  }
+
+  async cdpAxDump(): Promise<{ nodes: unknown[] }> {
+    await this.ensureInteractiveStack();
+    const r = await this.exec({
+      argv: argvAsUiUser(["node", CDP_HELPER_PATH]),
+      cwd: RUNLOOP_WORKSPACE_ROOT,
+      timeoutMs: 15_000,
+    });
+    if (r.exitCode !== 0) {
+      throw new ProviderUnavailable(
+        "runloop",
+        `cdp ax helper failed: ${r.stderr || r.stdout}`,
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(r.stdout);
+    } catch {
+      throw new ProviderUnavailable("runloop", "cdp ax helper returned non-JSON");
+    }
+    if (!parsed || typeof parsed !== "object" || !("nodes" in parsed)) {
+      throw new ProviderUnavailable("runloop", "cdp ax helper missing nodes");
+    }
+    const nodes = (parsed as { nodes: unknown }).nodes;
+    if (!Array.isArray(nodes)) {
+      throw new ProviderUnavailable("runloop", "cdp ax helper nodes is not an array");
+    }
+    return { nodes };
   }
 
   async uiAction(action: Action): Promise<void> {
@@ -553,6 +588,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const execvp = shellSingle(EXECVP_PATH);
     const script = shellSingle(ENSURE_SCRIPT_PATH);
     const fixture = shellSingle(FIXTURE_PATH);
+    const cdpHelper = shellSingle(CDP_HELPER_PATH);
     const lock = await this.box.cmd.exec(
       [
         `chown root:root ${dir}`,
@@ -560,6 +596,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
         `if [ -f ${execvp} ]; then chown root:root ${execvp} && chmod 755 ${execvp}; fi`,
         `if [ -f ${script} ]; then chown root:root ${script} && chmod 755 ${script}; fi`,
         `if [ -f ${fixture} ]; then chown root:root ${fixture} && chmod 644 ${fixture}; fi`,
+        `if [ -f ${cdpHelper} ]; then chown root:root ${cdpHelper} && chmod 755 ${cdpHelper}; fi`,
       ].join(" && "),
     );
     if ((lock.exitCode ?? 1) !== 0) {

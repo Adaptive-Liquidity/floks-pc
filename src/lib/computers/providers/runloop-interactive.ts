@@ -10,6 +10,15 @@ import { randomUUID } from "node:crypto";
 import { posix as pathPosix } from "node:path";
 import type { Action } from "../types.js";
 import { RUNLOOP_WORKSPACE_ROOT } from "./runloop-client.js";
+import { CDP_DEBUG_ADDRESS, CDP_DEBUG_PORT } from "./runloop-cdp.js";
+
+export {
+  CDP_AX_HELPER_JS,
+  CDP_DEBUG_ADDRESS,
+  CDP_DEBUG_PORT,
+  CDP_HELPER_PATH,
+  mapCdpAxDump,
+} from "./runloop-cdp.js";
 
 export const FLOK_DISPLAY = ":99";
 export const DISPLAY_WIDTH = 1440;
@@ -198,6 +207,11 @@ export function chromeLaunchArgv(url: string): string[] {
     `--app=${url}`,
     "--no-first-run",
     "--disable-sync",
+    `--remote-debugging-port=${CDP_DEBUG_PORT}`,
+    `--remote-debugging-address=${CDP_DEBUG_ADDRESS}`,
+    // Node's WebSocket sends no Origin; Chrome 128+ closes the upgrade otherwise.
+    // Port is still 127.0.0.1-only — this does not publish CDP off-box.
+    "--remote-allow-origins=*",
   ]);
 }
 
@@ -674,6 +688,10 @@ fi
 if [ -f /home/user/flok/.flok/fixture.html ]; then
   chown root:root /home/user/flok/.flok/fixture.html
   chmod 644 /home/user/flok/.flok/fixture.html
+fi
+if [ -f /home/user/flok/.flok/cdp-ax.mjs ]; then
+  chown root:root /home/user/flok/.flok/cdp-ax.mjs
+  chmod 755 /home/user/flok/.flok/cdp-ax.mjs
 fi
 chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser
 chmod 700 /home/user/flok/.browser

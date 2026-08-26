@@ -31,7 +31,7 @@ import type {
 } from "../types.js";
 import { ComputerError, PathEscape, ProviderUnavailable } from "../errors.js";
 import { assertInsideRoot } from "../path.js";
-import { validateAction } from "./runloop-interactive.js";
+import { mapCdpAxDump, validateAction } from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
   DEFAULT_RUNLOOP_ARCH,
@@ -346,9 +346,6 @@ export class RunloopProvider implements ComputerProvider {
   async observe(ref: string, request: ObserveRequest): Promise<Observation> {
     const s = await this.requireSession(ref);
     await s.ensureInteractiveStack();
-    if (request.includeAccessibility) {
-      throw new ComputerUseNotAvailable("accessibility addressing is not implemented");
-    }
     const shot = await s.screenshot();
     const obs: Observation = {
       screenWidth: shot.width,
@@ -357,6 +354,18 @@ export class RunloopProvider implements ComputerProvider {
     if (shot.activeWindow) obs.activeWindow = shot.activeWindow;
     if (request.includeScreenshot !== false) {
       obs.screenshotBase64 = shot.png.toString("base64");
+    }
+    if (request.includeAccessibility) {
+      try {
+        const dump = await s.cdpAxDump();
+        obs.accessibilitySummary = mapCdpAxDump(dump);
+      } catch (err) {
+        if (err instanceof ProviderUnavailable) throw err;
+        if (err instanceof ComputerError) throw err;
+        throw new ComputerUseNotAvailable(
+          "accessibility addressing requires guest Chrome CDP",
+        );
+      }
     }
     return obs;
   }

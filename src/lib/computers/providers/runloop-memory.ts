@@ -304,9 +304,17 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     return this.stackUp;
   }
 
+  async cdpAxDump(): Promise<{ nodes: unknown[] }> {
+    this.assertRunning();
+    throw new Error("guest Chrome CDP is not available on the memory plane");
+  }
+
   async uiAction(action: Action): Promise<void> {
     this.assertRunning();
     if (!this.stackUp) await this.ensureInteractiveStack();
+    if (action.type === "click_element") {
+      throw new Error("click_element unsupported until accessibility addressing exists");
+    }
     if (action.type === "open_url" && action.url) {
       await this.fsMkdir(BROWSER_PROFILE_DIR);
       await this.fsWrite(
