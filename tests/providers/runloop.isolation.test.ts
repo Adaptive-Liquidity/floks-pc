@@ -192,6 +192,8 @@ describe("Runloop C3A live Devboxes", { skip: !LIVE }, () => {
         computerId: a.providerRef,
         checkpointId: ck.providerSnapshotRef,
         providerSnapshotRef: ck.providerSnapshotRef,
+        birdId: "live-a",
+        flockId: "flock-live",
       });
       refs.push(c.providerRef);
       const fromSnap = await p.filesystem(c.providerRef, {

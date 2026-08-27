@@ -215,8 +215,10 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   async shutdown(): Promise<void> {
     try {
       await this.box.shutdown();
-    } catch {
-      // idempotent
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/already|not found|deleted|shutdown/i.test(msg)) return;
+      throw err;
     }
   }
 

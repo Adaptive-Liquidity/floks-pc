@@ -23,7 +23,7 @@ FLOKS Agent Computer Cloud (this package)
   │     │     filesystem, terminal, private display, in-guest Chrome, loopback CDP
   │     └─ KataProvider          (self-host, L8/L9)
   ├─ MCP Gateway (exactly eight tools)
-  ├─ Checkpoints → S3-compatible object storage — L4
+  ├─ Checkpoints → provider-native snapshots (L4); tar+zstd object storage is a future archive format
   └─ Audit metadata (no private content by default)
 ```
 
@@ -52,16 +52,16 @@ immutable base image
 + checkpoint manifest (sha256, revision, base_image, size)
 ```
 
-Checkpoints are stored as `tar + zstd` in object storage. Browser profiles stay Node-private and encrypted; they are never included in handoffs.
+L4 checkpoints are provider-native snapshots. `tar + zstd` in object storage is a future/archive format, not the current implementation. Browser profiles stay Node-private and encrypted; they are never included in handoffs.
 
 ## Recovery path
 
 ```
 provider machine unavailable
   → mark recovering
-  → provision replacement
-  → restore latest checkpoint
+  → restore latest checkpoint onto a replacement
   → health probe
+  → destroy original VM with the captured providerRef only
   → ready
 ```
 
@@ -75,7 +75,7 @@ Ordinary containers share the host kernel and are not the production security ar
 - **L1** uses the existing eight MCP tools, Runloop provider v1, and fail-closed `click_element`.
 - Dashboard is **L2**. Private beta signup is **L3**. Snapshots/recovery **L4**. Safer clicks **L5**. Handoffs **L6**. Quotas/worker **L7**. Extra providers **L8**. Enterprise **L9**.
 - L4 checkpoints are **provider-native snapshots** (Runloop `snapshotDisk` / Fake in-memory FS clone). `tar + zstd` object storage remains the future/archive format, not this PR.
-- Recovery path: mark recovering → provision replacement from latest checkpoint → health probe → ready. No checkpoint → fail closed.
+- Recovery path: mark recovering → restore latest checkpoint onto a replacement → health probe → destroy original VM with the captured providerRef only → ready. No ready or restored checkpoint → fail closed.
 - Kata and the job queue in the diagram above remain later architecture.
 
 ## Nexus-IQ (Phase 14+, after G0)

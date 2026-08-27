@@ -40,6 +40,9 @@ describe("L4 recovery operator HTTP", () => {
     const html = operatorConsoleHtml();
     assert.equal(MCP_TOOL_NAMES.length, 8);
     assert.match(html, /Checkpoint workspace/);
+    assert.match(html, /id="checkpoint-btn"/);
+    assert.match(html, /id="checkpoint-status"/);
+    assert.equal(html.includes('id="checkpoint"'), false);
     assert.match(html, /Recover from latest checkpoint/);
     assert.match(html, /cleanup needed/);
     assert.match(html, /Loopback only/);
@@ -143,12 +146,44 @@ describe("L4 recovery operator HTTP", () => {
     await service.checkpointThisComputer(computer.id);
     const { base, close } = await listen(service);
     try {
-      const snap = await (await fetch(`${base}${OPERATOR_API_PREFIX}/snapshot`)).text();
+      const snapRes = await fetch(`${base}${OPERATOR_API_PREFIX}/snapshot`);
+      assert.equal(snapRes.status, 200);
+      const snap = await snapRes.text();
       assert.doesNotMatch(snap, /providerSnapshotRef/);
       assert.doesNotMatch(snap, /"token"/);
-      const packet = await (await fetch(`${base}${OPERATOR_API_PREFIX}/debug-packet`)).text();
+      assert.doesNotMatch(snap, /tokenDigest/);
+      const packetRes = await fetch(`${base}${OPERATOR_API_PREFIX}/debug-packet`);
+      assert.equal(packetRes.status, 200);
+      const packet = await packetRes.text();
       assert.doesNotMatch(packet, /providerSnapshotRef/);
+      assert.doesNotMatch(packet, /tokenDigest/);
       assert.doesNotMatch(packet, /screenshotBase64/);
+    } finally {
+      await close();
+    }
+  });
+
+  it("rejects cross-origin text/plain recover and leaves the computer unchanged", async () => {
+    const service = new ComputerService(new FakeProvider(), {
+      store: new MemoryControlPlaneStore(),
+    });
+    const computer = await service.requestComputer({ birdId: "bird-csrf", flockId: "flock-h" });
+    await service.checkpointThisComputer(computer.id);
+    const before = await service.get(computer.id);
+    const { base, close } = await listen(service);
+    try {
+      const res = await fetch(`${base}${OPERATOR_API_PREFIX}/computers/${computer.id}/recover`, {
+        method: "POST",
+        headers: {
+          "content-type": "text/plain",
+          origin: "https://evil.example",
+        },
+        body: "{}",
+      });
+      assert.ok(res.status === 403 || res.status === 415);
+      const live = await service.get(computer.id);
+      assert.equal(live.providerRef, before.providerRef);
+      assert.equal(live.state, "ready");
     } finally {
       await close();
     }

@@ -22,7 +22,7 @@ import type {
   RestoreRequest,
   TakeoverGrant,
 } from "../types.js";
-import { ProviderUnavailable, PathEscape } from "../errors.js";
+import { PathEscape, ProviderUnavailable, RestoreUnsupported } from "../errors.js";
 import {
   canonicalizeWorkspacePath,
   getDefaultWorkspaceRoot,
@@ -34,7 +34,8 @@ type FailureMode =
   | "unavailable"
   | "snapshot_failure"
   | "disk_full"
-  | "computer_disappeared";
+  | "computer_disappeared"
+  | "restore_unsupported";
 
 interface VirtualFile {
   content: string | Uint8Array;
@@ -104,6 +105,8 @@ export class FakeProvider implements ComputerProvider {
         throw new ProviderUnavailable("fake", "disk full");
       case "computer_disappeared":
         throw new ProviderUnavailable("fake", "computer disappeared");
+      case "restore_unsupported":
+        throw new RestoreUnsupported("fake");
     }
   }
 

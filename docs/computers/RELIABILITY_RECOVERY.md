@@ -9,7 +9,7 @@ A bot’s Agent Computer should survive real use. If the machine pauses, wakes, 
 - Create a **checkpoint** of an Agent Computer workspace using provider-native snapshots.
 - Track **latest checkpoint** metadata on the durable ComputerRecord (`pending` / `ready` / `failed` / `restoring` / `restored`).
 - **Pause / wake** with a health probe. Failed wake → `recovery_failed`, never pretend ready.
-- **Recover:** mark recovering → destroy the original VM with the **captured providerRef only** → restore the latest checkpoint → re-ensure the interactive stack → health probe → ready.
+- **Recover:** mark recovering → restore the latest checkpoint onto a replacement → health probe → destroy the original VM with the **captured providerRef only**. No ready or restored checkpoint → fail closed.
 - **Retry-safe observe:** paused / waking / recovering / failed states return `OBSERVE_RETRYABLE`. No fake CDP.
 - **Stale cleanup:** idle destroy still uses the captured providerRef. If destroy fails, the computer becomes `cleanup_needed` and the operator sees a metadata-only event.
 
@@ -33,26 +33,26 @@ Future/archive format may use `tar + zstd` in object storage. L4 does not add th
 pause     → paused (workspace preserved where the provider supports it)
 wake      → waking → health probe → ready
             health probe fail → recovery_failed
-recover   → recovering → destroy old VM (captured providerRef)
-            → restore latest checkpoint → health probe → ready
+recover   → recovering → restore latest checkpoint onto replacement
+            → health probe → destroy old VM (captured providerRef) → ready
 ```
 
-No ready checkpoint → **fail closed** (`CHECKPOINT_REQUIRED`). Do not silently create a blank replacement.
+No ready or restored checkpoint → **fail closed** (`CHECKPOINT_REQUIRED`). Do not silently create a blank replacement. Restore support is checked before the original VM is destroyed.
 
 ## Failed-boot recovery
 
 1. Mark `recovering`
-2. Destroy the original VM using the captured `providerRef` only
-3. Provision a replacement from the latest checkpoint
-4. Re-ensure the interactive stack (provider restore/wake already does this on Runloop)
-5. Health probe
+2. Restore the latest checkpoint onto a replacement (fails closed if restore is unsupported; original VM stays)
+3. Re-ensure the interactive stack (provider restore/wake already does this on Runloop)
+4. Health probe
+5. Destroy the original VM using the captured `providerRef` only
 6. Mark `ready`
 
 Failures:
 
-- destroy fails → `cleanup_needed`
-- restore fails → `restore_failed`
-- health probe fails → `recovery_failed`
+- restore unsupported/fails before replacement is live → original VM stays; checkpoint status is reset so recovery is retryable (`restore_failed`)
+- health probe fails → replacement is abandoned; checkpoint status is reset (`recovery_failed`)
+- original VM destroy fails after a healthy replacement → replacement stays ready; metadata-only `CLEANUP_FAILED`
 
 ## Verify file survival (C8 gate)
 

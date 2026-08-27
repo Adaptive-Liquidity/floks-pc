@@ -208,6 +208,8 @@ describe("RunloopProvider (no network)", () => {
       computerId: a.providerRef,
       checkpointId: ck.providerSnapshotRef,
       providerSnapshotRef: ck.providerSnapshotRef,
+      birdId: "snap-a",
+      flockId: "f",
     });
     assert.notEqual(c.providerRef, a.providerRef);
     const read = await p.filesystem(c.providerRef, {

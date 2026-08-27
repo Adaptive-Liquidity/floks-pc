@@ -109,7 +109,33 @@ describe("L4 reliability / recovery", () => {
     assert.ok(service.listOperatorEvents().some((e) => e.operation === "recover" && e.success));
   });
 
-  it("failed health probe after restore marks recovery_failed", async () => {
+  it("restore-unsupported recovery does not destroy the original VM and stays retryable", async () => {
+    const service = new ComputerService(provider, { store: new MemoryControlPlaneStore() });
+    const computer = await service.requestComputer({ birdId: "bird-keep-orig", flockId: "flock-a" });
+    const pair = await service.issuePairCode(computer.id);
+    const cap = await service.pair(pair.code, { birdId: "bird-keep-orig", flockId: "flock-a" });
+    await service.filesystem(capabilityAuth(cap.token), computer.id, {
+      operation: "write",
+      path: "/home/flok/recovery-proof/hello.txt",
+      content: "keep",
+    });
+    await service.checkpointThisComputer(computer.id);
+    provider.injectFailure("restore", "restore_unsupported");
+    await assert.rejects(
+      () => service.recoverThisComputer(computer.id),
+      (err: unknown) => err instanceof RestoreUnsupported,
+    );
+    const live = await service.get(computer.id);
+    assert.equal(live.providerRef, computer.providerRef);
+    assert.equal(live.latestCheckpoint?.status, "ready");
+    const read = await service.filesystem(capabilityAuth(cap.token), computer.id, {
+      operation: "read",
+      path: "/home/flok/recovery-proof/hello.txt",
+    });
+    assert.equal(read.data, "keep");
+  });
+
+  it("failed health probe after restore marks recovery_failed and remains retryable", async () => {
     const service = new ComputerService(provider, { store: new MemoryControlPlaneStore() });
     const computer = await service.requestComputer({ birdId: "bird-probe", flockId: "flock-a" });
     const pair = await service.issuePairCode(computer.id);
@@ -122,7 +148,36 @@ describe("L4 reliability / recovery", () => {
     await service.checkpointThisComputer(computer.id);
     provider.injectFailure("healthProbe", "unavailable");
     await assert.rejects(() => service.recoverThisComputer(computer.id));
-    assert.equal((await service.get(computer.id)).state, "recovery_failed");
+    const failed = await service.get(computer.id);
+    assert.equal(failed.state, "recovery_failed");
+    assert.equal(failed.latestCheckpoint?.status, "ready");
+    assert.equal(failed.providerRef, computer.providerRef);
+  });
+
+  it("serializes concurrent recovery so only one replacement is created", async () => {
+    const service = new ComputerService(provider, { store: new MemoryControlPlaneStore() });
+    const computer = await service.requestComputer({ birdId: "bird-race", flockId: "flock-a" });
+    const pair = await service.issuePairCode(computer.id);
+    const cap = await service.pair(pair.code, { birdId: "bird-race", flockId: "flock-a" });
+    await service.filesystem(capabilityAuth(cap.token), computer.id, {
+      operation: "write",
+      path: "/home/flok/recovery-proof/hello.txt",
+      content: "race",
+    });
+    await service.checkpointThisComputer(computer.id);
+    const [a, b] = await Promise.all([
+      service.recoverThisComputer(computer.id),
+      service.recoverThisComputer(computer.id),
+    ]);
+    assert.equal(a.state, "ready");
+    assert.equal(b.state, "ready");
+    assert.ok(a.providerRef);
+    assert.ok(b.providerRef);
+    const read = await service.filesystem(capabilityAuth(cap.token), computer.id, {
+      operation: "read",
+      path: "/home/flok/recovery-proof/hello.txt",
+    });
+    assert.equal(read.data, "race");
   });
 
   it("stale cleanup uses captured providerRef and records cleanup_needed on destroy failure", async () => {
@@ -188,6 +243,7 @@ describe("L4 reliability / recovery", () => {
 
   it("DockerDev restore is unsupported with a documented error", async () => {
     const docker = new DockerDevProvider();
+    assert.equal(docker.capabilities().snapshots, false);
     await assert.rejects(
       () =>
         docker.restore({
@@ -206,6 +262,7 @@ describe("L4 reliability / recovery", () => {
     const packet = JSON.stringify(service.debugPacket());
     assert.doesNotMatch(packet, /providerSnapshotRef/);
     assert.doesNotMatch(packet, /"token"/);
+    assert.doesNotMatch(packet, /tokenDigest/);
     assert.doesNotMatch(packet, /screenshotBase64/);
     assert.match(packet, /checkpointStatus/);
   });

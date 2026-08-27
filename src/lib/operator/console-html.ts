@@ -160,7 +160,7 @@ export function operatorConsoleHtml(): string {
       <p id="observe-msg" class="warn" hidden></p>
       <h2>Recovery</h2>
       <p>Checkpoint and restore are operator control-plane. Not MCP tools. No Fake CDP.</p>
-      <button class="act" id="checkpoint" type="button">Checkpoint workspace</button>
+      <button class="act" id="checkpoint-btn" type="button">Checkpoint workspace</button>
       <button class="act" id="wake" type="button">Wake</button>
       <button class="act" id="recover" type="button">Recover from latest checkpoint</button>
       <p id="recover-msg" class="warn" hidden></p>
@@ -178,7 +178,7 @@ export function operatorConsoleHtml(): string {
         <dt>Provider</dt><dd id="provider">—</dd>
         <dt>Pair status</dt><dd id="pair">—</dd>
         <dt>Lifecycle</dt><dd id="life">—</dd>
-        <dt>Checkpoint</dt><dd id="checkpoint">none</dd>
+        <dt>Checkpoint</dt><dd id="checkpoint-status">none</dd>
         <dt>Recovery</dt><dd id="recovery">—</dd>
         <dt>Scopes</dt><dd id="scopes">—</dd>
         <dt>Session expiry</dt><dd id="expiry">—</dd>
@@ -262,7 +262,7 @@ export function operatorConsoleHtml(): string {
       document.getElementById("provider").textContent = cur.provider;
       document.getElementById("pair").textContent = cur.pairStatus;
       document.getElementById("life").textContent = cur.lifecycleLabel;
-      document.getElementById("checkpoint").textContent = cur.checkpointStatus
+      document.getElementById("checkpoint-status").textContent = cur.checkpointStatus
         ? String(cur.checkpointStatus) + (cur.checkpointId ? " · " + String(cur.checkpointId).slice(0, 12) : "")
         : "none";
       document.getElementById("recovery").textContent = cur.cleanupNeeded
@@ -362,7 +362,7 @@ export function operatorConsoleHtml(): string {
       msg.textContent = path.slice(1) + " ok.";
       await refresh();
     }
-    document.getElementById("checkpoint").addEventListener("click", () => postLifecycle("/checkpoint", "recover-msg"));
+    document.getElementById("checkpoint-btn").addEventListener("click", () => postLifecycle("/checkpoint", "recover-msg"));
     document.getElementById("wake").addEventListener("click", () => postLifecycle("/wake", "recover-msg"));
     document.getElementById("recover").addEventListener("click", () => postLifecycle("/recover", "recover-msg"));
     document.getElementById("destroy").addEventListener("click", async () => {
