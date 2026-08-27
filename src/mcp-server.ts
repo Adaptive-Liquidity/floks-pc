@@ -25,6 +25,7 @@ import { ComputerError } from "./lib/computers/errors.js";
 import { assertNexusDisabled } from "./lib/computers/flags.js";
 import type { ComputerProvider } from "./lib/computers/providers/provider.js";
 import {
+  assertRemoteMcpExposure,
   handleMcpHttp,
   loadMcpGatewayConfig,
   mcpComputersEnabled,
@@ -123,6 +124,7 @@ async function main(): Promise<void> {
   const host = config.listenHost ?? "127.0.0.1";
   const port = config.listenPort ?? 8787;
   assertSafeMcpBind(host, config.authToken);
+  assertRemoteMcpExposure(config);
   const provider = await createMcpProvider();
   const store = controlPlaneStoreFromEnv(process.env, provider.name);
   const serviceOpts: {
@@ -159,6 +161,9 @@ async function main(): Promise<void> {
   }
   if (config.baseUrl) {
     process.stdout.write(`public base URL (config): ${config.baseUrl}\n`);
+    process.stdout.write(
+      "remote Grok Bot path: authenticated HTTPS. FLOK_MCP_AUTH_TOKEN is mandatory. Do not log the token.\n",
+    );
   }
   if (store) {
     process.stdout.write("control-plane store: durable (records survive MCP restart)\n");

@@ -63,7 +63,7 @@ Runloop Devbox is **provider v1**, not the product name.
 - **Two MCP exposure paths** — loopback `127.0.0.1` is local/operator smoke only. A remote Grok Bot needs authenticated HTTPS. See `docs/computers/agent-computer-cloud.md`.
 
 **Must fix before beta (L3):**
-- MCP fs write-ok / read-empty
+- Remote Grok Bot over authenticated HTTPS (loopback is not that proof). Live Runloop MCP fs smoke passed on PR #20.
 - Persist or reconcile ComputerRecord / pair / capability / active-machine accounting (in-memory is not beta)
 - Operator can shut down **only** the Devbox created by this FLOKS run (not the whole Runloop account)
 - Interactive blueprint fail-closed before a paid computer is accepted

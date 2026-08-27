@@ -23,8 +23,8 @@ Streamable HTTP, JSON-RPC 2.0.
 
 1. Operator provisions a computer (`ComputerService.requestComputer`) and issues a pair code (`issuePairCode`). That is control-plane, not an MCP tool.
 2. Configure a Grok Bot custom MCP connector:
-   - URL: `https://<host>/mcp` (`FLOK_MCP_BASE_URL`)
-   - Optional wrapper header: `Authorization: Bearer <FLOK_MCP_AUTH_TOKEN>`
+   - URL: `https://<host>/mcp` (`FLOK_MCP_BASE_URL`, HTTPS, not loopback)
+   - **Required** wrapper header for path B: `Authorization: Bearer <FLOK_MCP_AUTH_TOKEN>`
 3. The Bot calls `computer_pair` with the pair code plus its `bird_id` / `flock_id`.
 4. The Bot stores `capability_token` and `computer_handle` and passes both on every later `computer_*` tool.
 
@@ -37,13 +37,13 @@ Two paths:
 - **A. Local/operator smoke:** `FLOK_MCP_LISTEN_HOST=127.0.0.1` (default). Local-only. Remote Grok Bot cannot connect. Local curl / local connector only.
 - **B. Real remote Grok Bot:** operator HTTPS tunnel or reverse proxy in front of this process, `FLOK_MCP_AUTH_TOKEN` required, external MCP URL must be HTTPS. Do not expose unauthenticated public MCP. MCP does not run inside the Devbox; do not use a Runloop guest tunnel for the MCP socket.
 
-This package does not deploy a public host. Set `FLOK_MCP_PUBLIC_URL` and `FLOK_LIVE_MCP_GROK_TEST=1` only after an approved authenticated HTTPS endpoint exists.
+This package does not deploy a public host. Set `FLOK_MCP_PUBLIC_URL` and `FLOK_LIVE_MCP_GROK_TEST=1` only after an approved authenticated HTTPS endpoint exists. Operator runbook: `docs/computers/REMOTE_GROK_MCP.md`.
 
 ## Auth / capability flow
 
 ```text
 Grok Bot
-  │  Authorization: Bearer <wrapper>     ← optional, connection identity only
+  │  Authorization: Bearer <wrapper>     ← required on path B; connection identity only
   │  POST /mcp  tools/call computer_pair { pair_code, bird_id, flock_id }
   ▼
 McpGateway
@@ -134,7 +134,7 @@ C6 extends the MCP gateway with hardened shell and filesystem operations:
 
 Both tools require valid capability with correct scope (`exec` or `fs`). Wrapper Bearer / account_id / session metadata alone cannot authorize.
 
-**Known L1 bug:** MCP `computer_fs` write can succeed (and the file exist on the Agent Computer disk) while a following MCP read returns empty. Do not treat FakeProvider fs tests as a substitute for the live fix. Launch MVP must fix this before private beta (L3).
+L1 unpaid MCP fs and the owner-approved live Runloop fs smoke (PR #20) cover write/read/stat/list. Do not treat FakeProvider as L0/L1 product proof. Remote Grok Bot over authenticated HTTPS is a separate L1 gate (`REMOTE_GROK_MCP.md`); it is not claimed until that live checklist passes.
 
 ## Env / config
 
@@ -143,8 +143,8 @@ Both tools require valid capability with correct scope (`exec` or `fs`). Wrapper
 | `FLOK_MCP_COMPUTERS_ENABLED` | no | Must be `1`/`true` to bind `src/mcp-server.ts` |
 | `FLOK_MCP_LISTEN_HOST` | no | Default `127.0.0.1` (**path A**, local smoke). Non-loopback (`0.0.0.0` / `::`) requires `FLOK_MCP_AUTH_TOKEN`. Loopback is not a remote Grok Bot endpoint. |
 | `FLOK_MCP_LISTEN_PORT` | no | Default `8787` |
-| `FLOK_MCP_AUTH_TOKEN` | no | Wrapper Bearer. **Required** for path B (remote Grok Bot / non-loopback). Connection auth, not Bot compute authority. |
-| `FLOK_MCP_BASE_URL` | no | HTTPS URL to document for Grok (path B). Must be the authenticated tunnel/proxy URL, not `http://127.0.0.1`. |
+| `FLOK_MCP_AUTH_TOKEN` | no | Wrapper Bearer. **Mandatory** for path B and any public/non-loopback exposure. Connection auth, not Bot compute authority. Never log it. |
+| `FLOK_MCP_BASE_URL` | no | Path B Grok connector URL. Must be `https://<host>/mcp`, not loopback. Setting this without `FLOK_MCP_AUTH_TOKEN` refuses startup. |
 | `FLOK_MCP_PUBLIC_URL` | no | Live Grok gate only |
 | `FLOK_LIVE_MCP_GROK_TEST` | no | Opt-in live file; not CI |
 | `FLOK_MCP_BOOTSTRAP` | no | Opt-in control-plane: provision one computer and print a one-time pair code to stdout. Not an MCP tool. Works with Fake (default) or Runloop when `FLOK_MCP_PROVIDER=runloop`. |
