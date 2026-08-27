@@ -72,4 +72,10 @@ export interface ComputerProvider {
 
   /** Restore from a checkpoint (may provision a replacement machine) */
   restore(request: RestoreRequest): Promise<ProviderComputer>;
+
+  /**
+   * L4 health probe. Must not claim ready unless the computer can actually serve.
+   * FakeProvider is not CDP proof.
+   */
+  healthProbe(ref: string): Promise<void>;
 }

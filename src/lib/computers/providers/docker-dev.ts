@@ -27,7 +27,7 @@ import type {
   RestoreRequest,
   TakeoverGrant,
 } from "../types.js";
-import { ComputerError, ProviderUnavailable, PathEscape } from "../errors.js";
+import { ComputerError, PathEscape, ProviderUnavailable, RestoreUnsupported } from "../errors.js";
 import { assertInsideRoot } from "../path.js";
 
 export const DOCKER_DEV_IMAGE = "flok-computer-dev:0.0.1";
@@ -439,7 +439,14 @@ export class DockerDevProvider implements ComputerProvider {
   }
 
   async restore(_request: RestoreRequest): Promise<ProviderComputer> {
-    throw new ProviderUnavailable("docker-dev", "restore not implemented in C2");
+    throw new RestoreUnsupported("docker-dev");
+  }
+
+  async healthProbe(ref: string): Promise<void> {
+    const st = await this.status(ref);
+    if (st.state !== "ready" && st.state !== "running") {
+      throw new ProviderUnavailable("docker-dev", `health probe failed: ${st.state}`);
+    }
   }
 
   /**

@@ -6,10 +6,11 @@ Historical C0–C6 remain the closed engineering record (do not re-open them). L
 
 Nexus-IQ / AEON / Graphiti stay **forbidden** until **Gate G0** is marked PASSED.
 
-**Current open phase: L3 — Private beta launch.**  
+**Current open phase: L4 — Reliability / recovery.**  
 **L0 is CLOSED** — Adaptive-Liquidity/floks-pc#17 (`bda72e0`).  
 **L1 is CLOSED** — Adaptive-Liquidity/floks-pc#21 (`61c9747`). Live remote Grok Bot over authenticated HTTPS + paid Runloop Agent Computer (CDP AX + fs) + this-run destroy.  
-**L2 is CLOSED** — Adaptive-Liquidity/floks-pc#22 (`7a3402d`). Loopback Live Node Console.
+**L2 is CLOSED** — Adaptive-Liquidity/floks-pc#22 (`7a3402d`). Loopback Live Node Console.  
+**L3 is CLOSED** — Adaptive-Liquidity/floks-pc#23 (`d118746`). Private-beta invite cap, idle auto-shutdown, cost warning.
 
 Product language: `docs/computers/agent-computer-cloud.md`.  
 Runloop Devbox is **provider v1**, not the product name.
@@ -102,7 +103,9 @@ Before L3 private beta, FLOKS must persist or reconcile ComputerRecord, provider
 
 **Purpose:** Let users sign up / join while upgrades continue.
 
-**Status:** OPEN
+**Status:** CLOSED / PASSED (2026-08-27)
+
+**Evidence:** Adaptive-Liquidity/floks-pc#23 squash `d118746`. Invite/waitlist, durable roster, per-owner active cap, idle auto-shutdown, cost warning, known-limitations / bug template / metadata-only debug packet. Eight MCP tools unchanged. No paid Runloop.
 
 **L3 = minimal private-beta safety caps only** (not the L7 quota/billing platform):
 
@@ -124,11 +127,25 @@ Do **not** build L7 here: no billing ledger, no worker queue, no OpenTelemetry p
 
 ### PHASE L4 — Reliability / recovery
 
-**Purpose:** Agent Computers survive real use. Maps former Phase 8 (C8). **Provider workspace snapshots** (pause/wake/restore of guest disk), not control-plane ComputerRecord/pair/capability persistence — that must already exist before L3.
+**Purpose:** Agent Computers survive real use. Maps former Phase 8 (C8). **Provider workspace snapshots** (pause/wake/restore of guest disk), not control-plane ComputerRecord/pair/capability persistence — that shipped in L1/L3.
+
+**Status:** OPEN
 
 Includes: provider-native snapshots, wake/pause/resume polish, failed-boot recovery, stale-machine cleanup, restore runbook, better errors, retry-safe observe.
 
-**Gate:** A bot can pause/wake/recover without losing its workspace; operators can recover common failures.
+**Must include:**
+- Checkpoint metadata on the durable ComputerRecord (`pending` / `ready` / `failed` / `restoring` / `restored`). Latest checkpoint only. No secrets, pair codes, capability tokens, screenshots, or provider API keys in checkpoint metadata.
+- Restore without a ready checkpoint **fails closed**. Do not silently provision a blank replacement.
+- Recovery path: mark recovering → destroy original VM with **captured providerRef only** → restore latest checkpoint → re-ensure interactive stack → health probe → ready.
+- Failed health probe → `recovery_failed` or `restore_failed`. Never pretend ready.
+- Observe while paused/waking/recovering is retry-safe (clear retryable error; no fake CDP).
+- Stale cleanup uses captured providerRef only. Destroy failure → `cleanup_needed` + metadata-only operator event.
+- DockerDev restore stays honestly unsupported. FakeProvider restore is deterministic. Runloop uses `snapshotDisk` / `createFromSnapshot`.
+- Exactly eight MCP tools. Operator console stays loopback. No paid Runloop unless the owner approves a live proof.
+
+**Gate:** Destroy the VM → provision a replacement → restore latest checkpoint → a model-created file survives. A bot can pause/wake/recover without losing its workspace; operators can recover common failures.
+
+**Non-goals:** `click_element` (L5), handoffs (L6), billing/quotas/OTel (L7), extra providers (L8), takeover/VNC, Nexus/AEON/Graphiti, new MCP tools.
 
 ---
 
@@ -573,7 +590,7 @@ Do **not** treat the headings below as the currently open sequence. Launch work 
 
 **Historical Gate C8:** Destroy Node VM intentionally → provision replacement → restore latest checkpoint → model-created file survives.
 
-Do not start C8/L4 code while L1 is open.
+Do not start L5 click / L6 handoffs / L7 billing while L4 is open.
 
 ### Former Phase 9 — Explicit Node handoffs → L6
 

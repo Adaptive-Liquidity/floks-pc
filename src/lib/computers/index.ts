@@ -12,8 +12,10 @@ export type {
   Computer,
   ComputerAuditEvent,
   ComputerCapability,
+  CheckpointStatus,
   ComputerCheckpoint,
   ComputerHandoff,
+  ComputerLatestCheckpoint,
   ComputerJob,
   ComputerJobStatus,
   ComputerJobType,
@@ -73,6 +75,8 @@ export {
   CapabilityInvalid,
   CapabilityMissing,
   CapabilityRevoked,
+  CheckpointRequired,
+  CleanupFailed,
   ComputerError,
   ComputerNotFound,
   CrossNodeDenied,
@@ -86,9 +90,11 @@ export {
   InsufficientScope,
   InvalidScope,
   PairCodeInvalid,
+  ObserveRetryable,
   PathEscape,
   ProviderUnavailable,
   QuotaExceeded,
+  RestoreUnsupported,
 } from "./errors.js";
 
 export type { ComputerProvider } from "./providers/provider.js";

@@ -36,8 +36,8 @@ Later backends (browser-only, cheaper workers, microVM, private cloud) are **Pha
 L0  C7 landing / proof lock     CLOSED — PR #17, live Grok Bot CDP AX
 L1  Launch MVP                  CLOSED — PR #21 live remote HTTPS + Runloop
 L2  Beta dashboard              CLOSED — PR #22 Live Node Console
-L3  Private beta                OPEN — invite, active cap, auto-shutdown, cost warning
-L4  Reliability / recovery      C8-class persistence (after users can join)
+L3  Private beta                CLOSED — PR #23 d118746
+L4  Reliability / recovery      OPEN — provider workspace checkpoints / C8 restore
 L5  Safer browser control       click_element from real CDP bounds
 L6  Team / workflow             Explicit one-file handoff
 L7  Scale / quotas / billing
@@ -148,7 +148,7 @@ L1 implementation: `RunloopProvider.fromEnv()` requires `flok-runloop-interactiv
 | Fail-closed `click_element` | Current. Not a launch blocker. Real AX-bounds click is L5. |
 | Cleanup / Devbox shutdown | L0 cleanup proof: Devbox shutdown was verified through the Runloop provider/API. Provider ID redacted. Not via MCP or `Ctrl+C`. Never bulk-shutdown the account. |
 | Durable ComputerRecord / pair / capability / active-machine accounting | **Required before L3.** In-memory is local/dev only. Raw capability tokens are never stored. |
-| Provider workspace snapshots | **L4.** Not a substitute for control-plane records. |
+| Provider workspace snapshots | **L4 (open).** Provider-native checkpoint/restore. Not a substitute for control-plane records. |
 | Takeover / public VNC | Fail-closed. Not launch. |
 | Handoffs | `PHASE_NOT_STARTED` (L6). Still listed as two of the eight tools. |
 | Dashboard / cost / pair UI | L2. |

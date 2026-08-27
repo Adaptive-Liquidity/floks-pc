@@ -496,17 +496,14 @@ export class RunloopProvider implements ComputerProvider {
     if (!request.providerSnapshotRef) {
       throw new ProviderUnavailable("runloop", "providerSnapshotRef required");
     }
-    const existing = request.computerId
-      ? this.sessions.get(request.computerId)
-      : undefined;
     const params: RunloopCreateParams = {
-      birdId: existing?.birdId ?? "restore",
-      flockId: existing?.flockId ?? "restore",
+      birdId: request.birdId ?? "restore",
+      flockId: request.flockId ?? "restore",
       blueprint: this.blueprint,
       architecture: DEFAULT_RUNLOOP_ARCH,
       keepAliveSeconds: this.keepAliveSeconds,
       labels: buildAgentComputerLabels(
-        { birdId: existing?.birdId ?? "restore", flockId: existing?.flockId ?? "restore" },
+        { birdId: request.birdId ?? "restore", flockId: request.flockId ?? "restore" },
         { ownerId: this.ownerId, workspaceId: this.workspaceId },
       ),
       envVars: {},
@@ -525,6 +522,15 @@ export class RunloopProvider implements ComputerProvider {
       throw e;
     }
     return { providerRef: session.id, status: "ready" };
+  }
+
+  async healthProbe(ref: string): Promise<void> {
+    const s = await this.requireSession(ref);
+    if (this.requireInteractive && !s.interactiveGuest) {
+      throw new InteractiveBlueprintRequired(
+        "health probe failed: guest is missing flok-ui / Xvfb / Chrome",
+      );
+    }
   }
 
   private createParams(spec: ComputerSpec): RunloopCreateParams {

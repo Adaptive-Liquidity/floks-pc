@@ -55,6 +55,10 @@ interface FakeMachine {
 export class FakeProvider implements ComputerProvider {
   readonly name = "fake" as const;
   private machines = new Map<string, FakeMachine>();
+  private snapshots = new Map<
+    string,
+    { birdId: string; flockId: string; fs: Map<string, VirtualFile> }
+  >();
   private failures = new Map<string, FailureMode>();
   private seq = 0;
 
@@ -66,8 +70,23 @@ export class FakeProvider implements ComputerProvider {
   /** Clear all injected failures and all machines (for test isolation). */
   reset(): void {
     this.machines.clear();
+    this.snapshots.clear();
     this.failures.clear();
     this.seq = 0;
+  }
+
+  private cloneFs(fs: Map<string, VirtualFile>): Map<string, VirtualFile> {
+    const out = new Map<string, VirtualFile>();
+    for (const [key, value] of fs) {
+      out.set(key, {
+        isDir: value.isDir,
+        content:
+          typeof value.content === "string"
+            ? value.content
+            : Uint8Array.from(value.content),
+      });
+    }
+    return out;
   }
 
   private maybeFail(method: string): void {
@@ -368,39 +387,47 @@ export class FakeProvider implements ComputerProvider {
   async checkpoint(ref: string): Promise<ProviderCheckpoint> {
     this.maybeFail("checkpoint");
     const m = this.getMachine(ref);
-    const snapshotRef = `snap-${ref}-${Date.now()}`;
-    return {
-      providerSnapshotRef: snapshotRef,
-      workspaceObjectKey: `checkpoints/${m.birdId}/${snapshotRef}.tar.zst`,
-      sha256: randomBytes(32).toString("hex"),
-      sizeBytes: 1024,
-    };
+    this.seq += 1;
+    const snapshotRef = `snap-${this.seq}-${randomBytes(4).toString("hex")}`;
+    this.snapshots.set(snapshotRef, {
+      birdId: m.birdId,
+      flockId: m.flockId,
+      fs: this.cloneFs(m.fs),
+    });
+    return { providerSnapshotRef: snapshotRef };
   }
 
-  async restore(_request: RestoreRequest): Promise<ProviderComputer> {
+  async restore(request: RestoreRequest): Promise<ProviderComputer> {
     this.maybeFail("restore");
-    // Simple restore: re-provision a ready machine under a new ref
-    const ref = `fake-restored-${randomBytes(4).toString("hex")}`;
+    const snapshotRef = request.providerSnapshotRef;
+    if (!snapshotRef) {
+      throw new ProviderUnavailable("fake", "providerSnapshotRef required");
+    }
+    const snap = this.snapshots.get(snapshotRef);
+    if (!snap) {
+      throw new ProviderUnavailable("fake", "checkpoint not found");
+    }
+    this.seq += 1;
+    const ref = `fake-restored-${this.seq}-${randomBytes(4).toString("hex")}`;
     const now = new Date();
-    const root = getDefaultWorkspaceRoot();
-    const fs = new Map<string, VirtualFile>();
-    fs.set(root, { content: "", isDir: true });
-    fs.set(`${root}/workspace`, { content: "", isDir: true });
-
     this.machines.set(ref, {
       ref,
-      birdId: "restored",
-      flockId: "restored",
+      birdId: request.birdId ?? snap.birdId,
+      flockId: request.flockId ?? snap.flockId,
       state: "ready",
-      fs,
+      fs: this.cloneFs(snap.fs),
       lastUrl: null,
       createdAt: now,
       lastActiveAt: now,
     });
+    return { providerRef: ref, status: "ready" };
+  }
 
-    return {
-      providerRef: ref,
-      status: "ready",
-    };
+  async healthProbe(ref: string): Promise<void> {
+    this.maybeFail("healthProbe");
+    const m = this.getMachine(ref);
+    if (m.state === "paused" || m.state === "stopped" || m.state === "deleted") {
+      throw new ProviderUnavailable("fake", `health probe failed: ${m.state}`);
+    }
   }
 }

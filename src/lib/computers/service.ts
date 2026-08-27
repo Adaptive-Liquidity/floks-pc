@@ -26,6 +26,7 @@ import type {
   CapabilityScope,
   Computer,
   ComputerCapability,
+  ComputerLatestCheckpoint,
   ComputerOperationAuth,
   ComputerPairCode,
   ComputerSpec,
@@ -48,9 +49,13 @@ import {
   BetaStoreRequired,
   CapabilityInvalid,
   ComputerNotFound,
+  CheckpointRequired,
+  CleanupFailed,
+  ComputerError,
   DestroyConfirmRequired,
   DestroyProviderRefMismatch,
   DuplicateComputer,
+  ObserveRetryable,
   IllegalStateTransition,
   PairCodeInvalid,
   PathEscape,
@@ -76,7 +81,7 @@ import {
   type OperatorPairStatus,
   type OperatorSnapshot,
 } from "../operator/view.js";
-import { assertTransition } from "./state.js";
+import { assertTransition, canTransition } from "./state.js";
 import {
   copyScopes,
   DEFAULT_CAPABILITY_TTL_MS,
@@ -277,6 +282,8 @@ export class ComputerService {
       lastActiveAt: null,
       createdAt: now,
       updatedAt: now,
+      latestCheckpoint: null,
+      recoveryNote: null,
     };
 
     this.computers.set(id, computer);
@@ -361,6 +368,27 @@ export class ComputerService {
     return updated;
   }
 
+  private async patchComputer(
+    computerId: string,
+    patch: Partial<Pick<Computer, "latestCheckpoint" | "recoveryNote" | "providerRef">>,
+  ): Promise<Computer> {
+    const current = await this.get(computerId);
+    const updated: Computer = {
+      ...current,
+      ...patch,
+      updatedAt: new Date(this.now()),
+    };
+    this.computers.set(computerId, updated);
+    await this.persist();
+    return updated;
+  }
+
+  private assertObserveAvailable(computer: Computer): void {
+    if (computer.state === "deleted") throw new ComputerNotFound(computer.id);
+    if (computer.state === "ready" || computer.state === "running") return;
+    throw new ObserveRetryable(computer.state);
+  }
+
   /** List all computers currently tracked (test / debug helper). */
   list(): Computer[] {
     return [...this.computers.values()];
@@ -413,11 +441,29 @@ export class ComputerService {
       const last = (computer.lastActiveAt ?? computer.createdAt).getTime();
       if (now - last < this.beta.idleTtlMs) continue;
       if (!computer.providerRef) continue;
-      await this.destroyThisComputer(computer.id, {
-        confirm: true,
-        providerRef: computer.providerRef,
-      });
-      destroyed.push(computer.id);
+      try {
+        await this.destroyThisComputer(computer.id, {
+          confirm: true,
+          providerRef: computer.providerRef,
+        });
+        destroyed.push(computer.id);
+      } catch {
+        const cur = await this.get(computer.id);
+        if (cur.state !== "cleanup_needed" && canTransition(cur.state, "cleanup_needed")) {
+          this.applyTransition(cur, "cleanup_needed");
+          await this.patchComputer(cur.id, {
+            recoveryNote: "idle cleanup failed; retry with captured providerRef only",
+          });
+        }
+        this.recordOperatorEvent({
+          computerId: computer.id,
+          birdId: computer.birdId,
+          kind: "cleanup",
+          operation: "idle-destroy",
+          success: false,
+          errorCode: "CLEANUP_FAILED",
+        });
+      }
     }
     return destroyed;
   }
@@ -454,6 +500,10 @@ export class ComputerService {
         provider: c.provider,
         lastActiveAt: c.lastActiveAt ? c.lastActiveAt.toISOString() : null,
         createdAt: c.createdAt.toISOString(),
+        checkpointStatus: c.latestCheckpoint?.status ?? null,
+        checkpointId: c.latestCheckpoint?.id ?? null,
+        checkpointAt: c.latestCheckpoint?.createdAt.toISOString() ?? null,
+        recoveryNote: c.recoveryNote,
       })),
       events: this.listOperatorEvents(),
       limitations: [...BETA_LIMITATIONS],
@@ -481,7 +531,7 @@ export class ComputerService {
     request: ObserveRequest,
   ): Promise<OperatorObserveResult> {
     const computer = await this.get(computerId);
-    if (computer.state === "deleted") throw new ComputerNotFound(computerId);
+    this.assertObserveAvailable(computer);
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
     const observation = await this.provider.observe(ref, {
@@ -538,20 +588,44 @@ export class ComputerService {
       throw new DestroyProviderRefMismatch();
     }
     if (computer.state !== "deleting") {
-      await this.transition(computerId, "deleting");
+      if (computer.state === "cleanup_needed") {
+        this.applyTransition(computer, "deleting");
+        await this.persist();
+      } else {
+        await this.transition(computerId, "deleting");
+      }
     }
     const current = await this.get(computerId);
     if (current.state === "deleted") return current;
-    const deleted = await this.transition(computerId, "deleted");
-    this.recordOperatorEvent({
-      computerId: deleted.id,
-      birdId: deleted.birdId,
-      kind: "cleanup",
-      operation: "destroy",
-      success: true,
-      errorCode: null,
-    });
-    return deleted;
+    try {
+      const deleted = await this.transition(computerId, "deleted");
+      this.recordOperatorEvent({
+        computerId: deleted.id,
+        birdId: deleted.birdId,
+        kind: "cleanup",
+        operation: "destroy",
+        success: true,
+        errorCode: null,
+      });
+      return deleted;
+    } catch {
+      const failed = await this.get(computerId);
+      if (failed.state === "deleting" && canTransition(failed.state, "cleanup_needed")) {
+        this.applyTransition(failed, "cleanup_needed");
+        await this.patchComputer(failed.id, {
+          recoveryNote: "destroy failed; retry with captured providerRef only",
+        });
+      }
+      this.recordOperatorEvent({
+        computerId: computer.id,
+        birdId: computer.birdId,
+        kind: "cleanup",
+        operation: "destroy",
+        success: false,
+        errorCode: "CLEANUP_FAILED",
+      });
+      throw new CleanupFailed();
+    }
   }
 
   /**
@@ -861,6 +935,7 @@ export class ComputerService {
     request: ObserveRequest,
   ): Promise<Observation> {
     const { computer } = this.authorize(auth, computerId, "observe");
+    this.assertObserveAvailable(computer);
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
     const observation = await this.provider.observe(ref, request);
@@ -900,14 +975,229 @@ export class ComputerService {
 
   async wake(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {
     this.authorize(auth, computerId, "lifecycle");
-    const current = await this.get(computerId);
-    if (current.state === "running") return current;
-    return this.transition(computerId, "running");
+    return this.wakeThisComputer(computerId);
   }
 
   async pause(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {
     this.authorize(auth, computerId, "lifecycle");
-    return this.transition(computerId, "paused");
+    return this.pauseThisComputer(computerId);
+  }
+
+  async pauseThisComputer(computerId: string): Promise<Computer> {
+    const current = await this.get(computerId);
+    if (current.state === "paused") return current;
+    const paused = await this.transition(computerId, "paused");
+    this.recordOperatorEvent({
+      computerId: paused.id,
+      birdId: paused.birdId,
+      kind: "status",
+      operation: "pause",
+      success: true,
+      errorCode: null,
+    });
+    return paused;
+  }
+
+  async wakeThisComputer(computerId: string): Promise<Computer> {
+    const current = await this.get(computerId);
+    if (current.state === "ready" || current.state === "running") return current;
+    let computer = this.applyTransition(current, "waking");
+    await this.persist();
+    const ref = this.requireProviderRef(computer);
+    try {
+      await this.provider.wake(ref);
+      await this.provider.healthProbe(ref);
+    } catch {
+      computer = this.applyTransition(await this.get(computerId), "recovery_failed");
+      await this.patchComputer(computer.id, {
+        recoveryNote: "wake health probe failed",
+      });
+      this.recordOperatorEvent({
+        computerId: computer.id,
+        birdId: computer.birdId,
+        kind: "status",
+        operation: "wake",
+        success: false,
+        errorCode: "RECOVERY_FAILED",
+      });
+      throw new ComputerError("RECOVERY_FAILED", "wake failed health probe");
+    }
+    computer = this.applyTransition(await this.get(computerId), "ready");
+    await this.patchComputer(computer.id, { recoveryNote: null });
+    this.recordOperatorEvent({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "status",
+      operation: "wake",
+      success: true,
+      errorCode: null,
+    });
+    return await this.get(computerId);
+  }
+
+  async checkpointThisComputer(computerId: string): Promise<Computer> {
+    const current = await this.get(computerId);
+    const from = current.state;
+    const ref = this.requireProviderRef(current);
+    let computer = this.applyTransition(current, "checkpointing");
+    const pending: ComputerLatestCheckpoint = {
+      id: newId(),
+      providerSnapshotRef: "pending",
+      createdAt: new Date(this.now()),
+      status: "pending",
+    };
+    computer = { ...computer, latestCheckpoint: pending, recoveryNote: null };
+    this.computers.set(computer.id, computer);
+    await this.persist();
+    try {
+      const snap = await this.provider.checkpoint(ref);
+      const ready: ComputerLatestCheckpoint = {
+        id: pending.id,
+        providerSnapshotRef: snap.providerSnapshotRef,
+        createdAt: pending.createdAt,
+        status: "ready",
+      };
+      const resumeTo: ComputerState =
+        from === "paused" || from === "running" || from === "ready" ? from : "ready";
+      this.applyTransition(await this.get(computerId), resumeTo);
+      computer = await this.patchComputer(computerId, { latestCheckpoint: ready });
+      this.recordOperatorEvent({
+        computerId: computer.id,
+        birdId: computer.birdId,
+        kind: "status",
+        operation: "checkpoint",
+        success: true,
+        errorCode: null,
+      });
+      return computer;
+    } catch (err) {
+      const failed: ComputerLatestCheckpoint = {
+        ...pending,
+        status: "failed",
+      };
+      const resumeTo: ComputerState =
+        from === "paused" || from === "running" || from === "ready" ? from : "error";
+      if (canTransition("checkpointing", resumeTo)) {
+        this.applyTransition(await this.get(computerId), resumeTo);
+      }
+      await this.patchComputer(computerId, {
+        latestCheckpoint: failed,
+        recoveryNote: "checkpoint failed",
+      });
+      this.recordOperatorEvent({
+        computerId,
+        birdId: current.birdId,
+        kind: "status",
+        operation: "checkpoint",
+        success: false,
+        errorCode: "CHECKPOINT_FAILED",
+      });
+      throw err;
+    }
+  }
+
+  async recoverThisComputer(computerId: string): Promise<Computer> {
+    const current = await this.get(computerId);
+    const latest = current.latestCheckpoint;
+    if (!latest || (latest.status !== "ready" && latest.status !== "restored")) {
+      throw new CheckpointRequired();
+    }
+    let computer = this.applyTransition(current, "recovering");
+    computer = {
+      ...computer,
+      latestCheckpoint: { ...latest, status: "restoring" },
+      recoveryNote: null,
+    };
+    this.computers.set(computer.id, computer);
+    await this.persist();
+
+    const oldRef = computer.providerRef;
+    if (oldRef) {
+      try {
+        await this.provider.destroy(oldRef);
+      } catch {
+        this.applyTransition(await this.get(computerId), "cleanup_needed");
+        await this.patchComputer(computerId, {
+          recoveryNote: "cleanup failed; captured providerRef still required",
+        });
+        this.recordOperatorEvent({
+          computerId,
+          birdId: current.birdId,
+          kind: "cleanup",
+          operation: "recover-destroy",
+          success: false,
+          errorCode: "CLEANUP_FAILED",
+        });
+        throw new CleanupFailed();
+      }
+      await this.patchComputer(computerId, { providerRef: null });
+    }
+
+    let restoredRef: string;
+    try {
+      const restored = await this.provider.restore({
+        computerId,
+        checkpointId: latest.id,
+        providerSnapshotRef: latest.providerSnapshotRef,
+        birdId: current.birdId,
+        flockId: current.flockId,
+      });
+      restoredRef = restored.providerRef;
+      await this.patchComputer(computerId, { providerRef: restoredRef });
+    } catch {
+      const live = await this.get(computerId);
+      if (live.state === "recovering" && canTransition(live.state, "restore_failed")) {
+        this.applyTransition(live, "restore_failed");
+      }
+      await this.patchComputer(computerId, { recoveryNote: "restore failed" });
+      this.recordOperatorEvent({
+        computerId,
+        birdId: current.birdId,
+        kind: "cleanup",
+        operation: "recover",
+        success: false,
+        errorCode: "RESTORE_FAILED",
+      });
+      throw new ComputerError("RESTORE_FAILED", "restore failed");
+    }
+
+    try {
+      await this.provider.healthProbe(restoredRef);
+    } catch {
+      const live = await this.get(computerId);
+      if (live.state === "recovering" && canTransition(live.state, "recovery_failed")) {
+        this.applyTransition(live, "recovery_failed");
+      }
+      await this.patchComputer(computerId, { recoveryNote: "health probe failed after restore" });
+      this.recordOperatorEvent({
+        computerId,
+        birdId: current.birdId,
+        kind: "cleanup",
+        operation: "recover",
+        success: false,
+        errorCode: "RECOVERY_FAILED",
+      });
+      throw new ComputerError("RECOVERY_FAILED", "health probe failed after restore");
+    }
+
+    const restoredCheckpoint: ComputerLatestCheckpoint = {
+      ...latest,
+      status: "restored",
+    };
+    this.applyTransition(await this.get(computerId), "ready");
+    computer = await this.patchComputer(computerId, {
+      latestCheckpoint: restoredCheckpoint,
+      recoveryNote: null,
+    });
+    this.recordOperatorEvent({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "cleanup",
+      operation: "recover",
+      success: true,
+      errorCode: null,
+    });
+    return computer;
   }
 
   async stop(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {

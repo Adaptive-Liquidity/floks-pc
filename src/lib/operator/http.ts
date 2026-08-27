@@ -126,6 +126,22 @@ function mapComputerError(err: ComputerError): { status: number; code: string; m
   if (err.code === "OPERATOR_ORIGIN_FORBIDDEN") {
     return { status: 403, code: err.code, message: err.message };
   }
+  if (err.code === "OBSERVE_RETRYABLE") {
+    return { status: 409, code: err.code, message: err.message };
+  }
+  if (err.code === "CHECKPOINT_REQUIRED") {
+    return { status: 409, code: err.code, message: err.message };
+  }
+  if (err.code === "RESTORE_UNSUPPORTED") {
+    return { status: 501, code: err.code, message: err.message };
+  }
+  if (
+    err.code === "CLEANUP_FAILED" ||
+    err.code === "RESTORE_FAILED" ||
+    err.code === "RECOVERY_FAILED"
+  ) {
+    return { status: 409, code: err.code, message: err.message };
+  }
   return { status: 400, code: err.code, message: "operator request refused" };
 }
 
@@ -238,6 +254,34 @@ export async function handleOperatorHttp(
         return;
       }
       json(res, 200, { computer: view });
+      return;
+    }
+    const checkpointId = computerIdFrom(pathname, "/checkpoint");
+    if (checkpointId && req.method === "POST") {
+      await readJsonBody(req);
+      const computer = await opts.service.checkpointThisComputer(checkpointId);
+      json(res, 200, { computer: opts.service.operatorSnapshot().computers.find((c) => c.id === computer.id) });
+      return;
+    }
+    const wakeId = computerIdFrom(pathname, "/wake");
+    if (wakeId && req.method === "POST") {
+      await readJsonBody(req);
+      const computer = await opts.service.wakeThisComputer(wakeId);
+      json(res, 200, { computer: opts.service.operatorSnapshot().computers.find((c) => c.id === computer.id) });
+      return;
+    }
+    const pauseId = computerIdFrom(pathname, "/pause");
+    if (pauseId && req.method === "POST") {
+      await readJsonBody(req);
+      const computer = await opts.service.pauseThisComputer(pauseId);
+      json(res, 200, { computer: opts.service.operatorSnapshot().computers.find((c) => c.id === computer.id) });
+      return;
+    }
+    const recoverId = computerIdFrom(pathname, "/recover");
+    if (recoverId && req.method === "POST") {
+      await readJsonBody(req);
+      const computer = await opts.service.recoverThisComputer(recoverId);
+      json(res, 200, { computer: opts.service.operatorSnapshot().computers.find((c) => c.id === computer.id) });
       return;
     }
     const observeId = computerIdFrom(pathname, "/observe");

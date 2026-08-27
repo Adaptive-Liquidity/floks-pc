@@ -74,7 +74,9 @@ Ordinary containers share the host kernel and are not the production security ar
 
 - **L1** uses the existing eight MCP tools, Runloop provider v1, and fail-closed `click_element`.
 - Dashboard is **L2**. Private beta signup is **L3**. Snapshots/recovery **L4**. Safer clicks **L5**. Handoffs **L6**. Quotas/worker **L7**. Extra providers **L8**. Enterprise **L9**.
-- Checkpoints, Kata, and the job queue in the diagram above are target architecture, not launch-blocking.
+- L4 checkpoints are **provider-native snapshots** (Runloop `snapshotDisk` / Fake in-memory FS clone). `tar + zstd` object storage remains the future/archive format, not this PR.
+- Recovery path: mark recovering → provision replacement from latest checkpoint → health probe → ready. No checkpoint → fail closed.
+- Kata and the job queue in the diagram above remain later architecture.
 
 ## Nexus-IQ (Phase 14+, after G0)
 

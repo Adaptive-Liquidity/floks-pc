@@ -16,25 +16,26 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 
 ## Current status
 
-Product object: **Agent Computer**. Backend v1: **Runloop Devbox**. Open work: **L3 private beta**.
+Product object: **Agent Computer**. Backend v1: **Runloop Devbox**. Open work: **L4 reliability / recovery**.
 
 | Launch | Status |
 |--------|--------|
 | **L0** — C7 landing / CDP AX proof | **CLOSED / PASSED** — [PR #17](https://github.com/Adaptive-Liquidity/floks-pc/pull/17) (`bda72e0`). Live Grok Bot `computer_observe({ include_accessibility: true })` → `accessibility_summary.source === "cdp"` with real nodes. FakeProvider is not proof. |
 | **L1** — Launch MVP: one bot, one Agent Computer | **CLOSED / PASSED** — [PR #21](https://github.com/Adaptive-Liquidity/floks-pc/pull/21) (`61c9747`). Remote Grok Bot over authenticated HTTPS; live Runloop pair/status/observe `source=cdp` + fs; this-run destroy. |
 | **L2** — Bot Computers / Live Node Console | **CLOSED / PASSED** — [PR #22](https://github.com/Adaptive-Liquidity/floks-pc/pull/22) (`7a3402d`). Loopback `127.0.0.1:8788/console`. |
-| **L3** — Private beta | **OPEN** — invite/waitlist, per-owner active cap, idle auto-shutdown, cost warning. Not L7 billing. |
-| **L4–L9** — recovery, safer click, handoffs, **L7 quotas/billing**, provider fabric, enterprise | After users can join. See `PHASES.md` and `docs/computers/agent-computer-cloud.md`. |
+| **L3** — Private beta | **CLOSED / PASSED** — [PR #23](https://github.com/Adaptive-Liquidity/floks-pc/pull/23) (`d118746`). Invite/waitlist, per-owner active cap, idle auto-shutdown, cost warning. Not L7 billing. |
+| **L4** — Reliability / recovery | **OPEN** — provider-native checkpoints, pause/wake + health probe, failed-boot restore, stale cleanup-needed, retry-safe observe. |
+| **L5–L9** — safer click, handoffs, **L7 quotas/billing**, provider fabric, enterprise | After L4. See `PHASES.md` and `docs/computers/agent-computer-cloud.md`. |
 
-Historical C0–C6 (scaffold → pairing → MCP → shell/fs) are **CLOSED**. `click_element` stays fail-closed until **L5**. Takeover, snapshots, and extra MCP tools are not launch. Nexus-IQ remains hard-locked until Gate G0.
+Historical C0–C6 (scaffold → pairing → MCP → shell/fs) are **CLOSED**. `click_element` stays fail-closed until **L5**. Takeover and extra MCP tools are not launch. Nexus-IQ remains hard-locked until Gate G0.
 
 ## Authority files (read in this order)
 
 1. `AGENTS.md` — isolation fence + phase enforcement for every coding agent
 2. `AUTHORITY.md` — local product & architecture contract
-3. `PHASES.md` — launch sequence L0–L9 (current open: L3) plus historical C0–C6 / G0 lock
+3. `PHASES.md` — launch sequence L0–L9 (current open: L4) plus historical C0–C6 / G0 lock
 4. `docs/computers/agent-computer-cloud.md` — product object, feature matrix, what not to claim
-5. `docs/computers/` — architecture, MCP, security, provider contract
+5. `docs/computers/` — architecture, MCP, security, provider contract, L4 `RELIABILITY_RECOVERY.md`
 
 ## Hard locks
 

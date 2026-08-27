@@ -10,7 +10,11 @@ Same process as MCP (`npm run start:mcp`), **different socket**. MCP stays on `F
 |------|------|
 | `GET /console` | Live Node Console HTML (loopback) |
 | `GET /operator/v1/snapshot` | Bots, computers, metadata-only events |
-| `POST /operator/v1/computers/:id/observe` | Control-plane observe (no Bot token) |
+| `POST /operator/v1/computers/:id/observe` | Control-plane observe (no Bot token). Paused/waking/recovering → `OBSERVE_RETRYABLE`. |
+| `POST /operator/v1/computers/:id/checkpoint` | Provider-native workspace checkpoint (L4) |
+| `POST /operator/v1/computers/:id/wake` | Wake + health probe (L4) |
+| `POST /operator/v1/computers/:id/pause` | Pause (L4) |
+| `POST /operator/v1/computers/:id/recover` | Restore latest checkpoint (L4). Fails closed if none. |
 | `POST /operator/v1/computers/:id/destroy` | Selected computer only; `confirm: true` + captured `providerRef` |
 
 `POST /mcp` is unchanged. Eight tools. Destroy is still not an MCP tool. Operator routes refuse `X-Forwarded-For` / `Forwarded` / `CF-Connecting-IP`.
@@ -32,6 +36,8 @@ A non-engineer can answer:
 
 Event log records pair, status, observe, browser, file, exec, fail-closed, cleanup. Metadata only — no screenshots, terminal output, cookies, or page contents.
 
-## Not in L2
+L4 adds checkpoint status, recovery notes, and cleanup-needed on the same loopback console. See `docs/computers/RELIABILITY_RECOVERY.md`.
 
-New MCP tools, `click_element`, takeover/VNC, C8 snapshots, C9 handoffs, Nexus/AEON/Graphiti, billing meters (L7), paid Runloop in required CI.
+## Not in this console
+
+New MCP tools, `click_element`, takeover/VNC, C9 handoffs, Nexus/AEON/Graphiti, billing meters (L7), paid Runloop in required CI.

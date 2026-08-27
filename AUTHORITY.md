@@ -13,9 +13,9 @@ Launch sequence and customer-facing object: `PHASES.md` (L0–L9) and `docs/comp
 
 **Runloop Devbox** = backend **provider v1**. It is infrastructure, not the product name. Do not describe the product as “just Devboxes,” “headless browser orchestration,” or “containerized.”
 
-**Now (L0–L2 closed / L3 private beta):** pair + capability, Runloop v1, authenticated HTTPS remote MCP, Live Node Console, invite/waitlist, per-owner active cap, idle auto-shutdown, cost warning, fail-closed `click_element`. In-memory ComputerService is local/dev only. Workspace snapshots remain L4.
+**Now (L0–L3 closed / L4 reliability):** pair + capability, Runloop v1, authenticated HTTPS remote MCP, Live Node Console, invite/waitlist, per-owner active cap, idle auto-shutdown, cost warning, fail-closed `click_element`, provider workspace checkpoints/recovery. In-memory ComputerService is local/dev only.
 
-**Later:** provider workspace snapshots / recovery (L4), AX-bounds `click_element` (L5), one-file handoff (L6), **real quotas/billing (L7)**, extra providers (L8), enterprise / private infra (L9), authenticated VNC takeover.
+**Later:** AX-bounds `click_element` (L5), one-file handoff (L6), **real quotas/billing (L7)**, extra providers (L8), enterprise / private infra (L9), authenticated VNC takeover.
 
 Do not claim residential proxies, bot-detection bypass, full root / uncensored terminal, unthrottled infra, or production-ready security.
 
