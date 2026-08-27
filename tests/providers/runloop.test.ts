@@ -44,7 +44,10 @@ describe("RunloopProvider (no network)", () => {
     assert.equal(isIdempotentShutdownError(new Error("resource deleted")), true);
     assert.equal(isIdempotentShutdownError({ status: 404, message: "gone" }), true);
     assert.equal(isIdempotentShutdownError(new Error("shutdown request failed")), false);
+    assert.equal(isIdempotentShutdownError(new Error("shutdown already failed")), false);
     assert.equal(isIdempotentShutdownError(new Error("internal error")), false);
+    assert.equal(isIdempotentShutdownError(null), false);
+    assert.equal(isIdempotentShutdownError(undefined), false);
   });
 
   it("advertises honest C3B capabilities", () => {
