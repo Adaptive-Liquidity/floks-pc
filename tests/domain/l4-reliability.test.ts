@@ -31,15 +31,18 @@ describe("L4 reliability / recovery", () => {
     provider = new FakeProvider();
   });
 
-  it("PHASES marks L3 closed and L4 open; AGENTS allows L4 snapshots", () => {
+  it("PHASES marks L3 closed and L4 optional insurance; AGENTS does not start L5+", () => {
     const phases = readFileSync(join(root, "PHASES.md"), "utf8");
     const agents = readFileSync(join(root, "AGENTS.md"), "utf8");
-    assert.match(phases, /Current open phase: L4 — Reliability \/ recovery/);
+    assert.match(phases, /Usable private-beta product is L0–L3/);
+    assert.match(phases, /L4 is optional insurance/);
     assert.match(phases, /### PHASE L3[\s\S]*?\*\*Status:\*\* CLOSED \/ PASSED/);
-    assert.match(phases, /### PHASE L4[\s\S]*?\*\*Status:\*\* OPEN/);
-    assert.match(agents, /Current open phase: L4 — Reliability \/ recovery/);
-    assert.match(agents, /L3 is CLOSED \(PR #23/);
-    assert.doesNotMatch(agents, /Do not start L4\+ \*\*workspace snapshots/);
+    assert.match(phases, /### PHASE L4[\s\S]*?\*\*Status:\*\* OPEN on PR #24/);
+    assert.doesNotMatch(phases, /Current open phase: L4/);
+    assert.match(agents, /L0–L3 is enough for a usable private beta/);
+    assert.match(agents, /L4 \(PR #24\) is \*\*optional reliability insurance\*\*/);
+    assert.match(agents, /L3 CLOSED \(PR #23/);
+    assert.match(agents, /Do not automatically start L5 \/ L6 \/ L7 \/ L8 \/ G0/);
   });
 
   it("keeps exactly eight MCP tools", () => {
