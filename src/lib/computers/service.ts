@@ -185,8 +185,11 @@ export class ComputerService {
   }
 
   private async persist(): Promise<void> {
-    if (!this.store) return;
-    this.persistChain = this.persistChain.then(() => this.store!.save(this.toSnapshot()));
+    const store = this.store;
+    if (!store) return;
+    this.persistChain = this.persistChain
+      .catch(() => undefined)
+      .then(() => store.save(this.toSnapshot()));
     await this.persistChain;
   }
 
@@ -241,6 +244,7 @@ export class ComputerService {
 
     // requested → provisioning
     computer = this.applyTransition(computer, "provisioning");
+    await this.persist();
 
     // Call provider
     const provisioned = await this.provider.provision(spec);

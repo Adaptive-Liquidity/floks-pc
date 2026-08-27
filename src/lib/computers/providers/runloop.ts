@@ -207,11 +207,16 @@ export class RunloopProvider implements ComputerProvider {
   async wake(ref: string): Promise<void> {
     const s = await this.requireSession(ref);
     await s.resume();
-    await s.ensureInteractiveStack();
-    if (this.requireInteractive && !s.interactiveGuest) {
-      throw new InteractiveBlueprintRequired(
-        "guest is missing flok-ui / Xvfb / Chrome after wake; not an Agent Computer",
-      );
+    try {
+      await s.ensureInteractiveStack();
+      if (this.requireInteractive && !s.interactiveGuest) {
+        throw new InteractiveBlueprintRequired(
+          "guest is missing flok-ui / Xvfb / Chrome after wake; not an Agent Computer",
+        );
+      }
+    } catch (e) {
+      await s.suspend().catch(() => undefined);
+      throw e;
     }
   }
 

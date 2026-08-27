@@ -4,7 +4,7 @@
  */
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { z } from "zod";
 import type { CapabilityScope, Computer, ComputerCapability, ComputerPairCode } from "./types.js";
 import {
@@ -79,14 +79,45 @@ export class JsonFileControlPlaneStore implements ControlPlaneStore {
   }
 }
 
+const ControlPlanePathEnvSchema = z.object({
+  FLOK_CONTROL_PLANE_PATH: z.string().trim().min(1).max(4096).optional(),
+});
+
+export const DEFAULT_CONTROL_PLANE_RELATIVE = ".flok/control-plane.json";
+
+export function controlPlaneRoot(cwd: string = process.cwd()): string {
+  return resolve(cwd, ".flok");
+}
+
+/** Canonicalize and jail operator control-plane paths under `<cwd>/.flok`. */
+export function jailedControlPlanePath(
+  userPath: string,
+  cwd: string = process.cwd(),
+): string {
+  const parsed = z.string().trim().min(1).max(4096).parse(userPath);
+  const resolved = resolve(cwd, parsed);
+  const root = controlPlaneRoot(cwd);
+  const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
+  if (resolved !== root && !resolved.startsWith(prefix)) {
+    throw new Error(`FLOK_CONTROL_PLANE_PATH must stay under ${root}`);
+  }
+  return resolved;
+}
+
 export function controlPlaneStoreFromEnv(
   env: NodeJS.ProcessEnv = process.env,
   providerName: string,
 ): ControlPlaneStore | undefined {
-  const path = env.FLOK_CONTROL_PLANE_PATH?.trim();
-  if (path) return new JsonFileControlPlaneStore(path);
+  const raw: { FLOK_CONTROL_PLANE_PATH?: string } = {};
+  if (env.FLOK_CONTROL_PLANE_PATH !== undefined) {
+    raw.FLOK_CONTROL_PLANE_PATH = env.FLOK_CONTROL_PLANE_PATH;
+  }
+  const parsed = ControlPlanePathEnvSchema.parse(raw);
+  if (parsed.FLOK_CONTROL_PLANE_PATH) {
+    return new JsonFileControlPlaneStore(jailedControlPlanePath(parsed.FLOK_CONTROL_PLANE_PATH));
+  }
   if (providerName === "runloop") {
-    return new JsonFileControlPlaneStore(".flok/control-plane.json");
+    return new JsonFileControlPlaneStore(jailedControlPlanePath(DEFAULT_CONTROL_PLANE_RELATIVE));
   }
   return undefined;
 }

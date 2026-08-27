@@ -5,44 +5,80 @@
  * Only destroys computers recorded in FLOK_CONTROL_PLANE_PATH.
  * If more than one candidate matches, exits without destroying.
  */
+import { z } from "zod";
 import { ComputerService } from "../src/lib/computers/service.js";
 import { createMcpProvider } from "../src/mcp-server.js";
 import { controlPlaneStoreFromEnv } from "../src/lib/computers/control-plane-store.js";
 
-function envFlag(name: string): boolean {
-  const v = process.env[name]?.trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
-}
+const EnvFlagSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .pipe(z.enum(["1", "true", "yes"]));
+
+const DestroyEnvSchema = z.object({
+  FLOK_DESTROY_CONFIRM: EnvFlagSchema,
+  FLOK_MCP_PROVIDER: z.string().trim().toLowerCase().pipe(z.literal("runloop")),
+  FLOK_DESTROY_PROVIDER_REF: z.string().trim().min(1),
+  FLOK_CONTROL_PLANE_PATH: z.string().trim().min(1).max(4096).optional(),
+});
 
 async function main(): Promise<void> {
-  if (!envFlag("FLOK_DESTROY_CONFIRM")) {
+  const raw: {
+    FLOK_DESTROY_CONFIRM?: string;
+    FLOK_MCP_PROVIDER?: string;
+    FLOK_DESTROY_PROVIDER_REF?: string;
+    FLOK_CONTROL_PLANE_PATH?: string;
+  } = {};
+  if (process.env.FLOK_DESTROY_CONFIRM !== undefined) {
+    raw.FLOK_DESTROY_CONFIRM = process.env.FLOK_DESTROY_CONFIRM;
+  }
+  if (process.env.FLOK_MCP_PROVIDER !== undefined) {
+    raw.FLOK_MCP_PROVIDER = process.env.FLOK_MCP_PROVIDER;
+  }
+  if (process.env.FLOK_DESTROY_PROVIDER_REF !== undefined) {
+    raw.FLOK_DESTROY_PROVIDER_REF = process.env.FLOK_DESTROY_PROVIDER_REF;
+  }
+  if (process.env.FLOK_CONTROL_PLANE_PATH !== undefined) {
+    raw.FLOK_CONTROL_PLANE_PATH = process.env.FLOK_CONTROL_PLANE_PATH;
+  }
+  const parsed = DestroyEnvSchema.safeParse(raw);
+  if (!parsed.success) {
+    const fields = new Set(parsed.error.issues.map((i) => String(i.path[0] ?? "")));
+    if (fields.has("FLOK_DESTROY_CONFIRM")) {
+      process.stderr.write(
+        "Refusing to destroy: set FLOK_DESTROY_CONFIRM=1 after selecting a single FLOKS run.\n",
+      );
+      process.exit(2);
+    }
+    if (fields.has("FLOK_MCP_PROVIDER")) {
+      process.stderr.write(
+        "Refusing to destroy: FLOK_MCP_PROVIDER=runloop is required so this cannot no-op through FakeProvider.\n",
+      );
+      process.exit(2);
+    }
     process.stderr.write(
-      "Refusing to destroy: set FLOK_DESTROY_CONFIRM=1 after selecting a single FLOKS run.\n",
+      "Refusing to destroy: set FLOK_DESTROY_PROVIDER_REF to the captured providerRef from THIS FLOKS run. If unsure, do not shut down anything.\n",
     );
     process.exit(2);
   }
-  const providerName = process.env.FLOK_MCP_PROVIDER?.trim().toLowerCase() ?? "";
-  if (providerName !== "runloop") {
-    process.stderr.write(
-      "Refusing to destroy: FLOK_MCP_PROVIDER=runloop is required so this cannot no-op through FakeProvider.\n",
-    );
-    process.exit(2);
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    FLOK_MCP_PROVIDER: parsed.data.FLOK_MCP_PROVIDER,
+    FLOK_DESTROY_PROVIDER_REF: parsed.data.FLOK_DESTROY_PROVIDER_REF,
+  };
+  if (parsed.data.FLOK_CONTROL_PLANE_PATH) {
+    env.FLOK_CONTROL_PLANE_PATH = parsed.data.FLOK_CONTROL_PLANE_PATH;
   }
-  const provider = await createMcpProvider();
-  const store = controlPlaneStoreFromEnv(process.env, provider.name);
+  const provider = await createMcpProvider(env);
+  const store = controlPlaneStoreFromEnv(env, provider.name);
   if (!store) {
     process.stderr.write("No durable control-plane store (in-memory is local/dev only).\n");
     process.exit(2);
   }
   const service = new ComputerService(provider, { store });
   await service.hydrate();
-  const wantedRef = process.env.FLOK_DESTROY_PROVIDER_REF?.trim();
-  if (!wantedRef) {
-    process.stderr.write(
-      "Refusing to destroy: set FLOK_DESTROY_PROVIDER_REF to the captured providerRef from THIS FLOKS run. If unsure, do not shut down anything.\n",
-    );
-    process.exit(2);
-  }
+  const wantedRef = parsed.data.FLOK_DESTROY_PROVIDER_REF;
   const live = service.list().filter((c) => c.state !== "deleted" && c.providerRef);
   const selected = live.filter((c) => c.providerRef === wantedRef);
   if (selected.length !== 1) {

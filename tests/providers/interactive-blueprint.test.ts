@@ -8,6 +8,10 @@ import {
   isGenericComputeBlueprint,
   resolveAgentComputerBlueprint,
 } from "../../src/lib/computers/providers/interactive-blueprint.js";
+import {
+  MemoryRunloopControlPlane,
+  RunloopProvider,
+} from "../../src/lib/computers/providers/runloop.js";
 
 describe("L1 interactive blueprint fail-closed", () => {
   it("rejects generic compute-only DnD as an Agent Computer", () => {
@@ -70,5 +74,23 @@ describe("L1 interactive blueprint fail-closed", () => {
       }),
       DEFAULT_RUNLOOP_BLUEPRINT,
     );
+  });
+
+  it("re-pauses a paid session when wake interactive validation fails", async () => {
+    const plane = new MemoryRunloopControlPlane();
+    const provider = new RunloopProvider({
+      client: plane,
+      blueprint: "flok-runloop-interactive",
+      requireInteractive: true,
+    });
+    const computer = await provider.provision({ birdId: "bird-wake", flockId: "flock-wake" });
+    await provider.pause(computer.providerRef);
+    const session = await plane.get(computer.providerRef);
+    session.interactiveGuest = false;
+    await assert.rejects(
+      () => provider.wake(computer.providerRef),
+      (err: unknown) => err instanceof InteractiveBlueprintRequired,
+    );
+    assert.equal(await session.state(), "paused");
   });
 });

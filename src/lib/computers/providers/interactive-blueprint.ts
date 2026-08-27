@@ -4,9 +4,24 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import { DEFAULT_RUNLOOP_BLUEPRINT } from "./runloop-client.js";
 import { DEFAULT_INTERACTIVE_BLUEPRINT } from "./runloop-interactive.js";
 import { ComputerError } from "../errors.js";
+
+const EnvFlagSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .pipe(z.enum(["1", "true", "yes"]));
+
+const OptionalNameSchema = z.string().trim();
+
+function envName(env: NodeJS.ProcessEnv, key: string): string {
+  const raw = env[key];
+  if (raw === undefined) return "";
+  return OptionalNameSchema.parse(raw);
+}
 
 export class InteractiveBlueprintRequired extends ComputerError {
   constructor(detail: string) {
@@ -16,8 +31,9 @@ export class InteractiveBlueprintRequired extends ComputerError {
 }
 
 export function allowComputeOnlyBlueprint(env: NodeJS.ProcessEnv = process.env): boolean {
-  const v = env.FLOK_RUNLOOP_ALLOW_COMPUTE_ONLY?.trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
+  const raw = env.FLOK_RUNLOOP_ALLOW_COMPUTE_ONLY;
+  if (raw === undefined) return false;
+  return EnvFlagSchema.safeParse(raw).success;
 }
 
 export function isGenericComputeBlueprint(name: string): boolean {
@@ -26,10 +42,10 @@ export function isGenericComputeBlueprint(name: string): boolean {
 }
 
 export function isInteractiveBlueprintName(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  const n = name.trim();
+  const n = OptionalNameSchema.parse(name);
   if (!n) return false;
   if (isGenericComputeBlueprint(n)) return false;
-  const extra = env.FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT?.trim();
+  const extra = envName(env, "FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT");
   if (n === DEFAULT_INTERACTIVE_BLUEPRINT) return true;
   if (extra && n === extra) return true;
   return n.includes("interactive") || n.includes("flok-runloop");
@@ -65,8 +81,8 @@ export function buildAgentComputerLabels(
 }
 
 export function resolveAgentComputerBlueprint(env: NodeJS.ProcessEnv = process.env): string {
-  const named = env.FLOK_RUNLOOP_BLUEPRINT?.trim() ?? "";
-  const interactiveAlias = env.FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT?.trim() ?? "";
+  const named = envName(env, "FLOK_RUNLOOP_BLUEPRINT");
+  const interactiveAlias = envName(env, "FLOK_RUNLOOP_INTERACTIVE_BLUEPRINT");
   if (allowComputeOnlyBlueprint(env)) {
     return named || DEFAULT_RUNLOOP_BLUEPRINT;
   }

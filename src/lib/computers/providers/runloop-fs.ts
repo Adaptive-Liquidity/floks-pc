@@ -28,6 +28,11 @@ export function bufferFromBase64Stdout(stdout: string): Buffer {
   return Buffer.from(stdout.trim(), "base64");
 }
 
+/** True only when UTF-8 encode/decode returns the exact input bytes. */
+export function utf8RoundtripEquals(body: Buffer): boolean {
+  return Buffer.from(body.toString("utf8"), "utf8").equals(body);
+}
+
 export const GUEST_READ_B64_PY =
   "import sys,base64,pathlib; sys.stdout.write(base64.b64encode(pathlib.Path(sys.argv[1]).read_bytes()).decode())";
 

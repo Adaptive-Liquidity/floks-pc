@@ -5,6 +5,7 @@ import {
   bufferFromDownload,
   bufferFromUtf8Read,
   fileBytesForUpload,
+  utf8RoundtripEquals,
 } from "../../src/lib/computers/providers/runloop-fs.js";
 
 describe("L1 Runloop guest file helpers", () => {
@@ -37,5 +38,12 @@ describe("L1 Runloop guest file helpers", () => {
     const parts = fileBytesForUpload(body);
     assert.equal(parts.byteLength, body.length);
     assert.equal(Buffer.from(parts).toString("utf8"), "not-empty");
+  });
+
+  it("rejects UTF-8 writes that would preserve size while corrupting bytes", () => {
+    const corrupted = Buffer.from([0xf0, 0x90, 0x80, 0x41]);
+    assert.equal(utf8RoundtripEquals(corrupted), false);
+    assert.equal(Buffer.from(corrupted.toString("utf8"), "utf8").length, corrupted.length);
+    assert.equal(utf8RoundtripEquals(Buffer.from("ascii-ok", "utf8")), true);
   });
 });

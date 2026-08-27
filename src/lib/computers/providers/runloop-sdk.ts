@@ -48,6 +48,7 @@ import {
   bufferFromBase64Stdout,
   bufferFromDownload,
   bufferFromUtf8Read,
+  utf8RoundtripEquals,
 } from "./runloop-fs.js";
 
 const EXECVP_PY = [
@@ -322,9 +323,12 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     try {
       const parent = pathPosix.dirname(path);
       await this.fsMkdir(parent);
-      await this.box.file.write({ file_path: path, contents: body.toString("utf8") });
-      let st = await this.fsStat(path);
-      if (!st.ok || !st.data || st.data.size !== body.length) {
+      let st: RunloopFsResult<{ path: string; isDir: boolean; size: number }> | undefined;
+      if (utf8RoundtripEquals(body)) {
+        await this.box.file.write({ file_path: path, contents: body.toString("utf8") });
+        st = await this.fsStat(path);
+      }
+      if (!st?.ok || !st.data || st.data.size !== body.length) {
         if (body.length > 200_000) return { ok: false, errorCode: "IO_ERROR" };
         const r = await this.execPython(GUEST_WRITE_B64_PY, [path, body.toString("base64")]);
         if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
