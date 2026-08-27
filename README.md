@@ -67,7 +67,7 @@ FLOK_LIVE_RUNLOOP_TEST=1 npm run test:live:runloop
 
 When the flag is set, missing credentials **fail** the suite. Live Runloop is **not** part of `npm run verify` or required PR CI.
 
-Loopback MCP (FakeProvider, not public, not paid, **not** Agent Computer proof). Same process serves the L2 operator console on a **separate loopback port** at `http://127.0.0.1:8788/console`:
+Loopback MCP (FakeProvider, not public, not paid, **not** Agent Computer proof). Same process serves the L2 operator console on a **separate loopback port** at `http://127.0.0.1:8788/console` by default (`FLOK_OPERATOR_LISTEN_PORT` overrides the console port only):
 
 ```bash
 FLOK_MCP_COMPUTERS_ENABLED=1 npm run start:mcp

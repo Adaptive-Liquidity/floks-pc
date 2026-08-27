@@ -4,7 +4,7 @@ Operator UI for **Bot Computers**. Not an MCP tool. Not a Bot capability surface
 
 ## Where it runs
 
-Same process as MCP (`npm run start:mcp`), **different socket**. MCP stays on `FLOK_MCP_LISTEN_PORT` (default 8787). The console always binds `127.0.0.1:8788` (`FLOK_OPERATOR_LISTEN_PORT`). A Grok HTTPS tunnel to `/mcp` must not forward this port. The Bot wrapper token is not operator auth.
+Same process as MCP (`npm run start:mcp`), **different socket**. MCP stays on `FLOK_MCP_LISTEN_PORT` (default 8787). The console binds `127.0.0.1:8788` by default. Set `FLOK_OPERATOR_LISTEN_PORT` to override the console port (not the MCP port). A Grok HTTPS tunnel to `/mcp` must not forward this port. The Bot wrapper token is not operator auth.
 
 | Path | What |
 |------|------|

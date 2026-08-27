@@ -132,6 +132,7 @@ export class ComputerService {
   private readonly workspaceId: string | null;
   private persistChain: Promise<void> = Promise.resolve();
   private operatorEvents: OperatorEvent[] = [];
+  private destroyChains = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly provider: ComputerProvider,
@@ -219,6 +220,7 @@ export class ComputerService {
     this.capabilitiesByDigest.clear();
     this.pairFailuresByIdentity.clear();
     this.operatorEvents = [];
+    this.destroyChains.clear();
   }
 
   /**
@@ -403,15 +405,39 @@ export class ComputerService {
     input: { confirm: boolean; providerRef: string },
   ): Promise<Computer> {
     if (input.confirm !== true) throw new DestroyConfirmRequired();
+    return this.enqueueDestroy(computerId, () =>
+      this.destroyThisComputerLocked(computerId, input.providerRef),
+    );
+  }
+
+  private enqueueDestroy<T>(computerId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.destroyChains.get(computerId) ?? Promise.resolve();
+    const next = prev.catch(() => undefined).then(fn);
+    this.destroyChains.set(
+      computerId,
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return next;
+  }
+
+  private async destroyThisComputerLocked(
+    computerId: string,
+    providerRef: string,
+  ): Promise<Computer> {
     const computer = await this.get(computerId);
-    if (computer.state === "deleted") throw new ComputerNotFound(computerId);
+    if (computer.state === "deleted") return computer;
     if (!computer.providerRef) throw new DestroyProviderRefMismatch();
-    if (input.providerRef !== computer.providerRef) {
+    if (providerRef !== computer.providerRef) {
       throw new DestroyProviderRefMismatch();
     }
     if (computer.state !== "deleting") {
       await this.transition(computerId, "deleting");
     }
+    const current = await this.get(computerId);
+    if (current.state === "deleted") return current;
     const deleted = await this.transition(computerId, "deleted");
     this.recordOperatorEvent({
       computerId: deleted.id,

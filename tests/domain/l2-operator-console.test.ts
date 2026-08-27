@@ -156,6 +156,28 @@ describe("L2 operator console domain", () => {
     assert.equal(still.providerRef, ref);
   });
 
+  it("serializes concurrent destroy so provider.destroy runs once", async () => {
+    const computer = await service.requestComputer({
+      birdId: "bird-once",
+      flockId: FLOCK,
+    });
+    const ref = computer.providerRef;
+    assert.ok(ref);
+    let destroys = 0;
+    const orig = provider.destroy.bind(provider);
+    provider.destroy = async (providerRef: string) => {
+      destroys += 1;
+      await orig(providerRef);
+    };
+    const [a, b] = await Promise.all([
+      service.destroyThisComputer(computer.id, { confirm: true, providerRef: ref }),
+      service.destroyThisComputer(computer.id, { confirm: true, providerRef: ref }),
+    ]);
+    assert.equal(a.state, "deleted");
+    assert.equal(b.state, "deleted");
+    assert.equal(destroys, 1);
+  });
+
   it("buildOperatorComputerView uses plain-language pair/lifecycle labels", () => {
     const view = buildOperatorComputerView(
       {

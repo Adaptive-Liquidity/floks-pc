@@ -18,7 +18,7 @@ Violations are stop-the-line. Revert immediately.
 1. Current user instruction
 2. This `AGENTS.md`
 3. `AUTHORITY.md` — what an Agent Computer is (FLOKS Agent Computer Cloud)
-4. `PHASES.md` — current **open** launch phase (L1) + L0–L9 + historical C0–C6 / G0 lock
+4. `PHASES.md` — current **open** launch phase (L2) + L0–L9 + historical C0–C6 / G0 lock
 5. `docs/computers/agent-computer-cloud.md` then `docs/computers/` — product, architecture, MCP, security, provider contract
 6. `src/lib/computers/` — domain types and ComputerProvider interface
 7. `reference/flok-core/TAKE.md` — curated Flok conventions (read-only)

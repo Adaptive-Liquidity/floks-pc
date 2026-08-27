@@ -91,7 +91,7 @@ Before L3 private beta, FLOKS must persist or reconcile ComputerRecord, provider
 - Right: provider Runloop, capability scopes, session expiry, runtime/cost, pair status, cleanup/destroy, warnings
 - Bottom event log: pair, status, observe, browser, file, exec, fail-closed, cleanup
 
-**Implementation (this phase):** loopback operator console at `127.0.0.1:8788/console` (separate from the MCP listen port). JSON under `/operator/v1`. Bot wrapper token is not operator auth; forwarded clients are refused. Control-plane observe/destroy — not MCP tools. Destroy requires confirm + captured providerRef for the **selected** computer only. Event log is metadata-only (no screenshots, terminal output, cookies, or page contents). FakeProvider is not product proof. Eight MCP tools unchanged.
+**Implementation (this phase):** loopback operator console at `127.0.0.1:8788/console` by default (`FLOK_OPERATOR_LISTEN_PORT` overrides; separate from the MCP listen port). JSON under `/operator/v1`. Bot wrapper token is not operator auth; forwarded clients are refused. Control-plane observe/destroy — not MCP tools. Destroy requires confirm + captured providerRef for the **selected** computer only. Event log is metadata-only (no screenshots, terminal output, cookies, or page contents). FakeProvider is not product proof. Eight MCP tools unchanged.
 
 **Gate:** A non-engineer understands: this bot has this computer, it is running, this is what it sees, these are its permissions, this is how I stop it.
 

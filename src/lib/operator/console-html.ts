@@ -211,6 +211,7 @@ export function operatorConsoleHtml(): string {
       return res;
     }
     function pick(id, snap) {
+      if (selected !== id) lastObserve = null;
       selected = id;
       render(snap);
     }
@@ -264,7 +265,7 @@ export function operatorConsoleHtml(): string {
         ? fileEv.slice(-3).map((e) => e.operation + (e.success ? "" : " failed")).join(" · ")
         : "No file or exec events yet.";
       screen.replaceChildren();
-      if (lastObserve) {
+      if (lastObserve && lastObserve.computerId === cur.id) {
         const ax = lastObserve.accessibility;
         let line = String(lastObserve.screenWidth) + "×" + String(lastObserve.screenHeight);
         if (lastObserve.activeWindow) line += " · " + String(lastObserve.activeWindow);
@@ -311,7 +312,7 @@ export function operatorConsoleHtml(): string {
         body: "{}",
       });
       const body = await res.json();
-      lastObserve = body.observation;
+      lastObserve = Object.assign({ computerId: selected }, body.observation);
       await refresh();
     });
     document.getElementById("destroy").addEventListener("click", async () => {

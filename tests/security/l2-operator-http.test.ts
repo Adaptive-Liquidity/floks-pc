@@ -6,7 +6,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { ComputerService, FakeProvider } from "../../src/lib/computers/index.js";
+import {
+  ComputerError,
+  ComputerService,
+  FakeProvider,
+} from "../../src/lib/computers/index.js";
 import {
   MCP_PATH,
   MCP_TOOL_NAMES,
@@ -14,6 +18,10 @@ import {
   handleMcpHttp,
 } from "../../src/lib/mcp/index.js";
 import { blobContainsSecret } from "../../src/lib/mcp/log.js";
+import {
+  DEFAULT_OPERATOR_LISTEN_PORT,
+  resolveOperatorListenPort,
+} from "../../src/mcp-server.js";
 import {
   OPERATOR_API_PREFIX,
   OPERATOR_CONSOLE_PATH,
@@ -69,6 +77,20 @@ describe("L2 operator HTTP", () => {
     assert.doesNotMatch(html, /sessionStorage/);
     assert.doesNotMatch(html, /flok-operator-token/);
     assert.match(html, /"content-type": "application\/json"/);
+    assert.match(html, /if \(selected !== id\) lastObserve = null/);
+  });
+
+  it("rejects malformed FLOK_OPERATOR_LISTEN_PORT values", () => {
+    assert.equal(resolveOperatorListenPort({}), DEFAULT_OPERATOR_LISTEN_PORT);
+    assert.equal(resolveOperatorListenPort({ FLOK_OPERATOR_LISTEN_PORT: "8799" }), 8799);
+    assert.throws(
+      () => resolveOperatorListenPort({ FLOK_OPERATOR_LISTEN_PORT: "1e3" }),
+      (err: unknown) => err instanceof ComputerError && err.code === "OPERATOR_PORT_INVALID",
+    );
+    assert.throws(
+      () => resolveOperatorListenPort({ FLOK_OPERATOR_LISTEN_PORT: "8788junk" }),
+      (err: unknown) => err instanceof ComputerError && err.code === "OPERATOR_PORT_INVALID",
+    );
   });
 
   it("loopback console lists computers and MCP still has eight tools", async () => {

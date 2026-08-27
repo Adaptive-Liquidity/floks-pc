@@ -46,6 +46,29 @@ export function isLoopbackListenHost(host: string): boolean {
   return host === "127.0.0.1" || host === "::1";
 }
 
+export const DEFAULT_OPERATOR_LISTEN_PORT = 8788;
+
+const OperatorPortSchema = z
+  .string()
+  .trim()
+  .regex(/^\d+$/)
+  .transform((s) => Number.parseInt(s, 10))
+  .pipe(z.number().int().min(1).max(65535));
+
+/** Full-string port parse. Rejects `1e3` / `8788junk` that Number.parseInt would accept. */
+export function resolveOperatorListenPort(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.FLOK_OPERATOR_LISTEN_PORT?.trim();
+  if (!raw) return DEFAULT_OPERATOR_LISTEN_PORT;
+  const parsed = OperatorPortSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ComputerError(
+      "OPERATOR_PORT_INVALID",
+      "FLOK_OPERATOR_LISTEN_PORT must be an integer between 1 and 65535",
+    );
+  }
+  return parsed.data;
+}
+
 /** Non-loopback MCP bind requires wrapper Bearer. Connection auth, not Bot identity. */
 export function assertSafeMcpBind(host: string, authToken: string | undefined): void {
   if (isLoopbackListenHost(host)) return;
@@ -149,20 +172,7 @@ async function main(): Promise<void> {
       endUnhandledMcpError(res);
     });
   });
-  const operatorPortRaw = process.env.FLOK_OPERATOR_LISTEN_PORT?.trim();
-  const operatorPort = operatorPortRaw
-    ? Number.parseInt(operatorPortRaw, 10)
-    : 8788;
-  if (
-    !Number.isInteger(operatorPort) ||
-    operatorPort <= 0 ||
-    operatorPort >= 65536
-  ) {
-    throw new ComputerError(
-      "OPERATOR_PORT_INVALID",
-      "FLOK_OPERATOR_LISTEN_PORT must be an integer between 1 and 65535",
-    );
-  }
+  const operatorPort = resolveOperatorListenPort(process.env);
   if (operatorPort === port) {
     throw new ComputerError(
       "OPERATOR_PORT_COLLISION",
