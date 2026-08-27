@@ -66,6 +66,7 @@ export function buildAgentComputerLabels(
   const runId = opts?.runId?.trim() || newFloksRunId();
   const workspace = opts?.workspaceId?.trim() || spec.flockId;
   const user = opts?.ownerId?.trim() || spec.birdId;
+  // Runloop rejects metadata with more than 8 keys.
   return {
     floks_run_id: runId,
     workspace,
@@ -74,8 +75,6 @@ export function buildAgentComputerLabels(
     flock_id: spec.flockId,
     purpose: "agent-computer",
     "flok.provider": "runloop",
-    "flok.bird_id": spec.birdId,
-    "flok.flock_id": spec.flockId,
     "flok.isolation": "linux-vm",
   };
 }
