@@ -73,7 +73,15 @@ When approved, test only this minimum:
 5. `computer_status` works.
 6. `computer_observe` works (screenshot or CDP AX as already proven on L0; no `click_element`).
 7. `computer_fs` mkdir / write / read / stat / list on `/home/user/flok`.
-8. Capture `providerRef` from this run. Shut down **only** that Devbox (`npm run computers:destroy-run`). MCP cannot destroy. `Ctrl+C` does not.
+8. Capture `providerRef` from this run. Shut down **only** that Devbox. MCP cannot destroy. `Ctrl+C` does not.
+
+```bash
+FLOK_MCP_PROVIDER=runloop \
+FLOK_CONTROL_PLANE_PATH=.flok/control-plane.json \
+FLOK_DESTROY_CONFIRM=1 \
+FLOK_DESTROY_PROVIDER_REF="<captured-providerRef-from-this-run>" \
+npm run computers:destroy-run
+```
 9. Confirm logs have no wrapper token, pair code, capability token, or `RUNLOOP_API_KEY`.
 
 Exactly eight tools. No takeover/VNC, no C8 snapshots, no C9 handoffs, no Nexus/AEON/Graphiti.

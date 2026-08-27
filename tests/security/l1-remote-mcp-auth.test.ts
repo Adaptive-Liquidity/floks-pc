@@ -121,6 +121,22 @@ describe("L1 remote MCP auth and routing", () => {
         }),
       (err: unknown) => err instanceof ComputerError && err.code === "MCP_REMOTE_URL_PATH",
     );
+    assert.throws(
+      () =>
+        assertRemoteMcpExposure({
+          baseUrl: "https://user:pass@mcp.example.test/mcp",
+          authToken: WRAPPER,
+        }),
+      (err: unknown) => err instanceof ComputerError && err.code === "MCP_REMOTE_URL_UNSAFE",
+    );
+    assert.throws(
+      () =>
+        assertRemoteMcpExposure({
+          baseUrl: "https://mcp.example.test/mcp?token=secret",
+          authToken: WRAPPER,
+        }),
+      (err: unknown) => err instanceof ComputerError && err.code === "MCP_REMOTE_URL_UNSAFE",
+    );
   });
 
   it("public HTTPS URL with wrapper token is accepted", () => {
