@@ -74,6 +74,12 @@ import {
   canonicalizeWorkspacePath,
   workspaceRootForProvider,
 } from "./path.js";
+import type { ControlPlaneStore, ControlPlaneSnapshot } from "./control-plane-store.js";
+import {
+  capabilitiesFromSnapshot,
+  computersFromSnapshot,
+  pairCodesFromSnapshot,
+} from "./control-plane-store.js";
 
 function newId(): string {
   return randomBytes(16).toString("hex");
@@ -107,8 +113,85 @@ export class ComputerService {
   private capabilitiesByDigest = new Map<string, string>();
   /** Keyed by presented bird+flock, never by shared MCP account id. */
   private pairFailuresByIdentity = new Map<string, PairFailureWindow>();
+  private readonly store: ControlPlaneStore | undefined;
+  private readonly ownerId: string | null;
+  private readonly workspaceId: string | null;
+  private persistChain: Promise<void> = Promise.resolve();
 
-  constructor(private readonly provider: ComputerProvider) {}
+  constructor(
+    private readonly provider: ComputerProvider,
+    opts?: {
+      store?: ControlPlaneStore;
+      ownerId?: string | null;
+      workspaceId?: string | null;
+    },
+  ) {
+    this.store = opts?.store;
+    this.ownerId = opts?.ownerId ?? null;
+    this.workspaceId = opts?.workspaceId ?? null;
+  }
+
+  async hydrate(): Promise<void> {
+    if (!this.store) return;
+    const snap = await this.store.load();
+    if (!snap) return;
+    this.applySnapshot(snap);
+  }
+
+  private toSnapshot(): ControlPlaneSnapshot {
+    const pairIssueExtras: ControlPlaneSnapshot["pairIssueExtras"] = {};
+    for (const [id, extras] of this.pairIssueExtras) {
+      pairIssueExtras[id] = extras;
+    }
+    const pairFailuresByIdentity: ControlPlaneSnapshot["pairFailuresByIdentity"] = {};
+    for (const [id, win] of this.pairFailuresByIdentity) {
+      pairFailuresByIdentity[id] = win;
+    }
+    return {
+      version: 1,
+      ownerId: this.ownerId,
+      workspaceId: this.workspaceId,
+      computers: [...this.computers.values()],
+      pairCodes: [...this.pairCodes.values()],
+      capabilities: [...this.capabilities.values()],
+      pairIssueExtras,
+      pairFailuresByIdentity,
+    };
+  }
+
+  private applySnapshot(snap: ControlPlaneSnapshot): void {
+    this.reset();
+    for (const c of computersFromSnapshot(snap)) {
+      this.computers.set(c.id, c);
+      if (c.state !== "deleted") this.byBird.set(c.birdId, c.id);
+    }
+    for (const p of pairCodesFromSnapshot(snap)) {
+      this.pairCodes.set(p.id, p);
+      this.pairCodesByDigest.set(p.codeDigest, p.id);
+    }
+    for (const cap of capabilitiesFromSnapshot(snap)) {
+      this.capabilities.set(cap.id, cap);
+      this.capabilitiesByDigest.set(cap.tokenDigest, cap.id);
+    }
+    for (const [id, extras] of Object.entries(snap.pairIssueExtras)) {
+      this.pairIssueExtras.set(id, {
+        scopes: extras.scopes,
+        capabilityTtlMs: extras.capabilityTtlMs,
+      });
+    }
+    for (const [id, win] of Object.entries(snap.pairFailuresByIdentity)) {
+      this.pairFailuresByIdentity.set(id, win);
+    }
+  }
+
+  private async persist(): Promise<void> {
+    const store = this.store;
+    if (!store) return;
+    this.persistChain = this.persistChain
+      .catch(() => undefined)
+      .then(() => store.save(this.toSnapshot()));
+    await this.persistChain;
+  }
 
   /** Clear all in-memory state (test helper). */
   reset(): void {
@@ -161,6 +244,7 @@ export class ComputerService {
 
     // requested → provisioning
     computer = this.applyTransition(computer, "provisioning");
+    await this.persist();
 
     // Call provider
     const provisioned = await this.provider.provision(spec);
@@ -174,6 +258,7 @@ export class ComputerService {
       lastActiveAt: new Date(),
     };
     this.computers.set(id, computer);
+    await this.persist();
 
     return computer;
   }
@@ -215,6 +300,7 @@ export class ComputerService {
     }
 
     const updated = this.applyTransition(current, to);
+    await this.persist();
     return updated;
   }
 
@@ -281,6 +367,7 @@ export class ComputerService {
     this.pairCodes.set(record.id, record);
     this.pairCodesByDigest.set(record.codeDigest, record.id);
     this.pairIssueExtras.set(record.id, { scopes, capabilityTtlMs });
+    await this.persist();
 
     return { id: record.id, code: material.code, expiresAt: material.expiresAt };
   }
@@ -366,6 +453,7 @@ export class ComputerService {
     };
     this.capabilities.set(cap.id, cap);
     this.capabilitiesByDigest.set(cap.tokenDigest, cap.id);
+    await this.persist();
 
     return {
       token: minted.token,
@@ -387,6 +475,7 @@ export class ComputerService {
       scopes: copyScopes(cap.scopes),
       revokedAt: new Date(),
     });
+    await this.persist();
   }
 
   /** Stored capability (digest only). Never contains the raw token. */
@@ -618,9 +707,10 @@ export class ComputerService {
     const cur = this.pairFailuresByIdentity.get(key);
     if (!cur || now - cur.windowStart > PAIR_FAILURE_WINDOW_MS) {
       this.pairFailuresByIdentity.set(key, { count: 1, windowStart: now });
-      return;
+    } else {
+      cur.count += 1;
     }
-    cur.count += 1;
+    void this.persist();
   }
 
   private sweepPairState(now = Date.now()): void {

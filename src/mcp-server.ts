@@ -17,6 +17,10 @@ import { z } from "zod";
 import { ComputerService } from "./lib/computers/service.js";
 import { FakeProvider } from "./lib/computers/providers/fake.js";
 import { RunloopProvider } from "./lib/computers/providers/runloop.js";
+import {
+  controlPlaneStoreFromEnv,
+  type ControlPlaneStore,
+} from "./lib/computers/control-plane-store.js";
 import { ComputerError } from "./lib/computers/errors.js";
 import { assertNexusDisabled } from "./lib/computers/flags.js";
 import type { ComputerProvider } from "./lib/computers/providers/provider.js";
@@ -119,7 +123,19 @@ async function main(): Promise<void> {
   const host = config.listenHost ?? "127.0.0.1";
   const port = config.listenPort ?? 8787;
   assertSafeMcpBind(host, config.authToken);
-  const service = new ComputerService(await createMcpProvider());
+  const provider = await createMcpProvider();
+  const store = controlPlaneStoreFromEnv(process.env, provider.name);
+  const serviceOpts: {
+    store?: ControlPlaneStore;
+    ownerId: string | null;
+    workspaceId: string | null;
+  } = {
+    ownerId: process.env.FLOK_OWNER_ID?.trim() || null,
+    workspaceId: process.env.FLOK_WORKSPACE_ID?.trim() || null,
+  };
+  if (store) serviceOpts.store = store;
+  const service = new ComputerService(provider, serviceOpts);
+  await service.hydrate();
   const gateway = new McpGateway(service);
   const boot = await bootstrapLocalComputer(service);
 
@@ -136,8 +152,18 @@ async function main(): Promise<void> {
 
   const displayHost = host.includes(":") ? `[${host}]` : host;
   process.stdout.write(`flok-mcp-gateway listening on http://${displayHost}:${port}${MCP_PATH}\n`);
+  if (isLoopbackListenHost(host)) {
+    process.stdout.write(
+      "127.0.0.1 is not a real remote Grok Bot endpoint. A remote Grok Bot needs an authenticated HTTPS endpoint that forwards to the MCP server and requires FLOK_MCP_AUTH_TOKEN.\n",
+    );
+  }
   if (config.baseUrl) {
     process.stdout.write(`public base URL (config): ${config.baseUrl}\n`);
+  }
+  if (store) {
+    process.stdout.write("control-plane store: durable (records survive MCP restart)\n");
+  } else {
+    process.stdout.write("control-plane store: in-memory (local/dev only; not private beta)\n");
   }
   if (boot) {
     process.stdout.write(

@@ -42,6 +42,14 @@ import {
   type RunloopExecResult,
   type RunloopFsResult,
 } from "./runloop-client.js";
+import {
+  GUEST_READ_B64_PY,
+  GUEST_WRITE_B64_PY,
+  bufferFromBase64Stdout,
+  bufferFromDownload,
+  bufferFromUtf8Read,
+  utf8RoundtripEquals,
+} from "./runloop-fs.js";
 
 const EXECVP_PY = [
   "import os, sys, json, base64",
@@ -163,6 +171,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   readonly birdId: string;
   readonly flockId: string;
   bootId = "";
+  interactiveGuest = false;
   private interactiveStackUp = false;
   private graphicalStack = false;
 
@@ -275,9 +284,33 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   async fsRead(path: string): Promise<RunloopFsResult<Buffer>> {
     const jailed = await this.enforceResolved(path);
     if (!jailed.ok) return jailed;
+    const st = await this.fsStat(path);
+    if (!st.ok || !st.data) {
+      return { ok: false, errorCode: st.ok ? "NOT_FOUND" : st.errorCode };
+    }
+    const expected = st.data.size;
     try {
       const resp = await this.box.file.download({ path });
-      const buf = Buffer.from(await resp.arrayBuffer());
+      let buf = bufferFromDownload(await resp.arrayBuffer(), expected);
+      if (!buf) {
+        try {
+          const text = await this.box.file.read({ file_path: path });
+          buf = bufferFromUtf8Read(text, expected);
+        } catch {
+          buf = null;
+        }
+      }
+      if (!buf && expected > 0) {
+        const r = await this.execPython(GUEST_READ_B64_PY, [path]);
+        if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+        buf = bufferFromBase64Stdout(r.stdout);
+      }
+      if (!buf) {
+        return expected === 0 ? { ok: true, data: Buffer.alloc(0) } : { ok: false, errorCode: "IO_ERROR" };
+      }
+      if (expected > 0 && buf.length !== expected) {
+        return { ok: false, errorCode: "IO_ERROR" };
+      }
       return { ok: true, data: buf };
     } catch (e) {
       return { ok: false, errorCode: classifyFs(e) };
@@ -290,10 +323,20 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     try {
       const parent = pathPosix.dirname(path);
       await this.fsMkdir(parent);
-      await this.box.file.upload({
-        path,
-        file: new File([body], pathPosix.basename(path)),
-      });
+      let st: RunloopFsResult<{ path: string; isDir: boolean; size: number }> | undefined;
+      if (utf8RoundtripEquals(body)) {
+        await this.box.file.write({ file_path: path, contents: body.toString("utf8") });
+        st = await this.fsStat(path);
+      }
+      if (!st?.ok || !st.data || st.data.size !== body.length) {
+        if (body.length > 200_000) return { ok: false, errorCode: "IO_ERROR" };
+        const r = await this.execPython(GUEST_WRITE_B64_PY, [path, body.toString("base64")]);
+        if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+        st = await this.fsStat(path);
+      }
+      if (!st.ok || !st.data || st.data.size !== body.length) {
+        return { ok: false, errorCode: "IO_ERROR" };
+      }
       return { ok: true };
     } catch (e) {
       return { ok: false, errorCode: classifyFs(e) };
@@ -392,6 +435,20 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       );
     }
     this.graphicalStack = !r.stdout.includes("missing-xvfb");
+    let chromeOk = false;
+    if (this.graphicalStack) {
+      const chrome = await this.exec({
+        argv: [
+          "bash",
+          "-c",
+          "command -v google-chrome >/dev/null || command -v google-chrome-stable >/dev/null || command -v chromium >/dev/null",
+        ],
+        cwd: RUNLOOP_WORKSPACE_ROOT,
+        timeoutMs: 5_000,
+      });
+      chromeOk = chrome.exitCode === 0;
+    }
+    this.interactiveGuest = this.graphicalStack && chromeOk;
     this.interactiveStackUp = true;
   }
 

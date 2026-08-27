@@ -90,7 +90,17 @@ npm run start:mcp
 
 **B. Remote Grok Bot** needs an operator **authenticated HTTPS** tunnel/proxy in front of MCP, plus `FLOK_MCP_AUTH_TOKEN`. Do not expose unauthenticated public MCP. **127.0.0.1 is not a real remote Grok Bot endpoint. A remote Grok Bot needs an authenticated HTTPS endpoint that forwards to the MCP server and requires FLOK_MCP_AUTH_TOKEN.**
 
-**MCP cannot destroy the Devbox. `Ctrl+C` does not destroy it.** Only shut down the Devbox created by this FLOKS run. Never bulk-shutdown all Devboxes returned by the Runloop account. Prefer the captured `providerRef` from this run; if unsure, do not shut down anything. Full runbook: `docs/computers/agent-computer-cloud.md`.
+**MCP cannot destroy the Devbox. `Ctrl+C` does not destroy it.** Only shut down the Devbox created by this FLOKS run. Never bulk-shutdown all Devboxes returned by the Runloop account. Prefer the captured `providerRef` from this run; if unsure, do not shut down anything.
+
+```bash
+FLOK_MCP_PROVIDER=runloop \
+FLOK_CONTROL_PLANE_PATH=.flok/control-plane.json \
+FLOK_DESTROY_CONFIRM=1 \
+FLOK_DESTROY_PROVIDER_REF="<captured-providerRef-from-this-run>" \
+npm run computers:destroy-run
+```
+
+Full runbook: `docs/computers/agent-computer-cloud.md`. Runloop MCP persists records to `FLOK_CONTROL_PLANE_PATH` (default `.flok/control-plane.json`) so a restart does not forget active machines.
 
 ```bash
 # Placeholder id only — use the captured providerRef from THIS run.
