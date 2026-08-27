@@ -157,7 +157,7 @@ describe("L4 reliability / recovery", () => {
     assert.equal(failed.providerRef, computer.providerRef);
   });
 
-  it("serializes concurrent recovery so only one replacement is created", async () => {
+  it("serializes concurrent recovery; workspace survives even if the second recover restores again", async () => {
     const service = new ComputerService(provider, { store: new MemoryControlPlaneStore() });
     const computer = await service.requestComputer({ birdId: "bird-race", flockId: "flock-a" });
     const pair = await service.issuePairCode(computer.id);
@@ -176,6 +176,8 @@ describe("L4 reliability / recovery", () => {
     assert.equal(b.state, "ready");
     assert.ok(a.providerRef);
     assert.ok(b.providerRef);
+    assert.notEqual(a.providerRef, computer.providerRef);
+    assert.notEqual(b.providerRef, computer.providerRef);
     const read = await service.filesystem(capabilityAuth(cap.token), computer.id, {
       operation: "read",
       path: "/home/flok/recovery-proof/hello.txt",
@@ -256,6 +258,27 @@ describe("L4 reliability / recovery", () => {
         }),
       (err: unknown) => err instanceof RestoreUnsupported,
     );
+  });
+
+  it("refuses checkpoint when the provider cannot snapshot", async () => {
+    class NoSnapshotFake extends FakeProvider {
+      capabilities() {
+        return { ...super.capabilities(), snapshots: false };
+      }
+    }
+    const noSnap = new NoSnapshotFake();
+    const service = new ComputerService(noSnap, { store: new MemoryControlPlaneStore() });
+    const computer = await service.requestComputer({
+      birdId: "bird-nosnap",
+      flockId: "flock-a",
+    });
+    await assert.rejects(
+      () => service.checkpointThisComputer(computer.id),
+      (err: unknown) => err instanceof RestoreUnsupported,
+    );
+    const after = await service.get(computer.id);
+    assert.equal(after.state, "ready");
+    assert.equal(after.latestCheckpoint, null);
   });
 
   it("debug packet omits providerSnapshotRef and tokens", async () => {

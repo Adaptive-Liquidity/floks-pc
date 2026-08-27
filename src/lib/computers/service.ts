@@ -1066,6 +1066,9 @@ export class ComputerService {
 
   private async checkpointThisComputerLocked(computerId: string): Promise<Computer> {
     const current = await this.get(computerId);
+    if (!this.provider.capabilities().snapshots) {
+      throw new RestoreUnsupported(this.provider.name);
+    }
     const from = current.state;
     const ref = this.requireProviderRef(current);
     let computer = this.applyTransition(current, "checkpointing");

@@ -52,8 +52,8 @@ No ready or restored checkpoint → **fail closed** (`CHECKPOINT_REQUIRED`). Do 
 
 Failures:
 
-- restore unsupported/fails before replacement is live → original VM stays; checkpoint status is reset so recovery is retryable (`restore_failed`)
-- health probe fails → replacement is abandoned; checkpoint status is reset (`recovery_failed`)
+- restore unsupported/fails before replacement is live → original VM stays; computer state `restore_failed`; checkpoint status reset to `ready`/`restored` so recovery is retryable (`RESTORE_UNSUPPORTED` / `RESTORE_FAILED`)
+- health probe fails → replacement is abandoned; computer state `recovery_failed`; checkpoint status reset to `ready`/`restored` (`RECOVERY_FAILED`)
 - original VM destroy fails after a healthy replacement → replacement stays ready; metadata-only `CLEANUP_FAILED`
 
 ## Verify file survival (C8 gate)
@@ -81,7 +81,7 @@ Paid Runloop live proof is **opt-in and owner-approved only**. Do not run it fro
 | `CHECKPOINT_REQUIRED` | Recover without a ready checkpoint. Fail closed. |
 | `OBSERVE_RETRYABLE` | Observe while paused/waking/recovering/failed. Wake or recover first. |
 | `RESTORE_UNSUPPORTED` | Provider cannot restore (DockerDev). |
-| `RESTORE_FAILED` | Provider restore failed after the original VM was torn down. Retry recover. |
+| `RESTORE_FAILED` | Provider restore failed **before** the original VM is destroyed. Original stays. Checkpoint status stays `ready`/`restored`. Retry recover. |
 | `RECOVERY_FAILED` | Health probe failed after wake or restore. |
 | `CLEANUP_FAILED` | Destroy failed. `cleanup_needed`. Retry with captured providerRef only. |
 

@@ -57,11 +57,11 @@ JSON POSTs require `Content-Type: application/json`. Missing `Origin` is allowed
 
 Do **not** start paid Runloop unless the owner approves this run. FakeProvider is local smoke only — not product proof. Remote MCP stays authenticated HTTPS (`REMOTE_GROK_MCP.md`). Operator console stays loopback.
 
-1. **Enable beta** with the env block above (`FLOK_BETA_ENABLED=1`, durable `FLOK_CONTROL_PLANE_PATH`, `FLOK_OWNER_ID`). For a real Agent Computer also set `FLOK_MCP_PROVIDER=runloop` and `FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive`.
+1. **Enable beta** with the env block above (`FLOK_BETA_ENABLED=1`, durable `FLOK_CONTROL_PLANE_PATH`, `FLOK_OWNER_ID`). For a real Agent Computer also set `FLOK_MCP_PROVIDER=runloop`, `FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive`, authenticated HTTPS (`FLOK_MCP_AUTH_TOKEN` + `FLOK_MCP_BASE_URL`). See `REMOTE_GROK_MCP.md`.
 2. **Invite owner** — `POST /operator/v1/beta/waitlist` with `{ "ownerId": "<owner>" }` from loopback.
 3. **Approve owner** — `POST /operator/v1/beta/approve` with the same `ownerId`. Waitlist does not grant a computer.
-4. **Pair Grok Bot** — remote HTTPS `POST /mcp` with wrapper Bearer + `computer_pair` (capability token after pair). See `REMOTE_GROK_MCP.md`.
-5. **Create Agent Computer** — pairing / `requestComputer` provisions one isolated machine for that `bird_id`. Default remains one bot, one computer.
+4. **Create Agent Computer and issue a pair code** — control-plane, not an MCP tool. `FLOK_MCP_BOOTSTRAP=1` calls `requestComputer` + `issuePairCode` and prints a one-time pair code. Default remains one bot, one isolated machine.
+5. **Pair Grok Bot** — remote HTTPS `POST /mcp` with wrapper Bearer + `computer_pair` (pair code + `bird_id` / `flock_id`). Store the capability token. See `REMOTE_GROK_MCP.md`.
 6. **Observe** — `computer_observe` (screenshot and/or CDP AX). `click_element` stays fail-closed.
 7. **Files / exec** — `computer_fs` write/read/stat/list and `computer_exec` under `/home/user/flok`.
 8. **Operator console watch** — `http://127.0.0.1:8788/console`. Confirm bot, computer, state, last action, cost warning, cap. Do not tunnel this port.

@@ -35,6 +35,7 @@ import {
   DEFAULT_RUNLOOP_ARCH,
   LIVE_KEEP_ALIVE_SECONDS,
   RUNLOOP_WORKSPACE_ROOT,
+  isIdempotentShutdownError,
   type RunloopControlPlane,
   type RunloopCreateParams,
   type RunloopDevboxSession,
@@ -216,8 +217,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     try {
       await this.box.shutdown();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/already|not found|deleted|shutdown/i.test(msg)) return;
+      if (isIdempotentShutdownError(err)) return;
       throw err;
     }
   }

@@ -19,6 +19,7 @@ import {
   assertNoControlPlaneSecrets,
   CONTROL_PLANE_SECRET_ENV_KEYS,
   RUNLOOP_WORKSPACE_ROOT,
+  isIdempotentShutdownError,
 } from "../../src/lib/computers/providers/index.js";
 import {
   DISPLAY_HEIGHT,
@@ -35,6 +36,15 @@ function provider(): RunloopProvider {
 describe("RunloopProvider (no network)", () => {
   it("reports provider name runloop", () => {
     assert.equal(provider().name, "runloop");
+  });
+
+  it("treats only terminal missing-resource shutdown errors as idempotent", () => {
+    assert.equal(isIdempotentShutdownError(new Error("devbox already shutdown")), true);
+    assert.equal(isIdempotentShutdownError(new Error("devbox not found")), true);
+    assert.equal(isIdempotentShutdownError(new Error("resource deleted")), true);
+    assert.equal(isIdempotentShutdownError({ status: 404, message: "gone" }), true);
+    assert.equal(isIdempotentShutdownError(new Error("shutdown request failed")), false);
+    assert.equal(isIdempotentShutdownError(new Error("internal error")), false);
   });
 
   it("advertises honest C3B capabilities", () => {

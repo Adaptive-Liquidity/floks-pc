@@ -24,4 +24,5 @@ export {
 export {
   assertNoControlPlaneSecrets,
   CONTROL_PLANE_SECRET_ENV_KEYS,
+  isIdempotentShutdownError,
 } from "./runloop-client.js";
