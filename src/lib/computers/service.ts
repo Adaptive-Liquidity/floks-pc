@@ -44,6 +44,8 @@ import type {
   SharedAccountAuth,
 } from "./types.js";
 import {
+  BetaInviteRequired,
+  BetaStoreRequired,
   CapabilityInvalid,
   ComputerNotFound,
   DestroyConfirmRequired,
@@ -52,7 +54,16 @@ import {
   IllegalStateTransition,
   PairCodeInvalid,
   PathEscape,
+  QuotaExceeded,
 } from "./errors.js";
+import {
+  BETA_COST_WARNING,
+  BETA_LIMITATIONS,
+  DISABLED_BETA_POLICY,
+  isActiveBetaComputer,
+  type BetaPolicy,
+  type BetaRegistry,
+} from "./beta.js";
 import {
   OPERATOR_EVENT_CAP,
   OPERATOR_MCP_TOOL_COUNT,
@@ -133,6 +144,9 @@ export class ComputerService {
   private persistChain: Promise<void> = Promise.resolve();
   private operatorEvents: OperatorEvent[] = [];
   private destroyChains = new Map<string, Promise<unknown>>();
+  private readonly beta: BetaPolicy;
+  private readonly betaRegistry: BetaRegistry | undefined;
+  private readonly now: () => number;
 
   constructor(
     private readonly provider: ComputerProvider,
@@ -140,11 +154,17 @@ export class ComputerService {
       store?: ControlPlaneStore;
       ownerId?: string | null;
       workspaceId?: string | null;
+      beta?: BetaPolicy;
+      betaRegistry?: BetaRegistry;
+      now?: () => number;
     },
   ) {
     this.store = opts?.store;
     this.ownerId = opts?.ownerId ?? null;
     this.workspaceId = opts?.workspaceId ?? null;
+    this.beta = opts?.beta ?? DISABLED_BETA_POLICY;
+    this.betaRegistry = opts?.betaRegistry;
+    this.now = opts?.now ?? Date.now;
   }
 
   async hydrate(): Promise<void> {
@@ -230,11 +250,13 @@ export class ComputerService {
    * Control-plane: does not issue a Bot capability. Pairing does that.
    */
   async requestComputer(spec: ComputerSpec): Promise<Computer> {
+    await this.sweepIdle();
+    this.assertBetaMayProvision();
     if (this.byBird.has(spec.birdId)) {
       throw new DuplicateComputer(spec.birdId);
     }
 
-    const now = new Date();
+    const now = new Date(this.now());
     const id = newId();
 
     // Domain starts in "requested"; we immediately move through provisioning.
@@ -272,8 +294,8 @@ export class ComputerService {
       ...computer,
       providerRef: provisioned.providerRef,
       state: "ready",
-      updatedAt: new Date(),
-      lastActiveAt: new Date(),
+      updatedAt: new Date(this.now()),
+      lastActiveAt: new Date(this.now()),
     };
     this.computers.set(id, computer);
     await this.persist();
@@ -327,8 +349,9 @@ export class ComputerService {
     const updated: Computer = {
       ...computer,
       state: to,
-      updatedAt: new Date(),
-      lastActiveAt: to === "running" || to === "ready" ? new Date() : computer.lastActiveAt,
+      updatedAt: new Date(this.now()),
+      lastActiveAt:
+        to === "running" || to === "ready" ? new Date(this.now()) : computer.lastActiveAt,
     };
     this.computers.set(computer.id, updated);
     if (to === "deleted") {
@@ -369,7 +392,88 @@ export class ComputerService {
         provider: this.provider.name,
         durableStore,
       }),
+      beta: {
+        enabled: this.beta.enabled,
+        maxActive: this.beta.maxActive,
+        active: this.activeComputerCount(),
+        idleTtlMs: this.beta.idleTtlMs,
+        costWarning: this.beta.enabled ? this.beta.costWarning : BETA_COST_WARNING,
+        approved: this.betaRegistry?.snapshot().approved ?? [],
+        waitlist: this.betaRegistry?.snapshot().waitlist ?? [],
+        durableStore,
+      },
     };
+  }
+
+  async sweepIdle(now: number = this.now()): Promise<string[]> {
+    if (!this.beta.enabled) return [];
+    const destroyed: string[] = [];
+    for (const computer of this.list()) {
+      if (!isActiveBetaComputer(computer.state)) continue;
+      const last = (computer.lastActiveAt ?? computer.createdAt).getTime();
+      if (now - last < this.beta.idleTtlMs) continue;
+      if (!computer.providerRef) continue;
+      await this.destroyThisComputer(computer.id, {
+        confirm: true,
+        providerRef: computer.providerRef,
+      });
+      destroyed.push(computer.id);
+    }
+    return destroyed;
+  }
+
+  async waitlistBetaOwner(ownerId: string) {
+    if (!this.betaRegistry) throw new BetaStoreRequired();
+    return this.betaRegistry.waitlistOwner(ownerId);
+  }
+
+  async approveBetaOwner(ownerId: string) {
+    if (!this.betaRegistry) throw new BetaStoreRequired();
+    return this.betaRegistry.approveOwner(ownerId);
+  }
+
+  debugPacket(): Record<string, unknown> {
+    return {
+      generatedAt: new Date(this.now()).toISOString(),
+      provider: this.provider.name,
+      durableStore: Boolean(this.store),
+      beta: {
+        enabled: this.beta.enabled,
+        maxActive: this.beta.maxActive,
+        active: this.activeComputerCount(),
+        idleTtlMs: this.beta.idleTtlMs,
+        costWarning: this.beta.costWarning,
+        approvedCount: this.betaRegistry?.snapshot().approved.length ?? 0,
+        waitlistCount: this.betaRegistry?.snapshot().waitlist.length ?? 0,
+      },
+      computers: this.list().map((c) => ({
+        id: c.id,
+        birdId: c.birdId,
+        flockId: c.flockId,
+        state: c.state,
+        provider: c.provider,
+        lastActiveAt: c.lastActiveAt ? c.lastActiveAt.toISOString() : null,
+        createdAt: c.createdAt.toISOString(),
+      })),
+      events: this.listOperatorEvents(),
+      limitations: [...BETA_LIMITATIONS],
+    };
+  }
+
+  private activeComputerCount(): number {
+    return this.list().filter((c) => isActiveBetaComputer(c.state)).length;
+  }
+
+  private assertBetaMayProvision(): void {
+    if (!this.beta.enabled) return;
+    if (!this.store) throw new BetaStoreRequired();
+    if (!this.ownerId) throw new BetaInviteRequired();
+    if (!this.betaRegistry?.isApproved(this.ownerId)) {
+      throw new BetaInviteRequired(this.ownerId);
+    }
+    if (this.activeComputerCount() >= this.beta.maxActive) {
+      throw new QuotaExceeded("active-computers");
+    }
   }
 
   async operatorObserve(
@@ -379,7 +483,7 @@ export class ComputerService {
     const computer = await this.get(computerId);
     if (computer.state === "deleted") throw new ComputerNotFound(computerId);
     const ref = this.requireProviderRef(computer);
-    this.touch(computer);
+    await this.touch(computer);
     const observation = await this.provider.observe(ref, {
       includeAccessibility: request.includeAccessibility ?? true,
       includeScreenshot: request.includeScreenshot ?? true,
@@ -664,7 +768,7 @@ export class ComputerService {
       validatedRequest.mode === "shell" ? ["exec", "shell"] : ["exec"];
     const { computer } = this.authorize(auth, computerId, required);
     const ref = this.requireProviderRef(computer);
-    this.touch(computer);
+    await this.touch(computer);
     const root = workspaceRootForProvider(computer.provider);
     try {
       const cwd =
@@ -713,7 +817,7 @@ export class ComputerService {
     const validatedRequest = FsRequestSchema.parse(request) as FsRequest;
     const { computer } = this.authorize(auth, computerId, "fs");
     const ref = this.requireProviderRef(computer);
-    this.touch(computer);
+    await this.touch(computer);
     const root = workspaceRootForProvider(computer.provider);
     try {
       const path = canonicalizeWorkspacePath(validatedRequest.path, root);
@@ -758,7 +862,7 @@ export class ComputerService {
   ): Promise<Observation> {
     const { computer } = this.authorize(auth, computerId, "observe");
     const ref = this.requireProviderRef(computer);
-    this.touch(computer);
+    await this.touch(computer);
     const observation = await this.provider.observe(ref, request);
     this.recordOperatorEvent({
       computerId: computer.id,
@@ -778,7 +882,7 @@ export class ComputerService {
   ): Promise<ActionResult> {
     const { computer } = this.authorize(auth, computerId, "act");
     const ref = this.requireProviderRef(computer);
-    this.touch(computer);
+    await this.touch(computer);
     const actResult = await this.provider.act(ref, request);
     const failClosed = actResult.results.some(
       (row) => row.action.type === "click_element" && !row.success,
@@ -860,13 +964,14 @@ export class ComputerService {
     return computer.providerRef;
   }
 
-  private touch(computer: Computer): void {
+  private async touch(computer: Computer): Promise<void> {
     const updated: Computer = {
       ...computer,
-      lastActiveAt: new Date(),
-      updatedAt: new Date(),
+      lastActiveAt: new Date(this.now()),
+      updatedAt: new Date(this.now()),
     };
     this.computers.set(computer.id, updated);
+    await this.persist();
   }
 
   private revokeAllForComputer(computerId: string): void {

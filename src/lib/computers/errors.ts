@@ -144,6 +144,27 @@ export class QuotaExceeded extends ComputerError {
   }
 }
 
+export class BetaStoreRequired extends ComputerError {
+  constructor() {
+    super(
+      "BETA_STORE_REQUIRED",
+      "Private beta requires a durable control-plane store (in-memory is local/dev only)",
+    );
+    this.name = "BetaStoreRequired";
+  }
+}
+
+export class BetaInviteRequired extends ComputerError {
+  constructor(ownerId?: string) {
+    super(
+      "BETA_INVITE_REQUIRED",
+      "Private beta requires an approved invite/waitlist for this owner",
+      ownerId !== undefined ? { ownerId } : undefined,
+    );
+    this.name = "BetaInviteRequired";
+  }
+}
+
 export class IdempotencyConflict extends ComputerError {
   constructor(key: string) {
     super(

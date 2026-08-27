@@ -81,6 +81,17 @@ export interface OperatorComputerView {
   warnings: string[];
 }
 
+export interface OperatorBetaView {
+  enabled: boolean;
+  maxActive: number;
+  active: number;
+  idleTtlMs: number;
+  costWarning: string;
+  approved: string[];
+  waitlist: string[];
+  durableStore: boolean;
+}
+
 export interface OperatorSnapshot {
   computers: OperatorComputerView[];
   events: OperatorEvent[];
@@ -88,6 +99,7 @@ export interface OperatorSnapshot {
   durableStore: boolean;
   provider: ComputerProviderName;
   warnings: string[];
+  beta: OperatorBetaView;
 }
 
 export function lifecycleLabel(state: ComputerState): string {

@@ -78,6 +78,8 @@ export {
   CrossNodeDenied,
   DestroyConfirmRequired,
   DestroyProviderRefMismatch,
+  BetaInviteRequired,
+  BetaStoreRequired,
   DuplicateComputer,
   IdempotencyConflict,
   IllegalStateTransition,
@@ -158,6 +160,24 @@ export type {
 export { digestEquals, sha256Hex } from "./digest.js";
 
 export { ComputerService, PAIR_IDENTITY_FAILURE_LIMIT } from "./service.js";
+export {
+  BETA_COST_WARNING,
+  BETA_LIMITATIONS,
+  BetaRegistry,
+  DEFAULT_BETA_IDLE_TTL_MS,
+  DEFAULT_BETA_MAX_ACTIVE,
+  DISABLED_BETA_POLICY,
+  MemoryBetaStore,
+  betaPolicyFromEnv,
+  isActiveBetaComputer,
+  knownLimitationsMarkdown,
+} from "./beta.js";
+export type { BetaPolicy, BetaRoster, BetaStore } from "./beta.js";
+export {
+  DEFAULT_BETA_STORE_RELATIVE,
+  JsonFileBetaStore,
+  betaStoreFromEnv,
+} from "./beta-store.js";
 export {
   JsonFileControlPlaneStore,
   MemoryControlPlaneStore,

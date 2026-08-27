@@ -6,9 +6,10 @@ Historical C0–C6 remain the closed engineering record (do not re-open them). L
 
 Nexus-IQ / AEON / Graphiti stay **forbidden** until **Gate G0** is marked PASSED.
 
-**Current open phase: L2 — Beta dashboard: Bot Computers / Live Node Console.**  
+**Current open phase: L3 — Private beta launch.**  
 **L0 is CLOSED** — Adaptive-Liquidity/floks-pc#17 (`bda72e0`).  
-**L1 is CLOSED** — Adaptive-Liquidity/floks-pc#21 (`61c9747`). Live remote Grok Bot over authenticated HTTPS + paid Runloop Agent Computer (CDP AX + fs) + this-run destroy.
+**L1 is CLOSED** — Adaptive-Liquidity/floks-pc#21 (`61c9747`). Live remote Grok Bot over authenticated HTTPS + paid Runloop Agent Computer (CDP AX + fs) + this-run destroy.  
+**L2 is CLOSED** — Adaptive-Liquidity/floks-pc#22 (`7a3402d`). Loopback Live Node Console.
 
 Product language: `docs/computers/agent-computer-cloud.md`.  
 Runloop Devbox is **provider v1**, not the product name.
@@ -83,7 +84,7 @@ Before L3 private beta, FLOKS must persist or reconcile ComputerRecord, provider
 
 **Purpose:** First product UI.
 
-**Status:** OPEN
+**Status:** CLOSED / PASSED (2026-08-27)
 
 **Layout**
 - Left: bot list, paired/unpaired, running/sleeping/stopped, current machine, last action
@@ -100,6 +101,8 @@ Before L3 private beta, FLOKS must persist or reconcile ComputerRecord, provider
 ### PHASE L3 — Private beta launch
 
 **Purpose:** Let users sign up / join while upgrades continue.
+
+**Status:** OPEN
 
 **L3 = minimal private-beta safety caps only** (not the L7 quota/billing platform):
 

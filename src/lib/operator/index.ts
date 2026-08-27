@@ -10,6 +10,7 @@ export {
 } from "./view.js";
 export type {
   OperatorAccessibility,
+  OperatorBetaView,
   OperatorComputerView,
   OperatorCost,
   OperatorEvent,
@@ -19,5 +20,10 @@ export type {
   OperatorSnapshot,
 } from "./view.js";
 export { operatorConsoleHtml } from "./console-html.js";
-export { dispatchRuntimeHttp, handleOperatorHttp, isOperatorLoopbackPeer } from "./http.js";
+export {
+  dispatchRuntimeHttp,
+  handleOperatorHttp,
+  isLocalOperatorOrigin,
+  isOperatorLoopbackPeer,
+} from "./http.js";
 export type { OperatorHttpOptions } from "./http.js";

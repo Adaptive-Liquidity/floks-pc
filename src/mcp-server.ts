@@ -17,11 +17,10 @@ import { z } from "zod";
 import { ComputerService } from "./lib/computers/service.js";
 import { FakeProvider } from "./lib/computers/providers/fake.js";
 import { RunloopProvider } from "./lib/computers/providers/runloop.js";
-import {
-  controlPlaneStoreFromEnv,
-  type ControlPlaneStore,
-} from "./lib/computers/control-plane-store.js";
+import { controlPlaneStoreFromEnv } from "./lib/computers/control-plane-store.js";
 import { ComputerError } from "./lib/computers/errors.js";
+import { BetaRegistry, betaPolicyFromEnv } from "./lib/computers/beta.js";
+import { betaStoreFromEnv } from "./lib/computers/beta-store.js";
 import { assertNexusDisabled } from "./lib/computers/flags.js";
 import type { ComputerProvider } from "./lib/computers/providers/provider.js";
 import {
@@ -153,15 +152,23 @@ async function main(): Promise<void> {
   assertRemoteMcpExposure(config);
   const provider = await createMcpProvider();
   const store = controlPlaneStoreFromEnv(process.env, provider.name);
-  const serviceOpts: {
-    store?: ControlPlaneStore;
-    ownerId: string | null;
-    workspaceId: string | null;
-  } = {
+  const beta = betaPolicyFromEnv(process.env);
+  if (beta.enabled && !store) {
+    throw new ComputerError(
+      "BETA_STORE_REQUIRED",
+      "Private beta requires a durable control-plane store (in-memory is local/dev only)",
+    );
+  }
+  const betaStore = betaStoreFromEnv(process.env, beta.enabled);
+  const betaRegistry = beta.enabled ? new BetaRegistry(betaStore) : undefined;
+  if (betaRegistry) await betaRegistry.hydrate();
+  const serviceOpts: ConstructorParameters<typeof ComputerService>[1] = {
     ownerId: process.env.FLOK_OWNER_ID?.trim() || null,
     workspaceId: process.env.FLOK_WORKSPACE_ID?.trim() || null,
+    beta,
   };
-  if (store) serviceOpts.store = store;
+  if (store && serviceOpts) serviceOpts.store = store;
+  if (betaRegistry && serviceOpts) serviceOpts.betaRegistry = betaRegistry;
   const service = new ComputerService(provider, serviceOpts);
   await service.hydrate();
   const gateway = new McpGateway(service);
@@ -218,6 +225,14 @@ async function main(): Promise<void> {
     process.stdout.write("control-plane store: durable (records survive MCP restart)\n");
   } else {
     process.stdout.write("control-plane store: in-memory (local/dev only; not private beta)\n");
+  }
+  if (beta.enabled) {
+    process.stdout.write(
+      `private beta: on maxActive=${beta.maxActive} idleTtlMs=${beta.idleTtlMs} (not L7 billing)\n`,
+    );
+    setInterval(() => {
+      void service.sweepIdle();
+    }, 30_000).unref();
   }
   if (boot) {
     process.stdout.write(
