@@ -249,7 +249,8 @@ export function operatorConsoleHtml(): string {
       document.getElementById("life").textContent = cur.lifecycleLabel;
       document.getElementById("scopes").textContent = cur.scopes.join(", ") || "none";
       document.getElementById("expiry").textContent = cur.capabilityExpiresAt || "no capability";
-      document.getElementById("cost").textContent = cur.cost.note;
+      document.getElementById("cost").textContent =
+        snap.beta && snap.beta.enabled ? snap.beta.costWarning : cur.cost.note;
       document.getElementById("pref").textContent = cur.providerRef || "none";
       document.getElementById("workspace-root").textContent = cur.workspaceRoot;
       const warns = document.getElementById("warnings");

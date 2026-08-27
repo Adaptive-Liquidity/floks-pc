@@ -10,6 +10,7 @@ export {
 } from "./view.js";
 export type {
   OperatorAccessibility,
+  OperatorBetaView,
   OperatorComputerView,
   OperatorCost,
   OperatorEvent,

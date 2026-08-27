@@ -77,6 +77,15 @@ function mapComputerError(err: ComputerError): { status: number; code: string; m
   if (err.code === "DESTROY_CONFIRM_REQUIRED" || err.code === "DESTROY_PROVIDER_REF_MISMATCH") {
     return { status: 409, code: err.code, message: err.message };
   }
+  if (err.code === "QUOTA_EXCEEDED") {
+    return { status: 409, code: err.code, message: err.message };
+  }
+  if (err.code === "BETA_INVITE_REQUIRED") {
+    return { status: 403, code: err.code, message: err.message };
+  }
+  if (err.code === "BETA_STORE_REQUIRED") {
+    return { status: 503, code: err.code, message: err.message };
+  }
   return { status: 400, code: err.code, message: "operator request refused" };
 }
 
@@ -132,8 +141,43 @@ export async function handleOperatorHttp(
 
   try {
     if (pathname === `${OPERATOR_API_PREFIX}/snapshot` && req.method === "GET") {
+      await opts.service.sweepIdle();
       const snap = opts.service.operatorSnapshot();
       json(res, 200, { ...snap, mcpToolCount: OPERATOR_MCP_TOOL_COUNT });
+      return;
+    }
+    if (pathname === `${OPERATOR_API_PREFIX}/limitations` && req.method === "GET") {
+      json(res, 200, {
+        limitations: opts.service.debugPacket().limitations,
+        costWarning: opts.service.operatorSnapshot().beta.costWarning,
+      });
+      return;
+    }
+    if (pathname === `${OPERATOR_API_PREFIX}/debug-packet` && req.method === "GET") {
+      await opts.service.sweepIdle();
+      const packet = opts.service.debugPacket();
+      const blob = JSON.stringify(packet);
+      if (blob.includes("screenshotBase64") || blob.includes("tokenDigest") || /"providerRef"/.test(blob)) {
+        json(res, 500, errorBody("INTERNAL", "internal error"));
+        return;
+      }
+      json(res, 200, { packet });
+      return;
+    }
+    if (pathname === `${OPERATOR_API_PREFIX}/beta` && req.method === "GET") {
+      json(res, 200, { beta: opts.service.operatorSnapshot().beta });
+      return;
+    }
+    if (pathname === `${OPERATOR_API_PREFIX}/beta/waitlist` && req.method === "POST") {
+      const body = z.object({ ownerId: z.string().trim().min(1).max(128) }).parse(await readJsonBody(req));
+      const roster = await opts.service.waitlistBetaOwner(body.ownerId);
+      json(res, 200, roster);
+      return;
+    }
+    if (pathname === `${OPERATOR_API_PREFIX}/beta/approve` && req.method === "POST") {
+      const body = z.object({ ownerId: z.string().trim().min(1).max(128) }).parse(await readJsonBody(req));
+      const roster = await opts.service.approveBetaOwner(body.ownerId);
+      json(res, 200, roster);
       return;
     }
     if (pathname === `${OPERATOR_API_PREFIX}/computers` && req.method === "GET") {
@@ -194,7 +238,7 @@ export async function handleOperatorHttp(
       json(res, mapped.status, errorBody(mapped.code, mapped.message));
       return;
     }
-    if (err instanceof SyntaxError) {
+    if (err instanceof SyntaxError || err instanceof z.ZodError) {
       json(res, 400, errorBody("OPERATOR_JSON_INVALID", "invalid json"));
       return;
     }

@@ -35,8 +35,8 @@ Later backends (browser-only, cheaper workers, microVM, private cloud) are **Pha
 ```
 L0  C7 landing / proof lock     CLOSED — PR #17, live Grok Bot CDP AX
 L1  Launch MVP                  CLOSED — PR #21 live remote HTTPS + Runloop
-L2  Beta dashboard              OPEN — Bot Computers / Live Node Console
-L3  Private beta                Sign-up / invite while upgrades continue
+L2  Beta dashboard              CLOSED — PR #22 Live Node Console
+L3  Private beta                OPEN — invite, active cap, auto-shutdown, cost warning
 L4  Reliability / recovery      C8-class persistence (after users can join)
 L5  Safer browser control       click_element from real CDP bounds
 L6  Team / workflow             Explicit one-file handoff

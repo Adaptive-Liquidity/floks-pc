@@ -1,6 +1,6 @@
 # MCP Gateway (C5)
 
-Public Bot surface for **Agent Computers**. **ComputerService** is the only path to compute. MCP / xAI account auth never authorizes computer access. Launch keeps **exactly eight tools**. Do not add tools for L2. The operator Live Node Console is `GET /console` (control-plane), not an MCP tool. See `docs/computers/OPERATOR_CONSOLE.md`.
+Public Bot surface for **Agent Computers**. **ComputerService** is the only path to compute. MCP / xAI account auth never authorizes computer access. Launch keeps **exactly eight tools**. Do not add tools for L3. The operator Live Node Console is `GET /console` (control-plane), not an MCP tool. See `docs/computers/OPERATOR_CONSOLE.md`. Private-beta caps: `docs/computers/PRIVATE_BETA.md`. Known limitations: `docs/computers/KNOWN_LIMITATIONS.md`.
 
 Live L0 proof (PR #17): a real Grok Bot called `computer_observe({ include_accessibility: true })` and received `accessibility_summary.source === "cdp"` with non-empty nodes from a Runloop Agent Computer. FakeProvider is **not** proof.
 
