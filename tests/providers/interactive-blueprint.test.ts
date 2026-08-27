@@ -64,6 +64,9 @@ describe("L1 interactive blueprint fail-closed", () => {
     assert.equal(labels.bird_id, "bird-local");
     assert.equal(labels.flock_id, "flock-local");
     assert.equal(labels.purpose, "agent-computer");
+    assert.equal(labels["flok.provider"], "runloop");
+    assert.equal(labels["flok.isolation"], "linux-vm");
+    assert.equal(Object.keys(labels).length, 8);
   });
 
   it("compute-only opt-in is explicit and off by default", () => {
