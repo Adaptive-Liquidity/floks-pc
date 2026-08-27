@@ -6,8 +6,9 @@ Historical C0–C6 remain the closed engineering record (do not re-open them). L
 
 Nexus-IQ / AEON / Graphiti stay **forbidden** until **Gate G0** is marked PASSED.
 
-**Current open phase: L1 — Launch MVP (one bot, one Agent Computer).**  
-**L0 is CLOSED** — Adaptive-Liquidity/floks-pc#17 (`bda72e0`).
+**Current open phase: L2 — Beta dashboard: Bot Computers / Live Node Console.**  
+**L0 is CLOSED** — Adaptive-Liquidity/floks-pc#17 (`bda72e0`).  
+**L1 is CLOSED** — Adaptive-Liquidity/floks-pc#21 (`61c9747`). Live remote Grok Bot over authenticated HTTPS + paid Runloop Agent Computer (CDP AX + fs) + this-run destroy.
 
 Product language: `docs/computers/agent-computer-cloud.md`.  
 Runloop Devbox is **provider v1**, not the product name.
@@ -42,7 +43,7 @@ Runloop Devbox is **provider v1**, not the product name.
 
 **Purpose:** Smallest usable product: each Grok Bot can pair to its own working Agent Computer.
 
-**Status:** OPEN
+**Status:** CLOSED / PASSED (2026-08-27)
 
 **Required:**
 - Pair-code onboarding + capability token auth
@@ -63,7 +64,7 @@ Runloop Devbox is **provider v1**, not the product name.
 - **Two MCP exposure paths** — loopback `127.0.0.1` is local/operator smoke only. A remote Grok Bot needs authenticated HTTPS. See `docs/computers/agent-computer-cloud.md`.
 
 **Must fix before beta (L3):**
-- Remote Grok Bot over authenticated HTTPS (loopback is not that proof). Live Runloop MCP fs smoke passed on PR #20.
+- Remote Grok Bot over authenticated HTTPS — **proven** on PR #21 (live HTTPS + Bearer + Runloop CDP AX + fs + this-run destroy). Live Runloop MCP fs smoke passed on PR #20.
 - Persist or reconcile ComputerRecord / pair / capability / active-machine accounting (in-memory is not beta)
 - Operator can shut down **only** the Devbox created by this FLOKS run (not the whole Runloop account)
 - Interactive blueprint fail-closed before a paid computer is accepted
@@ -82,11 +83,15 @@ Before L3 private beta, FLOKS must persist or reconcile ComputerRecord, provider
 
 **Purpose:** First product UI.
 
+**Status:** OPEN
+
 **Layout**
 - Left: bot list, paired/unpaired, running/sleeping/stopped, current machine, last action
 - Center: selected Agent Computer, live observe preview, browser status, CDP/accessibility status, workspace, files/terminal summary
 - Right: provider Runloop, capability scopes, session expiry, runtime/cost, pair status, cleanup/destroy, warnings
 - Bottom event log: pair, status, observe, browser, file, exec, fail-closed, cleanup
+
+**Implementation (this phase):** loopback operator console at `127.0.0.1:8788/console` by default (`FLOK_OPERATOR_LISTEN_PORT` overrides; separate from the MCP listen port). JSON under `/operator/v1`. Bot wrapper token is not operator auth; forwarded clients are refused. Control-plane observe/destroy — not MCP tools. Destroy requires confirm + captured providerRef for the **selected** computer only. Event log is metadata-only (no screenshots, terminal output, cookies, or page contents). FakeProvider is not product proof. Eight MCP tools unchanged.
 
 **Gate:** A non-engineer understands: this bot has this computer, it is running, this is what it sees, these are its permissions, this is how I stop it.
 

@@ -18,7 +18,7 @@ Violations are stop-the-line. Revert immediately.
 1. Current user instruction
 2. This `AGENTS.md`
 3. `AUTHORITY.md` — what an Agent Computer is (FLOKS Agent Computer Cloud)
-4. `PHASES.md` — current **open** launch phase (L1) + L0–L9 + historical C0–C6 / G0 lock
+4. `PHASES.md` — current **open** launch phase (L2) + L0–L9 + historical C0–C6 / G0 lock
 5. `docs/computers/agent-computer-cloud.md` then `docs/computers/` — product, architecture, MCP, security, provider contract
 6. `src/lib/computers/` — domain types and ComputerProvider interface
 7. `reference/flok-core/TAKE.md` — curated Flok conventions (read-only)
@@ -27,9 +27,9 @@ Violations are stop-the-line. Revert immediately.
 
 Work only on the currently open phase listed in `PHASES.md`.
 
-- **Current open phase: L1 — Launch MVP (one bot, one Agent Computer).** L0 / C7 is CLOSED (PR #17).
-- Historical C0–C6 stay closed. Do not re-open them. Do not start L4+ **workspace snapshots** / L5 click / L6 handoffs / L7 real quotas / extra providers / Nexus while L1 is open. **Durable ComputerRecord / pair / capability / active-machine accounting must exist before L3** (in-memory is local/dev only). L3 later only adds **minimal beta safety caps** (invite, per-user active cap, default auto-shutdown, cost warning) — not L7.
-- Launch MVP does **not** add MCP tools (stay at eight). MCP cannot destroy a Devbox; `Ctrl+C` does not either — use the Runloop shutdown runbook. Do not add Fake AX, fake clicking, takeover, C8/C9 code, or proxy/bot-detection claims.
+- **Current open phase: L2 — Beta dashboard: Bot Computers / Live Node Console.** L0 / C7 is CLOSED (PR #17). L1 is CLOSED (PR #21, live remote HTTPS + Runloop).
+- Historical C0–C6 stay closed. Do not re-open them. Do not start L4+ **workspace snapshots** / L5 click / L6 handoffs / L7 real quotas / extra providers / Nexus while L2 is open. **Durable ComputerRecord / pair / capability / active-machine accounting must exist before L3** (in-memory is local/dev only). L3 later only adds **minimal beta safety caps** (invite, per-user active cap, default auto-shutdown, cost warning) — not L7.
+- L2 does **not** add MCP tools (stay at eight). Operator destroy is `/operator/v1` + confirm + captured providerRef for the selected computer, or the CLI runbook. MCP cannot destroy a Devbox. Do not add Fake AX, fake clicking, takeover, C8/C9 code, or proxy/bot-detection claims.
 - Paid Agent Computers must use `flok-runloop-interactive` (or equivalent validated interactive stack). Fail before accepting generic compute-only DnD.
 - Do not enable or import Nexus-IQ, AEON, Graphiti, or any memory plane until Gate G0 is explicitly marked PASSED. G0 is not an L1–L3 blocker.
 

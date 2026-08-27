@@ -76,6 +76,8 @@ export {
   ComputerError,
   ComputerNotFound,
   CrossNodeDenied,
+  DestroyConfirmRequired,
+  DestroyProviderRefMismatch,
   DuplicateComputer,
   IdempotencyConflict,
   IllegalStateTransition,

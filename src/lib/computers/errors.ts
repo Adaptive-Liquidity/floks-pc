@@ -154,3 +154,23 @@ export class IdempotencyConflict extends ComputerError {
     this.name = "IdempotencyConflict";
   }
 }
+
+export class DestroyConfirmRequired extends ComputerError {
+  constructor() {
+    super(
+      "DESTROY_CONFIRM_REQUIRED",
+      "Refusing to destroy: confirm must be true for the selected computer",
+    );
+    this.name = "DestroyConfirmRequired";
+  }
+}
+
+export class DestroyProviderRefMismatch extends ComputerError {
+  constructor() {
+    super(
+      "DESTROY_PROVIDER_REF_MISMATCH",
+      "Refusing to destroy: providerRef does not match the selected computer",
+    );
+    this.name = "DestroyProviderRefMismatch";
+  }
+}

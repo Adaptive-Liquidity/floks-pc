@@ -46,11 +46,25 @@ import type {
 import {
   CapabilityInvalid,
   ComputerNotFound,
+  DestroyConfirmRequired,
+  DestroyProviderRefMismatch,
   DuplicateComputer,
   IllegalStateTransition,
   PairCodeInvalid,
   PathEscape,
 } from "./errors.js";
+import {
+  OPERATOR_EVENT_CAP,
+  OPERATOR_MCP_TOOL_COUNT,
+  buildOperatorComputerView,
+  computerWarnings,
+  summarizeAccessibility,
+  type OperatorEvent,
+  type OperatorEventKind,
+  type OperatorObserveResult,
+  type OperatorPairStatus,
+  type OperatorSnapshot,
+} from "../operator/view.js";
 import { assertTransition } from "./state.js";
 import {
   copyScopes,
@@ -117,6 +131,8 @@ export class ComputerService {
   private readonly ownerId: string | null;
   private readonly workspaceId: string | null;
   private persistChain: Promise<void> = Promise.resolve();
+  private operatorEvents: OperatorEvent[] = [];
+  private destroyChains = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly provider: ComputerProvider,
@@ -203,6 +219,8 @@ export class ComputerService {
     this.capabilities.clear();
     this.capabilitiesByDigest.clear();
     this.pairFailuresByIdentity.clear();
+    this.operatorEvents = [];
+    this.destroyChains.clear();
   }
 
   /**
@@ -323,6 +341,113 @@ export class ComputerService {
   /** List all computers currently tracked (test / debug helper). */
   list(): Computer[] {
     return [...this.computers.values()];
+  }
+
+  listOperatorEvents(): OperatorEvent[] {
+    return this.operatorEvents.map((e) => ({ ...e }));
+  }
+
+  operatorSnapshot(): OperatorSnapshot {
+    const durableStore = Boolean(this.store);
+    const computers = this.list().map((c) => {
+      const caps = this.scopesFor(c.id);
+      return buildOperatorComputerView(c, {
+        pairStatus: this.pairStatusFor(c.id),
+        scopes: caps.scopes,
+        capabilityExpiresAt: caps.expiresAt,
+        lastAction: this.lastActionFor(c.id),
+        durableStore,
+      });
+    });
+    return {
+      computers,
+      events: this.listOperatorEvents(),
+      mcpToolCount: OPERATOR_MCP_TOOL_COUNT,
+      durableStore,
+      provider: this.provider.name,
+      warnings: computerWarnings({
+        provider: this.provider.name,
+        durableStore,
+      }),
+    };
+  }
+
+  async operatorObserve(
+    computerId: string,
+    request: ObserveRequest,
+  ): Promise<OperatorObserveResult> {
+    const computer = await this.get(computerId);
+    if (computer.state === "deleted") throw new ComputerNotFound(computerId);
+    const ref = this.requireProviderRef(computer);
+    this.touch(computer);
+    const observation = await this.provider.observe(ref, {
+      includeAccessibility: request.includeAccessibility ?? true,
+      includeScreenshot: request.includeScreenshot ?? true,
+    });
+    const result = this.toOperatorObserve(observation);
+    this.recordOperatorEvent({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "observe",
+      operation: "observe",
+      success: true,
+      errorCode: null,
+    });
+    return result;
+  }
+
+  /**
+   * Owner/control-plane destroy of the selected computer only.
+   * Requires confirm + the captured providerRef. Not an MCP tool.
+   */
+  async destroyThisComputer(
+    computerId: string,
+    input: { confirm: boolean; providerRef: string },
+  ): Promise<Computer> {
+    if (input.confirm !== true) throw new DestroyConfirmRequired();
+    return this.enqueueDestroy(computerId, () =>
+      this.destroyThisComputerLocked(computerId, input.providerRef),
+    );
+  }
+
+  private enqueueDestroy<T>(computerId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.destroyChains.get(computerId) ?? Promise.resolve();
+    const next = prev.catch(() => undefined).then(fn);
+    this.destroyChains.set(
+      computerId,
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return next;
+  }
+
+  private async destroyThisComputerLocked(
+    computerId: string,
+    providerRef: string,
+  ): Promise<Computer> {
+    const computer = await this.get(computerId);
+    if (computer.state === "deleted") return computer;
+    if (!computer.providerRef) throw new DestroyProviderRefMismatch();
+    if (providerRef !== computer.providerRef) {
+      throw new DestroyProviderRefMismatch();
+    }
+    if (computer.state !== "deleting") {
+      await this.transition(computerId, "deleting");
+    }
+    const current = await this.get(computerId);
+    if (current.state === "deleted") return current;
+    const deleted = await this.transition(computerId, "deleted");
+    this.recordOperatorEvent({
+      computerId: deleted.id,
+      birdId: deleted.birdId,
+      kind: "cleanup",
+      operation: "destroy",
+      success: true,
+      errorCode: null,
+    });
+    return deleted;
   }
 
   /**
@@ -455,6 +580,15 @@ export class ComputerService {
     this.capabilitiesByDigest.set(cap.tokenDigest, cap.id);
     await this.persist();
 
+    this.recordOperatorEvent({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "pair",
+      operation: "pair",
+      success: true,
+      errorCode: null,
+    });
+
     return {
       token: minted.token,
       capabilityId: cap.id,
@@ -507,6 +641,14 @@ export class ComputerService {
         result.providerDetail = providerStatus.providerDetail;
       }
     }
+    this.recordOperatorEvent({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "status",
+      operation: "status",
+      success: true,
+      errorCode: null,
+    });
     return result;
   }
 
@@ -529,12 +671,29 @@ export class ComputerService {
         validatedRequest.cwd !== undefined
           ? canonicalizeWorkspacePath(validatedRequest.cwd, root)
           : undefined;
-      return this.provider.exec(
+      const execResult = await this.provider.exec(
         ref,
         cwd !== undefined ? { ...validatedRequest, cwd } : validatedRequest,
       );
+      this.recordOperatorEvent({
+        computerId: computer.id,
+        birdId: computer.birdId,
+        kind: "exec",
+        operation: "exec",
+        success: execResult.exitCode === 0 && !execResult.timedOut,
+        errorCode: execResult.timedOut ? "TIMEOUT" : execResult.exitCode === 0 ? null : "EXEC_FAILED",
+      });
+      return execResult;
     } catch (err) {
       if (err instanceof PathEscape) {
+        this.recordOperatorEvent({
+          computerId: computer.id,
+          birdId: computer.birdId,
+          kind: "exec",
+          operation: "exec",
+          success: false,
+          errorCode: "PATH_ESCAPE",
+        });
         return {
           exitCode: 126,
           stdout: "",
@@ -562,13 +721,30 @@ export class ComputerService {
         validatedRequest.destination !== undefined
           ? canonicalizeWorkspacePath(validatedRequest.destination, root)
           : undefined;
-      return this.provider.filesystem(ref, {
+      const fsResult = await this.provider.filesystem(ref, {
         ...validatedRequest,
         path,
         ...(destination !== undefined ? { destination } : {}),
       });
+      this.recordOperatorEvent({
+        computerId: computer.id,
+        birdId: computer.birdId,
+        kind: "file",
+        operation: `fs:${validatedRequest.operation}`,
+        success: fsResult.ok,
+        errorCode: fsResult.errorCode ?? null,
+      });
+      return fsResult;
     } catch (err) {
       if (err instanceof PathEscape) {
+        this.recordOperatorEvent({
+          computerId: computer.id,
+          birdId: computer.birdId,
+          kind: "file",
+          operation: `fs:${validatedRequest.operation}`,
+          success: false,
+          errorCode: "PATH_ESCAPE",
+        });
         return { ok: false, errorCode: "PATH_ESCAPE" };
       }
       throw err;
@@ -583,7 +759,16 @@ export class ComputerService {
     const { computer } = this.authorize(auth, computerId, "observe");
     const ref = this.requireProviderRef(computer);
     this.touch(computer);
-    return this.provider.observe(ref, request);
+    const observation = await this.provider.observe(ref, request);
+    this.recordOperatorEvent({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "observe",
+      operation: "observe",
+      success: true,
+      errorCode: null,
+    });
+    return observation;
   }
 
   async act(
@@ -594,7 +779,19 @@ export class ComputerService {
     const { computer } = this.authorize(auth, computerId, "act");
     const ref = this.requireProviderRef(computer);
     this.touch(computer);
-    return this.provider.act(ref, request);
+    const actResult = await this.provider.act(ref, request);
+    const failClosed = actResult.results.some(
+      (row) => row.action.type === "click_element" && !row.success,
+    );
+    this.recordOperatorEvent({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: failClosed ? "fail-closed" : "browser",
+      operation: failClosed ? "click_element" : "act",
+      success: actResult.ok && !failClosed,
+      errorCode: failClosed ? "CLICK_ELEMENT_UNSUPPORTED" : null,
+    });
+    return actResult;
   }
 
   async wake(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {
@@ -726,6 +923,96 @@ export class ComputerService {
         this.pairIssueExtras.delete(id);
       }
     }
+  }
+
+  private recordOperatorEvent(input: {
+    computerId: string | null;
+    birdId: string | null;
+    kind: OperatorEventKind;
+    operation: string;
+    success: boolean;
+    errorCode: string | null;
+  }): void {
+    this.operatorEvents.push({
+      id: newId(),
+      at: new Date().toISOString(),
+      computerId: input.computerId,
+      birdId: input.birdId,
+      kind: input.kind,
+      operation: input.operation,
+      success: input.success,
+      errorCode: input.errorCode,
+    });
+    if (this.operatorEvents.length > OPERATOR_EVENT_CAP) {
+      this.operatorEvents.splice(0, this.operatorEvents.length - OPERATOR_EVENT_CAP);
+    }
+  }
+
+  private pairStatusFor(computerId: string): OperatorPairStatus {
+    const now = Date.now();
+    for (const cap of this.capabilities.values()) {
+      if (
+        cap.computerId === computerId &&
+        cap.revokedAt === null &&
+        cap.expiresAt.getTime() > now
+      ) {
+        return "paired";
+      }
+    }
+    for (const rec of this.pairCodes.values()) {
+      if (
+        rec.computerId === computerId &&
+        rec.usedAt === null &&
+        rec.expiresAt.getTime() > now
+      ) {
+        return "pairing";
+      }
+    }
+    return "unpaired";
+  }
+
+  private scopesFor(computerId: string): {
+    scopes: CapabilityScope[];
+    expiresAt: Date | null;
+  } {
+    const now = Date.now();
+    let latest: ComputerCapability | null = null;
+    for (const cap of this.capabilities.values()) {
+      if (
+        cap.computerId !== computerId ||
+        cap.revokedAt !== null ||
+        cap.expiresAt.getTime() <= now
+      ) {
+        continue;
+      }
+      if (!latest || cap.issuedAt.getTime() > latest.issuedAt.getTime()) {
+        latest = cap;
+      }
+    }
+    if (!latest) return { scopes: [], expiresAt: null };
+    return { scopes: copyScopes(latest.scopes), expiresAt: latest.expiresAt };
+  }
+
+  private lastActionFor(computerId: string): string | null {
+    for (let i = this.operatorEvents.length - 1; i >= 0; i -= 1) {
+      const ev = this.operatorEvents[i];
+      if (ev && ev.computerId === computerId) return ev.operation;
+    }
+    return null;
+  }
+
+  private toOperatorObserve(observation: Observation): OperatorObserveResult {
+    const screenshot = observation.screenshotBase64;
+    const hasScreenshot = typeof screenshot === "string" && screenshot.length > 0;
+    const result: OperatorObserveResult = {
+      screenWidth: observation.screenWidth,
+      screenHeight: observation.screenHeight,
+      hasScreenshot,
+      accessibility: summarizeAccessibility(observation.accessibilitySummary),
+    };
+    if (observation.activeWindow) result.activeWindow = observation.activeWindow;
+    if (hasScreenshot && screenshot) result.screenshotBase64 = screenshot;
+    return result;
   }
 }
 
