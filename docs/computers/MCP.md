@@ -73,7 +73,7 @@ ComputerProvider   (never called from the gateway)
 | `computer_status` | `status()` | No `providerDetail` / provider refs. |
 | `computer_exec` | `exec()` | Default argv. `mode: "shell"` needs `shell` scope. stdout/stderr clipped to 64k. |
 | `computer_fs` | `filesystem()` | Path jail. stat/list/read/write/mkdir/move/copy/delete. |
-| `computer_observe` | `observe()` | Screenshot only when requested. Optional `include_accessibility`. Live Runloop returns `accessibility_summary.source === "cdp"` with real nodes (L0). FakeProvider is not proof. `capabilities().accessibility` stays `false`. |
+| `computer_observe` | `observe()` | Screenshot only when requested; returned as MCP `image` content (PNG) so the human sees the computer. Pixel bytes are omitted from the text JSON. Optional `include_accessibility`. Live Runloop returns `accessibility_summary.source === "cdp"` with real nodes (L0). FakeProvider is not proof. `capabilities().accessibility` stays `false`. |
 | `computer_act` | `act()` | Bounded C3B actions (`open_url`, wait, coordinates, type, key, scroll). `click_element` is rewritten from the last observe AX cache (15s); guessed/offscreen clicks fail closed. Provider never receives `elementId`. No VNC/takeover tool. |
 | `handoff_send` | — | `PHASE_NOT_STARTED` (L6 / former C9). |
 | `handoff_receive` | — | `PHASE_NOT_STARTED` (L6 / former C9). |

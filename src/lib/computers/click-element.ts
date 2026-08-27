@@ -110,24 +110,49 @@ export function rewriteClickElement(
   };
 }
 
-export function rewriteActBatch(
+export type RewriteSlot =
+  | { kind: "forward"; action: Action }
+  | { kind: "fail"; action: Action; error: string; code: string };
+
+export function rewriteActSlots(
   actions: Action[],
   cache: AxClickCache | null,
   now: number,
-): { actions: Action[]; results: Array<{ action: Action; success: boolean; error?: string; code?: string }> } {
-  const rewritten: Action[] = [];
-  const results: Array<{ action: Action; success: boolean; error?: string; code?: string }> = [];
-  for (const action of actions) {
-    if (action.type !== "click_element") {
-      rewritten.push(action);
-      continue;
-    }
+): RewriteSlot[] {
+  return actions.map((action) => {
+    if (action.type !== "click_element") return { kind: "forward", action };
     const next = rewriteClickElement(action, cache, now);
-    if (next.ok) {
-      rewritten.push(next.action);
+    if (next.ok) return { kind: "forward", action: next.action };
+    return { kind: "fail", action, error: next.error, code: next.code };
+  });
+}
+
+export function stitchActResults(
+  slots: RewriteSlot[],
+  providerResults: Array<{ action: Action; success: boolean; error?: string }>,
+): {
+  results: Array<{ action: Action; success: boolean; error?: string }>;
+  failClosed: boolean;
+  failCode: string | null;
+} {
+  let forwarded = 0;
+  let failClosed = false;
+  let failCode: string | null = null;
+  const results: Array<{ action: Action; success: boolean; error?: string }> = [];
+  for (const slot of slots) {
+    if (slot.kind === "fail") {
+      failClosed = true;
+      if (failCode === null) failCode = slot.code;
+      results.push({ action: slot.action, success: false, error: slot.error });
       continue;
     }
-    results.push({ action, success: false, error: next.error, code: next.code });
+    const row = providerResults[forwarded];
+    forwarded += 1;
+    if (!row) {
+      results.push({ action: slot.action, success: false, error: "provider omitted act result" });
+      continue;
+    }
+    results.push(row.error === undefined ? { action: row.action, success: row.success } : row);
   }
-  return { actions: rewritten, results };
+  return { results, failClosed, failCode };
 }

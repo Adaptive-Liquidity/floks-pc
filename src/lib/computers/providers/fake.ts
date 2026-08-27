@@ -337,6 +337,11 @@ export class FakeProvider implements ComputerProvider {
       activeWindow: m.lastUrl ?? "Fake Desktop",
       accessibilitySummary: { nodes: 0 },
     };
+    if (request.includeScreenshot === true) {
+      // 1×1 PNG protocol coverage — not a real display capture.
+      observation.screenshotBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    }
     if (request.includeAccessibility === true && m.lastUrl) {
       observation.accessibilitySummary = {
         source: "fake",

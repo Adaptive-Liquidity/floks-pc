@@ -83,7 +83,12 @@ import {
   type OperatorSnapshot,
 } from "../operator/view.js";
 import { assertTransition, canTransition } from "./state.js";
-import { axCacheFromObservation, rewriteActBatch, type AxClickCache } from "./click-element.js";
+import {
+  axCacheFromObservation,
+  rewriteActSlots,
+  stitchActResults,
+  type AxClickCache,
+} from "./click-element.js";
 import {
   copyScopes,
   DEFAULT_CAPABILITY_TTL_MS,
@@ -967,40 +972,36 @@ export class ComputerService {
     const { computer } = this.authorize(auth, computerId, "act");
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
-    const rewritten = rewriteActBatch(
+    const slots = rewriteActSlots(
       request.actions,
       this.axByComputer.get(computer.id) ?? null,
       this.now(),
     );
-    if (rewritten.actions.length === 0) {
-      const failed = rewritten.results.map(({ action, success, error }) =>
-        error === undefined ? { action, success } : { action, success, error },
-      );
+    const forwarded = slots.filter((slot) => slot.kind === "forward").map((slot) => slot.action);
+    if (forwarded.length === 0) {
+      const stitched = stitchActResults(slots, []);
       this.recordOperatorEvent({
         computerId: computer.id,
         birdId: computer.birdId,
         kind: "fail-closed",
         operation: "click_element",
         success: false,
-        errorCode: rewritten.results[0]?.code ?? "ELEMENT_STALE",
+        errorCode: stitched.failCode ?? "ELEMENT_STALE",
       });
-      return { ok: false, results: failed };
+      return { ok: false, results: stitched.results };
     }
-    const actResult = await this.provider.act(ref, { actions: rewritten.actions });
-    const prefix = rewritten.results.map(({ action, success, error }) =>
-      error === undefined ? { action, success } : { action, success, error },
-    );
-    const results = [...prefix, ...actResult.results];
-    const failClosed = prefix.length > 0;
+    const actResult = await this.provider.act(ref, { actions: forwarded });
+    const stitched = stitchActResults(slots, actResult.results);
+    const ok = stitched.results.every((row) => row.success);
     this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,
-      kind: failClosed ? "fail-closed" : "browser",
-      operation: failClosed ? "click_element" : "act",
-      success: actResult.ok && !failClosed,
-      errorCode: failClosed ? (rewritten.results[0]?.code ?? "ELEMENT_STALE") : null,
+      kind: stitched.failClosed ? "fail-closed" : "browser",
+      operation: stitched.failClosed ? "click_element" : "act",
+      success: ok,
+      errorCode: stitched.failClosed ? (stitched.failCode ?? "ELEMENT_STALE") : null,
     });
-    return { ok: actResult.ok && !failClosed, results };
+    return { ok, results: stitched.results };
   }
 
   async wake(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {

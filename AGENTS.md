@@ -29,7 +29,7 @@ Violations are stop-the-line. Revert immediately.
 
 - L0 / C7 CLOSED (PR #17). L1 CLOSED (PR #21). L2 CLOSED (PR #22). L3 CLOSED (PR #23, `d118746`). L4 CLOSED (PR #24, optional insurance).
 - **Current owner-requested work: L5 — Safer browser control** (`click_element` from last CDP/AX bounds, fail-closed guesses). Do not automatically start L6 / L7 / L8 / G0.
-- Historical C0–C6 stay closed. Do not re-open them. Do not add MCP tools (stay at eight). Operator destroy/recover is `/operator/v1` + captured providerRef for the selected computer. MCP cannot destroy a Devbox. Do not add Fake AX, fake clicking, takeover, C9 handoffs, or proxy/bot-detection claims. FakeProvider is not product proof. L3 caps are not L7 billing.
+- Historical C0–C6 stay closed. Do not re-open them. Do not add MCP tools (stay at eight). Operator destroy/recover is `/operator/v1` + captured providerRef for the selected computer. MCP cannot destroy a Devbox. Fake AX / Fake 1×1 screenshots are unpaid protocol coverage only (`source` must never be `cdp`). Do not add guessed clicks, takeover, C9 handoffs, or proxy/bot-detection claims. FakeProvider is not product proof. L3 caps are not L7 billing.
 - Shared Team Computers are **deferred** (`docs/computers/TEAM_COMPUTERS.md`). Default remains one bot, one isolated Agent Computer.
 - Paid Agent Computers must use `flok-runloop-interactive` (or equivalent validated interactive stack). Fail before accepting generic compute-only DnD. Missing `flok-ui` / Xvfb / Chrome is not success. `fromEnv()` does not fall back to generic DnD.
 - Do not enable or import Nexus-IQ, AEON, Graphiti, or any memory plane until Gate G0 is explicitly marked PASSED. G0 is not an L1–L3 blocker.

@@ -236,7 +236,7 @@ describe("L2 operator HTTP", () => {
       const obs = (await res.json()) as {
         observation: { hasScreenshot: boolean; screenWidth: number };
       };
-      assert.equal(obs.observation.hasScreenshot, false);
+      assert.equal(obs.observation.hasScreenshot, true);
       assert.equal(obs.observation.screenWidth, 1280);
       const events = await fetch(`${base}${OPERATOR_API_PREFIX}/events`);
       const payload = (await events.json()) as { events: unknown[] };

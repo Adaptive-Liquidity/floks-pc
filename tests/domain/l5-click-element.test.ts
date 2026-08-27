@@ -124,6 +124,23 @@ describe("L5 click_element", () => {
     assert.equal(clicked.results[0]?.action.x, 140);
     assert.equal(clicked.results[0]?.action.y, 92);
     assert.equal(clicked.results[0]?.action.elementId, undefined);
+
+    const mixed = await service.act(auth, computer.id, {
+      actions: [
+        { type: "open_url", url: "https://l5-mixed.example/" },
+        { type: "click_element", elementId: "missing" },
+        { type: "wait", durationMs: 10 },
+      ],
+    });
+    assert.equal(mixed.ok, false);
+    assert.equal(mixed.results.length, 3);
+    assert.equal(mixed.results[0]?.success, true);
+    assert.equal(mixed.results[0]?.action.type, "open_url");
+    assert.equal(mixed.results[1]?.success, false);
+    assert.equal(mixed.results[1]?.action.type, "click_element");
+    assert.match(String(mixed.results[1]?.error), /not in the last AX tree/i);
+    assert.equal(mixed.results[2]?.success, true);
+    assert.equal(mixed.results[2]?.action.type, "wait");
   });
 
   it("does not treat FakeProvider as live CDP proof", async () => {
