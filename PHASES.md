@@ -153,7 +153,17 @@ Includes: provider-native snapshots, wake/pause/resume polish, failed-boot recov
 
 **Purpose:** Structured clicks from real CDP/accessibility bounds. Never guessed clicks. Offscreen/subpixel fail-closed. Optional human approval for risky clicks. No FakeProvider proof.
 
+**Status:** OPEN — owner-requested. Private beta already works without this; L5 is the join hook (the bot can use the page, not only see it).
+
+**Must include:**
+- `ComputerService.act` rewrites `click_element` → integer `click_coordinates` from the last `observe({ include_accessibility: true })` AX cache (15s).
+- Missing cache, unknown id, missing box model, non-integer mapping, and offscreen targets **fail closed**. No guessed clicks.
+- Provider never receives `elementId`. Runloop `validateAction("click_element")` stays fail-closed as defense in depth.
+- Exactly eight MCP tools. FakeProvider trees are unpaid protocol coverage, not live proof.
+
 **Gate:** Bot can click real page elements through verified CDP mapping; bad mappings fail closed.
+
+**Non-goals:** human approval UI, takeover/VNC, extra MCP tools, FakeProvider as product proof.
 
 ---
 

@@ -38,7 +38,7 @@ L1  Launch MVP                  CLOSED — PR #21 live remote HTTPS + Runloop
 L2  Beta dashboard              CLOSED — PR #22 Live Node Console
 L3  Private beta                CLOSED — PR #23 d118746  ← usable product
 L4  Reliability / recovery      optional insurance (PR #24). Not a beta blocker
-L5  Safer browser control       backlog — click_element from real CDP bounds
+L5  Safer browser control       OPEN — click_element from last observe AX bounds
 L6  Team / workflow             backlog — explicit one-file handoff
 L7  Scale / quotas / billing    backlog — not L3 caps
 L8  Provider fabric             backlog — keep Runloop v1
@@ -145,7 +145,7 @@ L1 implementation: `RunloopProvider.fromEnv()` requires `flok-runloop-interactiv
 | Terminal / exec | Proven. |
 | Private files (stat/list/read/write/mkdir/move/copy/delete) | Proven live on Runloop (PR #20 MCP fs smoke). Not an L1 blocker. |
 | Lifecycle stop/destroy | Control-plane `ComputerService.stop` / `destroy` exist. **MCP cannot invoke them.** Operator uses the Runloop shutdown API (this doc). L1 must make that obvious before beta. |
-| Fail-closed `click_element` | Current. Not a launch blocker. Real AX-bounds click is L5. |
+| `click_element` from last observe AX | L5. Guessed/offscreen/unmapped clicks fail closed. FakeProvider is not live proof. |
 | Cleanup / Devbox shutdown | L0 cleanup proof: Devbox shutdown was verified through the Runloop provider/API. Provider ID redacted. Not via MCP or `Ctrl+C`. Never bulk-shutdown the account. |
 | Durable ComputerRecord / pair / capability / active-machine accounting | **Required before L3.** In-memory is local/dev only. Raw capability tokens are never stored. |
 | Provider workspace snapshots | **L4 optional insurance** (PR #24). Provider-native checkpoint/restore. Not required before private beta. Not a substitute for control-plane records. |

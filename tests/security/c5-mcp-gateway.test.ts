@@ -560,7 +560,7 @@ describe("C5 MCP gateway", () => {
       error?: string;
     }>;
     assert.equal(clickResults[0]?.success, false);
-    assert.match(String(clickResults[0]?.error), /unsupported/i);
+    assert.match(String(clickResults[0]?.error), /fresh AX|unsupported/i);
 
     await rpc("tools/call", {
       name: "computer_act",

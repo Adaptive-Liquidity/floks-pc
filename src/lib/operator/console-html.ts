@@ -187,7 +187,7 @@ export function operatorConsoleHtml(): string {
       </dl>
       <div id="warnings"></div>
       <h2>Stop this computer</h2>
-      <p>click_element stays fail-closed. Destroys only the selected Agent Computer. Paste the captured providerRef. Not an MCP tool.</p>
+      <p>click_element uses last observe AX bounds; guessed clicks fail closed. Destroys only the selected Agent Computer. Paste the captured providerRef. Not an MCP tool.</p>
       <label>Captured providerRef <input id="destroy-ref" type="text" autocomplete="off"/></label>
       <label><input id="destroy-confirm" type="checkbox"/> I am stopping only this computer</label>
       <button class="stop" id="destroy" type="button">Stop this computer</button>

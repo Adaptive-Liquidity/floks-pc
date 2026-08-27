@@ -83,7 +83,7 @@ interface ProviderCapabilities {
 - argv exec: serialize `{argv,cwd,env}` JSON → base64 → Python `os.execvp`. `mode: "shell"` rejected.
 - C3B `observe()` screenshots the private display (PNG, temp file deleted).
 - L0 / C7 (PR #17): when `include_accessibility` is set, Runloop dumps guest Chrome CDP AX from loopback `127.0.0.1:9222` (helper `/home/user/flok/.flok/cdp-ax.mjs`). Live proof: `accessibility_summary.source === "cdp"` with real nodes. FakeProvider is not proof. **`capabilities().accessibility` stays `false`** until an explicit later lift. Empty dumps fail closed.
-- C3B `act()` supports `click_coordinates`, `type`, `key`, `scroll`, `open_url`, `wait`, and allowlisted `launch_application` (browser). `click_element` is fail-closed until **L5** (real CDP/AX bounds; never guessed clicks).
+- C3B `act()` supports `click_coordinates`, `type`, `key`, `scroll`, `open_url`, `wait`, and allowlisted `launch_application` (browser). `click_element` is rewritten at `ComputerService` from last CDP/AX bounds (L5). Leftover `elementId` at the provider still fail-closes. Never guessed clicks.
 - `takeover()` stays fail-closed. Local noVNC is bound to `127.0.0.1:6080` only. Do not advertise `vnc: true` until authenticated tunnels exist. Never use `auth_mode=open`. Takeover is **not** launch (L1–L3).
 - Capabilities: `computerUse: true` after paid C3B live gate `32559415086`; `accessibility: false`, `vnc: false`, `pauseMemory: false`.
 - CDP is loopback-only. Never bind `0.0.0.0`. No `--no-sandbox`.

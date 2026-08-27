@@ -83,6 +83,7 @@ import {
   type OperatorSnapshot,
 } from "../operator/view.js";
 import { assertTransition, canTransition } from "./state.js";
+import { axCacheFromObservation, rewriteActBatch, type AxClickCache } from "./click-element.js";
 import {
   copyScopes,
   DEFAULT_CAPABILITY_TTL_MS,
@@ -150,6 +151,7 @@ export class ComputerService {
   private persistChain: Promise<void> = Promise.resolve();
   private operatorEvents: OperatorEvent[] = [];
   private destroyChains = new Map<string, Promise<unknown>>();
+  private axByComputer = new Map<string, AxClickCache>();
   private readonly beta: BetaPolicy;
   private readonly betaRegistry: BetaRegistry | undefined;
   private readonly now: () => number;
@@ -584,6 +586,7 @@ export class ComputerService {
   ): Promise<Computer> {
     const computer = await this.get(computerId);
     if (computer.state === "deleted") return computer;
+    this.axByComputer.delete(computerId);
     if (!computer.providerRef) throw new DestroyProviderRefMismatch();
     if (providerRef !== computer.providerRef) {
       throw new DestroyProviderRefMismatch();
@@ -940,6 +943,11 @@ export class ComputerService {
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
     const observation = await this.provider.observe(ref, request);
+    if (request.includeAccessibility === true) {
+      const cache = axCacheFromObservation(observation, this.now());
+      if (cache) this.axByComputer.set(computer.id, cache);
+      else this.axByComputer.delete(computer.id);
+    }
     this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,
@@ -959,19 +967,40 @@ export class ComputerService {
     const { computer } = this.authorize(auth, computerId, "act");
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
-    const actResult = await this.provider.act(ref, request);
-    const failClosed = actResult.results.some(
-      (row) => row.action.type === "click_element" && !row.success,
+    const rewritten = rewriteActBatch(
+      request.actions,
+      this.axByComputer.get(computer.id) ?? null,
+      this.now(),
     );
+    if (rewritten.actions.length === 0) {
+      const failed = rewritten.results.map(({ action, success, error }) =>
+        error === undefined ? { action, success } : { action, success, error },
+      );
+      this.recordOperatorEvent({
+        computerId: computer.id,
+        birdId: computer.birdId,
+        kind: "fail-closed",
+        operation: "click_element",
+        success: false,
+        errorCode: rewritten.results[0]?.code ?? "ELEMENT_STALE",
+      });
+      return { ok: false, results: failed };
+    }
+    const actResult = await this.provider.act(ref, { actions: rewritten.actions });
+    const prefix = rewritten.results.map(({ action, success, error }) =>
+      error === undefined ? { action, success } : { action, success, error },
+    );
+    const results = [...prefix, ...actResult.results];
+    const failClosed = prefix.length > 0;
     this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,
       kind: failClosed ? "fail-closed" : "browser",
       operation: failClosed ? "click_element" : "act",
       success: actResult.ok && !failClosed,
-      errorCode: failClosed ? "CLICK_ELEMENT_UNSUPPORTED" : null,
+      errorCode: failClosed ? (rewritten.results[0]?.code ?? "ELEMENT_STALE") : null,
     });
-    return actResult;
+    return { ok: actResult.ok && !failClosed, results };
   }
 
   async wake(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {
@@ -1251,6 +1280,7 @@ export class ComputerService {
       ...latest,
       status: "restored",
     };
+    this.axByComputer.delete(computerId);
     this.applyTransition(await this.get(computerId), "ready");
     computer = await this.patchComputer(computerId, {
       latestCheckpoint: restoredCheckpoint,

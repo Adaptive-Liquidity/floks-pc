@@ -167,7 +167,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "computer_act",
     description:
-      "Apply a bounded action batch (click_coordinates/type/key/scroll/open_url/launch_application/wait). No public VNC/takeover.",
+      "Apply a bounded action batch (click_element from last observe AX bounds, click_coordinates/type/key/scroll/open_url/launch_application/wait). Guessed clicks fail closed. No public VNC/takeover.",
     inputSchema: advertisedSchema(ComputerActArgsSchema, [
       "capability_token",
       "computer_handle",
