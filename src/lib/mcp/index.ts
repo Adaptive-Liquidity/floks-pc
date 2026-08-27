@@ -30,6 +30,8 @@ export type { McpToolDefinition, McpToolName } from "./tools.js";
 export { silentLogger } from "./log.js";
 export type { McpLogger } from "./log.js";
 
+export { assertRemoteMcpExposure, isLoopbackHostname } from "./remote.js";
+
 export {
   PairConnectionThrottle,
   connectionIdentityFromAuth,

@@ -88,7 +88,7 @@ FLOK_MCP_BOOTSTRAP_FLOCK_ID=flock-local \
 npm run start:mcp
 ```
 
-**B. Remote Grok Bot** needs an operator **authenticated HTTPS** tunnel/proxy in front of MCP, plus `FLOK_MCP_AUTH_TOKEN`. Do not expose unauthenticated public MCP. **127.0.0.1 is not a real remote Grok Bot endpoint. A remote Grok Bot needs an authenticated HTTPS endpoint that forwards to the MCP server and requires FLOK_MCP_AUTH_TOKEN.**
+**B. Remote Grok Bot** needs an operator **authenticated HTTPS** tunnel/proxy in front of MCP, plus `FLOK_MCP_AUTH_TOKEN`. Do not expose unauthenticated public MCP. **127.0.0.1 is not a real remote Grok Bot endpoint. A remote Grok Bot needs an authenticated HTTPS endpoint that forwards to the MCP server and requires FLOK_MCP_AUTH_TOKEN.** Runbook: `docs/computers/REMOTE_GROK_MCP.md`.
 
 **MCP cannot destroy the Devbox. `Ctrl+C` does not destroy it.** Only shut down the Devbox created by this FLOKS run. Never bulk-shutdown all Devboxes returned by the Runloop account. Prefer the captured `providerRef` from this run; if unsure, do not shut down anything.
 
