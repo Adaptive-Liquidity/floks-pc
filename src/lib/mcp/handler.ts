@@ -394,16 +394,18 @@ export class McpGateway {
     if (observation.activeWindow !== undefined) {
       payload.active_window = observation.activeWindow;
     }
-    if (parsed.include_screenshot === true && observation.screenshotBase64) {
-      payload.screenshot_base64 = observation.screenshotBase64;
-    }
     if (parsed.include_accessibility === true && observation.accessibilitySummary !== undefined) {
       payload.accessibility_summary = observation.accessibilitySummary;
     }
     const outcome: ToolOk = { isError: false, payload };
     if (parsed.include_screenshot === true) {
       const image = screenshotImageContent(observation.screenshotBase64);
-      if (image) outcome.images = [{ data: image.data, mimeType: image.mimeType }];
+      if (image) {
+        payload.has_screenshot = true;
+        outcome.images = [{ data: image.data, mimeType: image.mimeType }];
+      } else {
+        payload.has_screenshot = false;
+      }
     }
     return outcome;
   }

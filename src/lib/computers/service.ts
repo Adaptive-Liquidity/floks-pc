@@ -254,6 +254,7 @@ export class ComputerService {
     this.pairFailuresByIdentity.clear();
     this.operatorEvents = [];
     this.destroyChains.clear();
+    this.axByComputer.clear();
   }
 
   /**
@@ -992,6 +993,9 @@ export class ComputerService {
     }
     const actResult = await this.provider.act(ref, { actions: forwarded });
     const stitched = stitchActResults(slots, actResult.results);
+    if (actResult.results.some((row) => row.success)) {
+      this.axByComputer.delete(computer.id);
+    }
     const ok = stitched.results.every((row) => row.success);
     this.recordOperatorEvent({
       computerId: computer.id,

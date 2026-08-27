@@ -4,7 +4,7 @@
  */
 
 import type { Action, Observation } from "./types.js";
-import { AxNodeSchema, type CdpAxBounds, type CdpAxNode } from "./providers/runloop-cdp.js";
+import { AxNodeSchema, CDP_AX_NODE_CAP, type CdpAxBounds, type CdpAxNode } from "./providers/runloop-cdp.js";
 
 export const AX_CACHE_TTL_MS = 15_000;
 
@@ -39,6 +39,7 @@ export function axCacheFromObservation(observation: Observation, now: number): A
     if (parsed.data.focused !== undefined) node.focused = parsed.data.focused;
     if (parsed.data.bounds !== undefined) node.bounds = parsed.data.bounds;
     nodes.set(node.id, node);
+    if (nodes.size >= CDP_AX_NODE_CAP) break;
   }
   if (nodes.size === 0) return null;
   if (!Number.isInteger(observation.screenWidth) || !Number.isInteger(observation.screenHeight)) {
@@ -114,16 +115,35 @@ export type RewriteSlot =
   | { kind: "forward"; action: Action }
   | { kind: "fail"; action: Action; error: string; code: string };
 
+function mayChangePage(action: Action): boolean {
+  return action.type !== "wait" && action.type !== "click_element";
+}
+
 export function rewriteActSlots(
   actions: Action[],
   cache: AxClickCache | null,
   now: number,
 ): RewriteSlot[] {
+  let pageMayHaveChanged = false;
   return actions.map((action) => {
-    if (action.type !== "click_element") return { kind: "forward", action };
-    const next = rewriteClickElement(action, cache, now);
-    if (next.ok) return { kind: "forward", action: next.action };
-    return { kind: "fail", action, error: next.error, code: next.code };
+    if (action.type === "click_element") {
+      if (pageMayHaveChanged) {
+        return {
+          kind: "fail",
+          action,
+          code: "ELEMENT_STALE",
+          error: "click_element must not follow a mutating action in the same batch; observe first",
+        };
+      }
+      const next = rewriteClickElement(action, cache, now);
+      if (next.ok) {
+        pageMayHaveChanged = true;
+        return { kind: "forward", action: next.action };
+      }
+      return { kind: "fail", action, error: next.error, code: next.code };
+    }
+    if (mayChangePage(action)) pageMayHaveChanged = true;
+    return { kind: "forward", action };
   });
 }
 
@@ -152,7 +172,11 @@ export function stitchActResults(
       results.push({ action: slot.action, success: false, error: "provider omitted act result" });
       continue;
     }
-    results.push(row.error === undefined ? { action: row.action, success: row.success } : row);
+    results.push(
+      row.error === undefined
+        ? { action: slot.action, success: row.success }
+        : { action: slot.action, success: row.success, error: row.error },
+    );
   }
   return { results, failClosed, failCode };
 }

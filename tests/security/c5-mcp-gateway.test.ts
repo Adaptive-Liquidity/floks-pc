@@ -423,7 +423,8 @@ describe("C5 MCP gateway", () => {
     const parsed = JSON.parse(String(text?.text)) as Record<string, unknown>;
     assert.equal("screenshot_base64" in parsed, false);
     assert.equal(parsed.has_screenshot, true);
-    assert.equal(typeof result.structuredContent.screenshot_base64, "string");
+    assert.equal("screenshot_base64" in result.structuredContent, false);
+    assert.equal(result.structuredContent.has_screenshot, true);
   });
 
   it("computer_observe advertises optional include_accessibility and stays eight tools", async () => {
@@ -586,7 +587,7 @@ describe("C5 MCP gateway", () => {
       error?: string;
     }>;
     assert.equal(clickResults[0]?.success, false);
-    assert.match(String(clickResults[0]?.error), /fresh AX|unsupported/i);
+    assert.match(String(clickResults[0]?.error), /fresh AX/i);
 
     await rpc("tools/call", {
       name: "computer_act",

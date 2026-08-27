@@ -367,7 +367,7 @@ export class FakeProvider implements ComputerProvider {
         return {
           action,
           success: false,
-          error: "click_element unsupported until accessibility addressing exists",
+          error: "click_element is rewritten at ComputerService; provider never accepts elementId",
         };
       }
       if (action.type === "open_url") {

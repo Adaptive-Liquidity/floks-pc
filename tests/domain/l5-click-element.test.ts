@@ -112,7 +112,7 @@ describe("L5 click_element", () => {
     await service.act(auth, computer.id, { actions: [{ type: "open_url", url: "https://l5.example/" }] });
     const obs = await service.observe(auth, computer.id, { includeAccessibility: true });
     const summary = obs.accessibilitySummary as { source?: string; nodes: Array<{ id: string }> };
-    assert.notEqual(summary.source, "cdp");
+    assert.equal(summary.source, "fake");
     assert.equal(summary.nodes[0]?.id, "fake-submit");
 
     const clicked = await service.act(auth, computer.id, {
@@ -138,9 +138,15 @@ describe("L5 click_element", () => {
     assert.equal(mixed.results[0]?.action.type, "open_url");
     assert.equal(mixed.results[1]?.success, false);
     assert.equal(mixed.results[1]?.action.type, "click_element");
-    assert.match(String(mixed.results[1]?.error), /not in the last AX tree/i);
+    assert.match(String(mixed.results[1]?.error), /same batch|fresh AX|not in the last AX tree/i);
     assert.equal(mixed.results[2]?.success, true);
     assert.equal(mixed.results[2]?.action.type, "wait");
+
+    const stale = await service.act(auth, computer.id, {
+      actions: [{ type: "click_element", elementId: "fake-submit" }],
+    });
+    assert.equal(stale.ok, false);
+    assert.match(String(stale.results[0]?.error), /fresh AX/i);
   });
 
   it("does not treat FakeProvider as live CDP proof", async () => {
@@ -156,6 +162,6 @@ describe("L5 click_element", () => {
       includeAccessibility: true,
     });
     const summary = obs.accessibilitySummary as { source?: string };
-    assert.notEqual(summary.source, "cdp");
+    assert.equal(summary.source, "fake");
   });
 });

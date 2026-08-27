@@ -45,7 +45,7 @@ L8  Provider fabric             backlog — keep Runloop v1
 L9  Enterprise / private infra  backlog
 ```
 
-Users may join at L3 with **minimal safety caps** (invite, per-user active-machine cap, default auto-shutdown, visible cost). That is enough for private beta. Snapshots (L4), `click_element` (L5), handoffs (L6), **real quotas/billing (L7)**, extra providers, and shared Team Computers are backlog — build only if real use shows a blocker. Nexus-IQ / AEON / Graphiti remain forbidden until Gate G0 in `PHASES.md`. G0 is the pre-Nexus acceptance gate; it is not defined by Nexus/AEON features. G0 is not a private-beta blocker.
+Users may join at L3 with **minimal safety caps** (invite, per-user active-machine cap, default auto-shutdown, visible cost). That is enough for private beta. L4 snapshots shipped as optional insurance. L5 `click_element` is owner-requested (PR #26; merge only with owner approval). Handoffs (L6), **real quotas/billing (L7)**, extra providers, and shared Team Computers stay backlog — build only if real use shows a blocker. Nexus-IQ / AEON / Graphiti remain forbidden until Gate G0 in `PHASES.md`. G0 is the pre-Nexus acceptance gate; it is not defined by Nexus/AEON features. G0 is not a private-beta blocker.
 
 L1 MCP has **two** start paths. Default listen host is loopback. Do not omit the interactive blueprint.
 
@@ -169,7 +169,7 @@ L1 implementation: `RunloopProvider.fromEnv()` requires `flok-runloop-interactiv
 
 ## 6. Known limitations
 
-- `click_element` is fail-closed until L5. Do not treat FakeProvider trees as proof.
+- `click_element` uses the last `observe({ include_accessibility: true })` AX bounds (15s). Guessed, offscreen, unmapped, and same-batch-after-mutate clicks fail closed. Do not treat FakeProvider trees as live proof.
 - `capabilities().accessibility` remains `false` until an explicit later lift.
 - MCP `computer_fs` write-ok / read-empty was an L0-era note. Live Runloop MCP fs smoke passed on PR #20. **Not a current L1 blocker.** Do not reopen it as launch work.
 - In-memory `ComputerService` is acceptable for local/dev only. It is **not** acceptable for private beta. Set `FLOK_CONTROL_PLANE_PATH` (Runloop MCP defaults to `.flok/control-plane.json`). Provider workspace snapshots remain L4.
