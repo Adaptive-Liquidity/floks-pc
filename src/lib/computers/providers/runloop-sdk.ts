@@ -136,8 +136,8 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
     try {
       const info = await box.getInfo();
       const meta = info.metadata ?? {};
-      if (meta["flok.bird_id"]) birdId = meta["flok.bird_id"];
-      if (meta["flok.flock_id"]) flockId = meta["flok.flock_id"];
+      if (meta.bird_id || meta["flok.bird_id"]) birdId = meta.bird_id || meta["flok.bird_id"];
+      if (meta.flock_id || meta["flok.flock_id"]) flockId = meta.flock_id || meta["flok.flock_id"];
     } catch {
       // metadata is diagnostic only
     }
