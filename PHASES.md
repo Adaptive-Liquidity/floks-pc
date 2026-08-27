@@ -1,23 +1,23 @@
 # PHASES — FLOKS Agent Computer Cloud
 
-Authoritative **launch** sequence is **L0–L9** below. Work only on the currently open launch phase.
+**Usable private-beta product is L0–L3.** That is enough. L4–L9 / G0 below are a **backlog**, not a critical path. Use the product before building more roadmap. Do **not** automatically start L5 / L6 / L7 / L8 / G0.
 
-Historical C0–C6 remain the closed engineering record (do not re-open them). Landed C7 is **L0**. Original leftover C7 goals (three concurrent Bots, public VNC takeover) plus C8–C15 map into **L4–L9 / G0** so we do **not** overbuild before a Grok Bot can use one working Agent Computer.
+Historical C0–C6 remain the closed engineering record (do not re-open them). Landed C7 is **L0**. Original leftover C7 goals (three concurrent Bots, public VNC takeover) plus C8–C15 map into **L4–L9 / G0** so we do **not** overbuild.
 
-Nexus-IQ / AEON / Graphiti stay **forbidden** until **Gate G0** is marked PASSED.
+Nexus-IQ / AEON / Graphiti stay **forbidden** until **Gate G0** is marked PASSED. G0 is not a private-beta blocker.
 
-**Current open phase: L4 — Reliability / recovery.**  
 **L0 is CLOSED** — Adaptive-Liquidity/floks-pc#17 (`bda72e0`).  
 **L1 is CLOSED** — Adaptive-Liquidity/floks-pc#21 (`61c9747`). Live remote Grok Bot over authenticated HTTPS + paid Runloop Agent Computer (CDP AX + fs) + this-run destroy.  
 **L2 is CLOSED** — Adaptive-Liquidity/floks-pc#22 (`7a3402d`). Loopback Live Node Console.  
-**L3 is CLOSED** — Adaptive-Liquidity/floks-pc#23 (`d118746`). Private-beta invite cap, idle auto-shutdown, cost warning.
+**L3 is CLOSED** — Adaptive-Liquidity/floks-pc#23 (`d118746`). Private-beta invite cap, idle auto-shutdown, cost warning. Usable private beta.  
+**L4 is optional insurance** — Adaptive-Liquidity/floks-pc#24 (open; merge only if the owner says merge). Provider workspace checkpoints / recovery. **Not** a required pipeline blocker.
 
 Product language: `docs/computers/agent-computer-cloud.md`.  
 Runloop Devbox is **provider v1**, not the product name.
 
 ---
 
-## Launch sequence (L0–L9)
+## Launch sequence (L0–L3 product, L4–L9 backlog)
 
 ### PHASE L0 — C7 landing / proof lock
 
@@ -33,7 +33,7 @@ Runloop Devbox is **provider v1**, not the product name.
 - CDP loopback-only (`127.0.0.1:9222`); no `--no-sandbox`; no `0.0.0.0`
 - Interactive blueprint `flok-runloop-interactive` (`flok-ui`)
 - L0 cleanup proof: Devbox shutdown was verified through the Runloop provider/API. Provider ID redacted.
-- Known bug logged: MCP fs write-ok / file on disk / MCP read empty
+- Known limitation logged at L0: MCP fs write-ok / file on disk / MCP read empty. **Closed for launch:** L1 PR #20 live Runloop MCP fs smoke passed. Do not reopen as an L1 blocker.
 
 **Gate:** A real Grok Bot calls `computer_observe({ include_accessibility: true })` and receives `accessibility_summary.source === "cdp"` with non-empty nodes from a real Runloop Agent Computer.
 
@@ -129,14 +129,14 @@ Do **not** build L7 here: no billing ledger, no worker queue, no OpenTelemetry p
 
 **Purpose:** Agent Computers survive real use. Maps former Phase 8 (C8). **Provider workspace snapshots** (pause/wake/restore of guest disk), not control-plane ComputerRecord/pair/capability persistence — that shipped in L1/L3.
 
-**Status:** OPEN
+**Status:** OPEN on PR #24 — merge-ready if the owner says merge. Optional insurance, **not** a private-beta blocker. Do not start L5+ after merge by default.
 
 Includes: provider-native snapshots, wake/pause/resume polish, failed-boot recovery, stale-machine cleanup, restore runbook, better errors, retry-safe observe.
 
 **Must include:**
 - Checkpoint metadata on the durable ComputerRecord (`pending` / `ready` / `failed` / `restoring` / `restored`). Latest checkpoint only. No secrets, pair codes, capability tokens, screenshots, or provider API keys in checkpoint metadata.
 - Restore without a ready checkpoint **fails closed**. Do not silently provision a blank replacement.
-- Recovery path: mark recovering → destroy original VM with **captured providerRef only** → restore latest checkpoint → re-ensure interactive stack → health probe → ready.
+- Recovery path: mark recovering → restore latest checkpoint onto a **replacement** → health probe → destroy original VM with the **captured providerRef only** → ready. Restore support is checked before the original is destroyed.
 - Failed health probe → `recovery_failed` or `restore_failed`. Never pretend ready.
 - Observe while paused/waking/recovering is retry-safe (clear retryable error; no fake CDP).
 - Stale cleanup uses captured providerRef only. Destroy failure → `cleanup_needed` + metadata-only operator event.
@@ -559,7 +559,7 @@ A real Grok Bot calls `computer_observe({ include_accessibility: true })` and re
 - Nexus / graph flags remain false
 
 **Known limitations (not L0 blockers; L1 / later)**
-- MCP `computer_fs` write-ok / file on disk / MCP read empty
+- MCP `computer_fs` write-ok / file on disk / MCP read empty — **historical L0 note.** Live Runloop MCP fs smoke passed on PR #20. Not a current L1 blocker.
 - `click_element` fail-closed until L5
 - Takeover / authenticated VNC not implemented
 - In-memory ComputerService is acceptable for local/dev only. It is **not** acceptable for private beta. Persist or reconcile control-plane records before L3. Provider workspace snapshots remain L4.
@@ -569,7 +569,7 @@ A real Grok Bot calls `computer_observe({ include_accessibility: true })` and re
 
 ## Original later phases (mapped — not the next work)
 
-Do **not** treat the headings below as the currently open sequence. Launch work is **L1–L9** at the top of this file. Users may join at **L3** while these upgrades continue. Nexus-IQ / AEON / Graphiti stay forbidden until **Gate G0**.
+Do **not** treat the headings below as a required sequence. **L0–L3 is enough for private beta.** L4–L9 / G0 are backlog. Users may join at **L3** without waiting for L4+. Nexus-IQ / AEON / Graphiti stay forbidden until **Gate G0**.
 
 | Original | Launch mapping | Notes |
 |----------|----------------|-------|
@@ -590,7 +590,7 @@ Do **not** treat the headings below as the currently open sequence. Launch work 
 
 **Historical Gate C8:** Destroy Node VM intentionally → provision replacement → restore latest checkpoint → model-created file survives.
 
-Do not start L5 click / L6 handoffs / L7 billing while L4 is open.
+Do not start L5 click / L6 handoffs / L7 billing / L8 / G0 by default. Operate the private beta first. Build the next item only if real use shows a blocker and the owner says so. Shared Team Computers (opt-in, shared-trust) are deferred: `docs/computers/TEAM_COMPUTERS.md`.
 
 ### Former Phase 9 — Explicit Node handoffs → L6
 

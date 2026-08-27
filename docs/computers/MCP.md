@@ -134,7 +134,7 @@ C6 extends the MCP gateway with hardened shell and filesystem operations:
 
 Both tools require valid capability with correct scope (`exec` or `fs`). Wrapper Bearer / account_id / session metadata alone cannot authorize.
 
-L1 unpaid MCP fs and the owner-approved live Runloop fs smoke (PR #20) cover write/read/stat/list. Do not treat FakeProvider as L0/L1 product proof. Remote Grok Bot over authenticated HTTPS is a separate L1 gate (`REMOTE_GROK_MCP.md`); it is not claimed until that live checklist passes.
+L1 unpaid MCP fs and the owner-approved live Runloop fs smoke (PR #20) cover write/read/stat/list. Do not treat FakeProvider as L0/L1 product proof. Do not reopen write-ok/read-empty as an L1 blocker. Remote Grok Bot over authenticated HTTPS is proven on PR #21 (`REMOTE_GROK_MCP.md`).
 
 ## Env / config
 

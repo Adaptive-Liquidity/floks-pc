@@ -6,7 +6,7 @@ An Agent Computer is a provider-backed machine assigned to exactly one Grok Bot 
 
 This package is the standalone TypeScript runtime for that product: MCP gateway, pairing, capability auth, ComputerService, and the Runloop provider. It is deliberately separate from the main Flok application.
 
-Launch sequence is **L0–L9** in `PHASES.md` (fastest path to a usable bot computer, then upgrades). Historical engineering gates C0–C6 and landed C7 are the evidence record. Nexus-IQ stays locked until Gate G0.
+**L0–L3 is the usable private-beta product.** L4–L9 in `PHASES.md` are a backlog, not a required pipeline. Historical engineering gates C0–C6 and landed C7 are the evidence record. Nexus-IQ stays locked until Gate G0.
 
 ## Isolation rule (non-negotiable)
 
@@ -16,16 +16,16 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 
 ## Current status
 
-Product object: **Agent Computer**. Backend v1: **Runloop Devbox**. Open work: **L4 reliability / recovery**.
+Product object: **Agent Computer**. Backend v1: **Runloop Devbox**. Usable product: **L0–L3 private beta**. Next default: operate one real bot session, not a new phase.
 
 | Launch | Status |
 |--------|--------|
 | **L0** — C7 landing / CDP AX proof | **CLOSED / PASSED** — [PR #17](https://github.com/Adaptive-Liquidity/floks-pc/pull/17) (`bda72e0`). Live Grok Bot `computer_observe({ include_accessibility: true })` → `accessibility_summary.source === "cdp"` with real nodes. FakeProvider is not proof. |
-| **L1** — Launch MVP: one bot, one Agent Computer | **CLOSED / PASSED** — [PR #21](https://github.com/Adaptive-Liquidity/floks-pc/pull/21) (`61c9747`). Remote Grok Bot over authenticated HTTPS; live Runloop pair/status/observe `source=cdp` + fs; this-run destroy. |
+| **L1** — Launch MVP: one bot, one Agent Computer | **CLOSED / PASSED** — [PR #21](https://github.com/Adaptive-Liquidity/floks-pc/pull/21) (`61c9747`). Remote Grok Bot over authenticated HTTPS; live Runloop pair/status/observe `source=cdp` + fs; this-run destroy. Live MCP fs smoke: PR #20. |
 | **L2** — Bot Computers / Live Node Console | **CLOSED / PASSED** — [PR #22](https://github.com/Adaptive-Liquidity/floks-pc/pull/22) (`7a3402d`). Loopback `127.0.0.1:8788/console`. |
 | **L3** — Private beta | **CLOSED / PASSED** — [PR #23](https://github.com/Adaptive-Liquidity/floks-pc/pull/23) (`d118746`). Invite/waitlist, per-owner active cap, idle auto-shutdown, cost warning. Not L7 billing. |
-| **L4** — Reliability / recovery | **OPEN** — provider-native checkpoints, pause/wake + health probe, failed-boot restore, stale cleanup-needed, retry-safe observe. |
-| **L5–L9** — safer click, handoffs, **L7 quotas/billing**, provider fabric, enterprise | After L4. See `PHASES.md` and `docs/computers/agent-computer-cloud.md`. |
+| **L4** — Reliability / recovery | **Optional insurance** — [PR #24](https://github.com/Adaptive-Liquidity/floks-pc/pull/24). Merge only if the owner says merge. Not a private-beta pipeline blocker. |
+| **L5–L9** — safer click, handoffs, **L7 quotas/billing**, provider fabric, enterprise | **Backlog.** Do not start by default. See `PHASES.md`. Shared Team Computers: `docs/computers/TEAM_COMPUTERS.md` (deferred). |
 
 Historical C0–C6 (scaffold → pairing → MCP → shell/fs) are **CLOSED**. `click_element` stays fail-closed until **L5**. Takeover and extra MCP tools are not launch. Nexus-IQ remains hard-locked until Gate G0.
 
@@ -33,9 +33,9 @@ Historical C0–C6 (scaffold → pairing → MCP → shell/fs) are **CLOSED**. `
 
 1. `AGENTS.md` — isolation fence + phase enforcement for every coding agent
 2. `AUTHORITY.md` — local product & architecture contract
-3. `PHASES.md` — launch sequence L0–L9 (current open: L4) plus historical C0–C6 / G0 lock
+3. `PHASES.md` — L0–L3 usable product; L4–L9 / G0 backlog; historical C0–C6 / G0 lock
 4. `docs/computers/agent-computer-cloud.md` — product object, feature matrix, what not to claim
-5. `docs/computers/` — architecture, MCP, security, provider contract, L4 `RELIABILITY_RECOVERY.md`
+5. `docs/computers/` — architecture, MCP, security, provider contract, private beta, optional L4 `RELIABILITY_RECOVERY.md`, deferred `TEAM_COMPUTERS.md`
 
 ## Hard locks
 
@@ -160,4 +160,4 @@ See `reference/flok-core/`. That take-pack contains curated, read-only excerpts 
 
 Private development under Adaptive Liquidity Labs. Public repository for collaboration on FLOKS Agent Computer Cloud.
 
-Do not claim residential proxies, bot-detection bypass, full root / uncensored terminal, or production-ready security. `click_element` is fail-closed. MCP cannot destroy a Devbox; `Ctrl+C` does not either. MCP fs write-ok / read-empty is a known L1 bug.
+Do not claim residential proxies, bot-detection bypass, full root / uncensored terminal, or production-ready security. `click_element` is fail-closed. MCP cannot destroy a Devbox; `Ctrl+C` does not either. Live Runloop MCP fs (write/read/stat/list) was proven on PR #20; do not reopen write-ok/read-empty as an L1 blocker. FakeProvider is not product proof.

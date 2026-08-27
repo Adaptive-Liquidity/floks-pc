@@ -18,19 +18,20 @@ Violations are stop-the-line. Revert immediately.
 1. Current user instruction
 2. This `AGENTS.md`
 3. `AUTHORITY.md` — what an Agent Computer is (FLOKS Agent Computer Cloud)
-4. `PHASES.md` — current **open** launch phase (L4) + L0–L9 + historical C0–C6 / G0 lock
+4. `PHASES.md` — L0–L3 is the usable private-beta product; L4–L9 / G0 are backlog + historical C0–C6 / G0 lock
 5. `docs/computers/agent-computer-cloud.md` then `docs/computers/` — product, architecture, MCP, security, provider contract
 6. `src/lib/computers/` — domain types and ComputerProvider interface
 7. `reference/flok-core/TAKE.md` — curated Flok conventions (read-only)
 
 ## Phase enforcement
 
-Work only on the currently open phase listed in `PHASES.md`.
+**L0–L3 is enough for a usable private beta.** Do not treat L4–L9 as a mandatory pipeline. Do not automatically start L5 / L6 / L7 / L8 / G0. Merge only with explicit owner approval.
 
-- **Current open phase: L4 — Reliability / recovery.** L0 / C7 is CLOSED (PR #17). L1 is CLOSED (PR #21). L2 is CLOSED (PR #22). L3 is CLOSED (PR #23, `d118746`).
-- Historical C0–C6 stay closed. Do not re-open them. L4 is **provider workspace snapshots / recovery** (checkpoint, pause/wake + health probe, failed-boot restore, stale cleanup-needed, retry-safe observe). Do not start L5 click / L6 handoffs / L7 real quotas / extra providers / Nexus while L4 is open.
-- L4 does **not** add MCP tools (stay at eight). Operator destroy/recover is `/operator/v1` + captured providerRef for the selected computer. MCP cannot destroy a Devbox. Do not add Fake AX, fake clicking, takeover, C9 handoffs, or proxy/bot-detection claims.
-- Paid Agent Computers must use `flok-runloop-interactive` (or equivalent validated interactive stack). Fail before accepting generic compute-only DnD.
+- L0 / C7 CLOSED (PR #17). L1 CLOSED (PR #21). L2 CLOSED (PR #22). L3 CLOSED (PR #23, `d118746`).
+- L4 (PR #24) is **optional reliability insurance** (provider workspace snapshots / recovery). Merge only if the owner says merge. After L4, do not start another phase by default — operate one real private-beta session.
+- Historical C0–C6 stay closed. Do not re-open them. Do not add MCP tools (stay at eight). Operator destroy/recover is `/operator/v1` + captured providerRef for the selected computer. MCP cannot destroy a Devbox. Do not add Fake AX, fake clicking, takeover, C9 handoffs, or proxy/bot-detection claims. FakeProvider is not product proof. L3 caps are not L7 billing.
+- Shared Team Computers are **deferred** (`docs/computers/TEAM_COMPUTERS.md`). Default remains one bot, one isolated Agent Computer.
+- Paid Agent Computers must use `flok-runloop-interactive` (or equivalent validated interactive stack). Fail before accepting generic compute-only DnD. Missing `flok-ui` / Xvfb / Chrome is not success. `fromEnv()` does not fall back to generic DnD.
 - Do not enable or import Nexus-IQ, AEON, Graphiti, or any memory plane until Gate G0 is explicitly marked PASSED. G0 is not an L1–L3 blocker.
 
 ## Hard locks (never relax)
@@ -69,7 +70,7 @@ find /home/workdir/artifacts/Floks-main -type f -mmin -60 2>/dev/null | head
 
 ```
 feature branch (never main)
-→ implement only the open phase
+→ implement only what the owner asked (do not start a new launch phase by default)
 → npm run typecheck (+ tests)
 → inspect diff
 → focused commit

@@ -2,6 +2,8 @@
 
 Provider workspace recovery. This is **not** control-plane persistence (ComputerRecord / pair / capability / beta roster already shipped in L1/L3).
 
+**L4 is optional insurance, not a private-beta blocker.** L0–L3 is already a usable product. Merge PR #24 only if the owner says merge. Do not start L5+ after merge by default.
+
 A bot’s Agent Computer should survive real use. If the machine pauses, wakes, fails to boot, or needs replacement, the workspace should still be there.
 
 ## What L4 does

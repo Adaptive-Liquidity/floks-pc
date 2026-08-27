@@ -1,6 +1,6 @@
 # Architecture — Agent Computer
 
-Product: **FLOKS Agent Computer Cloud**. One bot, one isolated Agent Computer. See `docs/computers/agent-computer-cloud.md`.
+Product: **FLOKS Agent Computer Cloud**. Default: one bot, one isolated Agent Computer. See `docs/computers/agent-computer-cloud.md`. Optional shared-trust Team Computers are deferred (`TEAM_COMPUTERS.md`) and must not replace that default.
 
 Runloop Devbox is **provider v1** (backend). Fake/DockerDev are test/dev. Kata / extra providers are **L8/L9**, not launch.
 
@@ -72,8 +72,8 @@ Ordinary containers share the host kernel and are not the production security ar
 
 ## Launch vs later
 
-- **L1** uses the existing eight MCP tools, Runloop provider v1, and fail-closed `click_element`.
-- Dashboard is **L2**. Private beta signup is **L3**. Snapshots/recovery **L4**. Safer clicks **L5**. Handoffs **L6**. Quotas/worker **L7**. Extra providers **L8**. Enterprise **L9**.
+- **L1–L3** is the usable private-beta product: eight MCP tools, Runloop provider v1, fail-closed `click_element`, loopback console, invite/cap/idle auto-shutdown.
+- **L4–L9** are backlog, not a required pipeline. Snapshots/recovery **L4** (optional insurance). Safer clicks **L5**. Handoffs **L6**. Quotas/worker **L7**. Extra providers **L8**. Enterprise **L9**. Do not start these by default.
 - L4 checkpoints are **provider-native snapshots** (Runloop `snapshotDisk` / Fake in-memory FS clone). `tar + zstd` object storage remains the future/archive format, not this PR.
 - Recovery path: mark recovering → restore latest checkpoint onto a replacement → health probe → destroy original VM with the captured providerRef only → ready. No ready or restored checkpoint → fail closed.
 - Kata and the job queue in the diagram above remain later architecture.
