@@ -49,6 +49,41 @@ describe("L3 beta operator HTTP", () => {
     assert.match(html, /click_element/);
     assert.match(html, /Not metered yet \(L7\)/);
     assert.equal(MCP_TOOL_NAMES.length, 8);
+    const costAssign = html.indexOf('getElementById("cost").textContent');
+    const earlyReturn = html.indexOf("if (!cur)");
+    assert.ok(costAssign >= 0 && earlyReturn >= 0 && costAssign < earlyReturn);
+    assert.match(html, /snap\.beta && snap\.beta\.enabled/);
+  });
+
+  it("beta enabled with zero computers still shows the beta cost warning", async () => {
+    const service = new ComputerService(new FakeProvider(), {
+      store: new MemoryControlPlaneStore(),
+      ownerId: "owner-http",
+      beta: {
+        enabled: true,
+        maxActive: 1,
+        idleTtlMs: 60_000,
+        costWarning: BETA_COST_WARNING,
+      },
+      betaRegistry: new BetaRegistry(new MemoryBetaStore()),
+    });
+    const { base, close } = await listen(service);
+    try {
+      const snap = (await (await fetch(`${base}${OPERATOR_API_PREFIX}/snapshot`)).json()) as {
+        computers: unknown[];
+        beta: { enabled: boolean; costWarning: string };
+      };
+      assert.equal(snap.computers.length, 0);
+      assert.equal(snap.beta.enabled, true);
+      assert.equal(snap.beta.costWarning, BETA_COST_WARNING);
+      const html = operatorConsoleHtml();
+      const costAssign = html.indexOf('getElementById("cost").textContent');
+      const earlyReturn = html.indexOf("if (!cur)");
+      assert.ok(costAssign >= 0 && earlyReturn >= 0 && costAssign < earlyReturn);
+      assert.match(html, /snap\.beta\.costWarning/);
+    } finally {
+      await close();
+    }
   });
 
   it("waitlist then approve then snapshot shows cap and cost warning", async () => {
@@ -97,6 +132,49 @@ describe("L3 beta operator HTTP", () => {
       const packetText = await packetRes.text();
       assert.doesNotMatch(packetText, /"providerRef"/);
       assert.doesNotMatch(packetText, /screenshotBase64/);
+    } finally {
+      await close();
+    }
+  });
+
+  it("rejects cross-origin text/plain beta roster mutations and leaves the roster unchanged", async () => {
+    const registry = new BetaRegistry(new MemoryBetaStore());
+    const service = new ComputerService(new FakeProvider(), {
+      store: new MemoryControlPlaneStore(),
+      ownerId: "owner-http",
+      beta: {
+        enabled: true,
+        maxActive: 1,
+        idleTtlMs: 60_000,
+        costWarning: BETA_COST_WARNING,
+      },
+      betaRegistry: registry,
+    });
+    const { base, close } = await listen(service);
+    try {
+      const wait = await fetch(`${base}${OPERATOR_API_PREFIX}/beta/waitlist`, {
+        method: "POST",
+        headers: {
+          "content-type": "text/plain",
+          origin: "https://evil.example",
+        },
+        body: JSON.stringify({ ownerId: "attacker" }),
+      });
+      assert.ok(wait.status === 403 || wait.status === 415);
+      const approve = await fetch(`${base}${OPERATOR_API_PREFIX}/beta/approve`, {
+        method: "POST",
+        headers: {
+          "content-type": "text/plain",
+          origin: "https://evil.example",
+        },
+        body: JSON.stringify({ ownerId: "attacker" }),
+      });
+      assert.ok(approve.status === 403 || approve.status === 415);
+      const roster = (await (await fetch(`${base}${OPERATOR_API_PREFIX}/beta`)).json()) as {
+        beta: { approved: string[]; waitlist: string[] };
+      };
+      assert.equal(roster.beta.waitlist.includes("attacker"), false);
+      assert.equal(roster.beta.approved.includes("attacker"), false);
     } finally {
       await close();
     }

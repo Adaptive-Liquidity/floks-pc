@@ -107,6 +107,7 @@ export class MemoryBetaStore implements BetaStore {
 export class BetaRegistry {
   private approved = new Set<string>();
   private waitlist = new Set<string>();
+  private mutationChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly store?: BetaStore) {}
 
@@ -117,9 +118,13 @@ export class BetaRegistry {
     this.waitlist = new Set(roster.waitlist);
   }
 
-  private async persist(): Promise<void> {
-    if (!this.store) return;
-    await this.store.save(this.snapshot());
+  private enqueueMutation<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.mutationChain.then(fn, fn);
+    this.mutationChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   snapshot(): BetaRoster {
@@ -135,17 +140,23 @@ export class BetaRegistry {
 
   async waitlistOwner(ownerId: string): Promise<BetaRoster> {
     const id = parseBetaOwnerId(ownerId);
-    if (!this.approved.has(id)) this.waitlist.add(id);
-    await this.persist();
-    return this.snapshot();
+    return this.enqueueMutation(async () => {
+      if (!this.approved.has(id)) this.waitlist.add(id);
+      const snap = this.snapshot();
+      if (this.store) await this.store.save(snap);
+      return snap;
+    });
   }
 
   async approveOwner(ownerId: string): Promise<BetaRoster> {
     const id = parseBetaOwnerId(ownerId);
-    this.waitlist.delete(id);
-    this.approved.add(id);
-    await this.persist();
-    return this.snapshot();
+    return this.enqueueMutation(async () => {
+      this.waitlist.delete(id);
+      this.approved.add(id);
+      const snap = this.snapshot();
+      if (this.store) await this.store.save(snap);
+      return snap;
+    });
   }
 }
 

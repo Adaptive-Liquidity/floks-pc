@@ -4,16 +4,18 @@
 
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   BetaInviteRequired,
   BetaRegistry,
   BetaStoreRequired,
-  ComputerError,
   ComputerService,
   FakeProvider,
+  JsonFileBetaStore,
   MemoryBetaStore,
   MemoryControlPlaneStore,
   QuotaExceeded,
@@ -192,5 +194,60 @@ describe("L3 private beta caps", () => {
     });
     assert.equal(computer.state, "ready");
     assert.equal(service.operatorSnapshot().beta.enabled, false);
+  });
+
+  it("serializes concurrent waitlist/approval so the roster survives reload", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "flok-beta-"));
+    const path = join(dir, "beta.json");
+    try {
+      const store = new JsonFileBetaStore(path);
+      const registry = new BetaRegistry(store);
+      await Promise.all([
+        registry.waitlistOwner("owner-a"),
+        registry.approveOwner("owner-b"),
+        registry.waitlistOwner("owner-c"),
+      ]);
+      const reloaded = new BetaRegistry(new JsonFileBetaStore(path));
+      await reloaded.hydrate();
+      const snap = reloaded.snapshot();
+      assert.deepEqual(snap.approved.sort(), ["owner-b"]);
+      assert.deepEqual(snap.waitlist.sort(), ["owner-a", "owner-c"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not idle-destroy a recently used computer after restart because lastActiveAt was persisted", async () => {
+    const store = new MemoryControlPlaneStore();
+    const registry = new BetaRegistry(new MemoryBetaStore());
+    await registry.approveOwner("owner-a");
+    let now = 1_000_000;
+    const opts = {
+      store,
+      ownerId: "owner-a",
+      beta: {
+        enabled: true,
+        maxActive: 1,
+        idleTtlMs: 5_000,
+        costWarning: BETA_COST_WARNING,
+      },
+      betaRegistry: registry,
+      now: () => now,
+    };
+    const service = new ComputerService(provider, opts);
+    const computer = await service.requestComputer({
+      birdId: "bird-keep-live",
+      flockId: "flock-a",
+    });
+    now = 1_001_000;
+    await service.operatorObserve(computer.id, { includeAccessibility: true });
+    assert.equal((await service.get(computer.id)).lastActiveAt?.getTime(), 1_001_000);
+    const restarted = new ComputerService(provider, opts);
+    await restarted.hydrate();
+    assert.equal((await restarted.get(computer.id)).lastActiveAt?.getTime(), 1_001_000);
+    now = 1_005_500;
+    const destroyed = await restarted.sweepIdle(now);
+    assert.equal(destroyed.length, 0);
+    assert.equal((await restarted.get(computer.id)).state, "ready");
   });
 });

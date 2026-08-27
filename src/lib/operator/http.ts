@@ -55,6 +55,40 @@ export function isOperatorLoopbackPeer(req: IncomingMessage): boolean {
   return isLoopbackHostname(addr);
 }
 
+function isJsonContentType(req: IncomingMessage): boolean {
+  const raw = header(req.headers, "content-type") ?? "";
+  return /^application\/json(\s*;|$)/i.test(raw);
+}
+
+export function isLocalOperatorOrigin(origin: string | undefined): boolean {
+  if (!origin) return true;
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      isLoopbackHostname(url.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function assertBetaMutationRequest(req: IncomingMessage): void {
+  if (!isJsonContentType(req)) {
+    throw new ComputerError(
+      "OPERATOR_JSON_REQUIRED",
+      "beta roster mutations require Content-Type application/json",
+    );
+  }
+  const origin = header(req.headers, "origin");
+  if (!isLocalOperatorOrigin(origin)) {
+    throw new ComputerError(
+      "OPERATOR_ORIGIN_FORBIDDEN",
+      "beta roster mutations reject non-local Origin",
+    );
+  }
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -85,6 +119,12 @@ function mapComputerError(err: ComputerError): { status: number; code: string; m
   }
   if (err.code === "BETA_STORE_REQUIRED") {
     return { status: 503, code: err.code, message: err.message };
+  }
+  if (err.code === "OPERATOR_JSON_REQUIRED") {
+    return { status: 415, code: err.code, message: err.message };
+  }
+  if (err.code === "OPERATOR_ORIGIN_FORBIDDEN") {
+    return { status: 403, code: err.code, message: err.message };
   }
   return { status: 400, code: err.code, message: "operator request refused" };
 }
@@ -169,12 +209,14 @@ export async function handleOperatorHttp(
       return;
     }
     if (pathname === `${OPERATOR_API_PREFIX}/beta/waitlist` && req.method === "POST") {
+      assertBetaMutationRequest(req);
       const body = z.object({ ownerId: z.string().trim().min(1).max(128) }).parse(await readJsonBody(req));
       const roster = await opts.service.waitlistBetaOwner(body.ownerId);
       json(res, 200, roster);
       return;
     }
     if (pathname === `${OPERATOR_API_PREFIX}/beta/approve` && req.method === "POST") {
+      assertBetaMutationRequest(req);
       const body = z.object({ ownerId: z.string().trim().min(1).max(128) }).parse(await readJsonBody(req));
       const roster = await opts.service.approveBetaOwner(body.ownerId);
       json(res, 200, roster);

@@ -483,7 +483,7 @@ export class ComputerService {
     const computer = await this.get(computerId);
     if (computer.state === "deleted") throw new ComputerNotFound(computerId);
     const ref = this.requireProviderRef(computer);
-    this.touch(computer);
+    await this.touch(computer);
     const observation = await this.provider.observe(ref, {
       includeAccessibility: request.includeAccessibility ?? true,
       includeScreenshot: request.includeScreenshot ?? true,
@@ -768,7 +768,7 @@ export class ComputerService {
       validatedRequest.mode === "shell" ? ["exec", "shell"] : ["exec"];
     const { computer } = this.authorize(auth, computerId, required);
     const ref = this.requireProviderRef(computer);
-    this.touch(computer);
+    await this.touch(computer);
     const root = workspaceRootForProvider(computer.provider);
     try {
       const cwd =
@@ -817,7 +817,7 @@ export class ComputerService {
     const validatedRequest = FsRequestSchema.parse(request) as FsRequest;
     const { computer } = this.authorize(auth, computerId, "fs");
     const ref = this.requireProviderRef(computer);
-    this.touch(computer);
+    await this.touch(computer);
     const root = workspaceRootForProvider(computer.provider);
     try {
       const path = canonicalizeWorkspacePath(validatedRequest.path, root);
@@ -862,7 +862,7 @@ export class ComputerService {
   ): Promise<Observation> {
     const { computer } = this.authorize(auth, computerId, "observe");
     const ref = this.requireProviderRef(computer);
-    this.touch(computer);
+    await this.touch(computer);
     const observation = await this.provider.observe(ref, request);
     this.recordOperatorEvent({
       computerId: computer.id,
@@ -882,7 +882,7 @@ export class ComputerService {
   ): Promise<ActionResult> {
     const { computer } = this.authorize(auth, computerId, "act");
     const ref = this.requireProviderRef(computer);
-    this.touch(computer);
+    await this.touch(computer);
     const actResult = await this.provider.act(ref, request);
     const failClosed = actResult.results.some(
       (row) => row.action.type === "click_element" && !row.success,
@@ -964,13 +964,14 @@ export class ComputerService {
     return computer.providerRef;
   }
 
-  private touch(computer: Computer): void {
+  private async touch(computer: Computer): Promise<void> {
     const updated: Computer = {
       ...computer,
       lastActiveAt: new Date(this.now()),
       updatedAt: new Date(this.now()),
     };
     this.computers.set(computer.id, updated);
+    await this.persist();
   }
 
   private revokeAllForComputer(computerId: string): void {
