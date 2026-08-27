@@ -89,6 +89,10 @@ Paid Runloop live proof is **opt-in and owner-approved only**. Do not run it fro
 
 `127.0.0.1:8788/console` shows checkpoint status, latest checkpoint id/time, recovery note, cleanup-needed, paused/waking/recovering/failed. Checkpoint / wake / recover are `/operator/v1` control-plane POSTs. Not MCP. Not the Grok wrapper token. Forwarded clients stay 403.
 
+## Follow-up (not an L4 merge blocker)
+
+Bounded Chrome/CDP liveness on every Runloop `healthProbe` is **deferred**. Current probe already uses live Devbox `state()` and re-runs `ensureInteractiveStack()` when Xvfb is down. A dead Chrome with a live Xvfb can still pass. Track that as a follow-up issue, not as L4 launch work. Do not treat FakeProvider as live proof.
+
 ## What is not claimed
 
 - `click_element` (L5)
