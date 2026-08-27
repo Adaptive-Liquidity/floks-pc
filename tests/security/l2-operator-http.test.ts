@@ -65,6 +65,10 @@ describe("L2 operator HTTP", () => {
     assert.match(html, /click_element/);
     assert.doesNotMatch(html, /Nexus|AEON|Graphiti/i);
     assert.doesNotMatch(html, /innerHTML/);
+    assert.doesNotMatch(html, /\bheaders\s*\(/);
+    assert.doesNotMatch(html, /sessionStorage/);
+    assert.doesNotMatch(html, /flok-operator-token/);
+    assert.match(html, /"content-type": "application\/json"/);
   });
 
   it("loopback console lists computers and MCP still has eight tools", async () => {

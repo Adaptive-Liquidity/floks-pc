@@ -141,11 +141,8 @@ export function operatorConsoleHtml(): string {
       <p>This bot has this computer. Watch it. Stop only this one.</p>
     </header>
     <div class="auth" id="auth-gate">
-      <h2>Operator sign-in</h2>
-      <p>This console is behind the same wrapper bearer as MCP. The token is kept in this tab only.</p>
-      <label>Wrapper token <input id="token" type="text" autocomplete="off"/></label>
-      <button class="act" id="save-token" type="button">Open console</button>
-      <p class="warn" id="auth-error" hidden>Token rejected.</p>
+      <h2>Loopback only</h2>
+      <p>This console is not reachable through a Grok MCP tunnel. Open it on 127.0.0.1. The Bot wrapper token is not operator auth.</p>
     </div>
     <nav aria-label="Bot Computers" id="bots">
       <h2>Bots</h2>
@@ -310,7 +307,7 @@ export function operatorConsoleHtml(): string {
       if (!selected) return;
       const res = await api("/computers/" + selected + "/observe", {
         method: "POST",
-        headers: headers({ "content-type": "application/json" }),
+        headers: { "content-type": "application/json" },
         body: "{}",
       });
       const body = await res.json();
@@ -328,7 +325,7 @@ export function operatorConsoleHtml(): string {
       const providerRef = document.getElementById("destroy-ref").value.trim();
       const res = await api("/computers/" + selected + "/destroy", {
         method: "POST",
-        headers: headers({ "content-type": "application/json" }),
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ confirm: true, providerRef }),
       });
       const body = await res.json();
@@ -339,17 +336,6 @@ export function operatorConsoleHtml(): string {
       msg.textContent = "This computer is deleted.";
       lastObserve = null;
       await refresh();
-    });
-    document.getElementById("save-token").addEventListener("click", async () => {
-      sessionStorage.setItem("flok-operator-token", document.getElementById("token").value);
-      document.getElementById("auth-error").hidden = true;
-      try {
-        document.getElementById("auth-gate").classList.remove("visible");
-        await refresh();
-      } catch (e) {
-        document.getElementById("auth-gate").classList.add("visible");
-        document.getElementById("auth-error").hidden = false;
-      }
     });
     refresh().catch(() => {
       document.getElementById("auth-gate").classList.add("visible");
