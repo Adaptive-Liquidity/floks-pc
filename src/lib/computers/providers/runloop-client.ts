@@ -124,3 +124,17 @@ export function assertNoControlPlaneSecrets(env: Record<string, string> | undefi
     }
   }
 }
+
+/**
+ * Shutdown is idempotent only for a missing/already-gone Devbox.
+ * Do not treat a generic "shutdown request failed" as success.
+ */
+export function isIdempotentShutdownError(err: unknown): boolean {
+  if (err !== null && typeof err === "object") {
+    const rec = err as { status?: number; statusCode?: number };
+    const code = rec.status ?? rec.statusCode;
+    if (code === 404) return true;
+  }
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return /not found|no such|\bdeleted\b|already (?:shut\s?down|gone|deleted|not found)/i.test(msg);
+}

@@ -73,18 +73,18 @@ export function isLocalOperatorOrigin(origin: string | undefined): boolean {
   }
 }
 
-function assertBetaMutationRequest(req: IncomingMessage): void {
+function assertOperatorMutationRequest(req: IncomingMessage): void {
   if (!isJsonContentType(req)) {
     throw new ComputerError(
       "OPERATOR_JSON_REQUIRED",
-      "beta roster mutations require Content-Type application/json",
+      "operator mutations require Content-Type application/json",
     );
   }
   const origin = header(req.headers, "origin");
   if (!isLocalOperatorOrigin(origin)) {
     throw new ComputerError(
       "OPERATOR_ORIGIN_FORBIDDEN",
-      "beta roster mutations reject non-local Origin",
+      "operator mutations reject non-local Origin",
     );
   }
 }
@@ -125,6 +125,22 @@ function mapComputerError(err: ComputerError): { status: number; code: string; m
   }
   if (err.code === "OPERATOR_ORIGIN_FORBIDDEN") {
     return { status: 403, code: err.code, message: err.message };
+  }
+  if (err.code === "OBSERVE_RETRYABLE") {
+    return { status: 409, code: err.code, message: err.message };
+  }
+  if (err.code === "CHECKPOINT_REQUIRED") {
+    return { status: 409, code: err.code, message: err.message };
+  }
+  if (err.code === "RESTORE_UNSUPPORTED") {
+    return { status: 501, code: err.code, message: err.message };
+  }
+  if (
+    err.code === "CLEANUP_FAILED" ||
+    err.code === "RESTORE_FAILED" ||
+    err.code === "RECOVERY_FAILED"
+  ) {
+    return { status: 409, code: err.code, message: err.message };
   }
   return { status: 400, code: err.code, message: "operator request refused" };
 }
@@ -209,14 +225,14 @@ export async function handleOperatorHttp(
       return;
     }
     if (pathname === `${OPERATOR_API_PREFIX}/beta/waitlist` && req.method === "POST") {
-      assertBetaMutationRequest(req);
+      assertOperatorMutationRequest(req);
       const body = z.object({ ownerId: z.string().trim().min(1).max(128) }).parse(await readJsonBody(req));
       const roster = await opts.service.waitlistBetaOwner(body.ownerId);
       json(res, 200, roster);
       return;
     }
     if (pathname === `${OPERATOR_API_PREFIX}/beta/approve` && req.method === "POST") {
-      assertBetaMutationRequest(req);
+      assertOperatorMutationRequest(req);
       const body = z.object({ ownerId: z.string().trim().min(1).max(128) }).parse(await readJsonBody(req));
       const roster = await opts.service.approveBetaOwner(body.ownerId);
       json(res, 200, roster);
@@ -238,6 +254,38 @@ export async function handleOperatorHttp(
         return;
       }
       json(res, 200, { computer: view });
+      return;
+    }
+    const checkpointId = computerIdFrom(pathname, "/checkpoint");
+    if (checkpointId && req.method === "POST") {
+      assertOperatorMutationRequest(req);
+      await readJsonBody(req);
+      const computer = await opts.service.checkpointThisComputer(checkpointId);
+      json(res, 200, { computer: opts.service.operatorSnapshot().computers.find((c) => c.id === computer.id) });
+      return;
+    }
+    const wakeId = computerIdFrom(pathname, "/wake");
+    if (wakeId && req.method === "POST") {
+      assertOperatorMutationRequest(req);
+      await readJsonBody(req);
+      const computer = await opts.service.wakeThisComputer(wakeId);
+      json(res, 200, { computer: opts.service.operatorSnapshot().computers.find((c) => c.id === computer.id) });
+      return;
+    }
+    const pauseId = computerIdFrom(pathname, "/pause");
+    if (pauseId && req.method === "POST") {
+      assertOperatorMutationRequest(req);
+      await readJsonBody(req);
+      const computer = await opts.service.pauseThisComputer(pauseId);
+      json(res, 200, { computer: opts.service.operatorSnapshot().computers.find((c) => c.id === computer.id) });
+      return;
+    }
+    const recoverId = computerIdFrom(pathname, "/recover");
+    if (recoverId && req.method === "POST") {
+      assertOperatorMutationRequest(req);
+      await readJsonBody(req);
+      const computer = await opts.service.recoverThisComputer(recoverId);
+      json(res, 200, { computer: opts.service.operatorSnapshot().computers.find((c) => c.id === computer.id) });
       return;
     }
     const observeId = computerIdFrom(pathname, "/observe");

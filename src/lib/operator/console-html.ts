@@ -157,6 +157,13 @@ export function operatorConsoleHtml(): string {
       <h2>What it sees</h2>
       <div class="screen" id="screen"><p class="empty">No live observe yet.</p></div>
       <button class="act" id="observe" type="button">Refresh what it sees</button>
+      <p id="observe-msg" class="warn" hidden></p>
+      <h2>Recovery</h2>
+      <p>Checkpoint and restore are operator control-plane. Not MCP tools. No Fake CDP.</p>
+      <button class="act" id="checkpoint-btn" type="button">Checkpoint workspace</button>
+      <button class="act" id="wake" type="button">Wake</button>
+      <button class="act" id="recover" type="button">Recover from latest checkpoint</button>
+      <p id="recover-msg" class="warn" hidden></p>
       <h2>Workspace</h2>
       <dl>
         <dt>Files / terminal</dt>
@@ -171,6 +178,8 @@ export function operatorConsoleHtml(): string {
         <dt>Provider</dt><dd id="provider">—</dd>
         <dt>Pair status</dt><dd id="pair">—</dd>
         <dt>Lifecycle</dt><dd id="life">—</dd>
+        <dt>Checkpoint</dt><dd id="checkpoint-status">none</dd>
+        <dt>Recovery</dt><dd id="recovery">—</dd>
         <dt>Scopes</dt><dd id="scopes">—</dd>
         <dt>Session expiry</dt><dd id="expiry">—</dd>
         <dt>Cost</dt><dd id="cost">Not metered yet (L7).</dd>
@@ -253,6 +262,12 @@ export function operatorConsoleHtml(): string {
       document.getElementById("provider").textContent = cur.provider;
       document.getElementById("pair").textContent = cur.pairStatus;
       document.getElementById("life").textContent = cur.lifecycleLabel;
+      document.getElementById("checkpoint-status").textContent = cur.checkpointStatus
+        ? String(cur.checkpointStatus) + (cur.checkpointId ? " · " + String(cur.checkpointId).slice(0, 12) : "")
+        : "none";
+      document.getElementById("recovery").textContent = cur.cleanupNeeded
+        ? "cleanup needed"
+        : cur.recoveryNote || "—";
       document.getElementById("scopes").textContent = cur.scopes.join(", ") || "none";
       document.getElementById("expiry").textContent = cur.capabilityExpiresAt || "no capability";
       document.getElementById("pref").textContent = cur.providerRef || "none";
@@ -311,15 +326,45 @@ export function operatorConsoleHtml(): string {
     }
     document.getElementById("observe").addEventListener("click", async () => {
       if (!selected) return;
+      const msg = document.getElementById("observe-msg");
+      msg.hidden = false;
       const res = await api("/computers/" + selected + "/observe", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",
       });
       const body = await res.json();
+      if (!res.ok) {
+        lastObserve = null;
+        msg.textContent = (body.error && body.error.message) || "Observe not ready.";
+        await refresh();
+        return;
+      }
+      msg.hidden = true;
       lastObserve = Object.assign({ computerId: selected }, body.observation);
       await refresh();
     });
+    async function postLifecycle(path, msgId) {
+      const msg = document.getElementById(msgId);
+      msg.hidden = false;
+      if (!selected) { msg.textContent = "Select a computer first."; return; }
+      const res = await api("/computers/" + selected + path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        msg.textContent = (body.error && body.error.message) || "Refused.";
+        await refresh();
+        return;
+      }
+      msg.textContent = path.slice(1) + " ok.";
+      await refresh();
+    }
+    document.getElementById("checkpoint-btn").addEventListener("click", () => postLifecycle("/checkpoint", "recover-msg"));
+    document.getElementById("wake").addEventListener("click", () => postLifecycle("/wake", "recover-msg"));
+    document.getElementById("recover").addEventListener("click", () => postLifecycle("/recover", "recover-msg"));
     document.getElementById("destroy").addEventListener("click", async () => {
       const msg = document.getElementById("destroy-msg");
       msg.hidden = false;

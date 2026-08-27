@@ -35,6 +35,7 @@ import {
   DEFAULT_RUNLOOP_ARCH,
   LIVE_KEEP_ALIVE_SECONDS,
   RUNLOOP_WORKSPACE_ROOT,
+  isIdempotentShutdownError,
   type RunloopControlPlane,
   type RunloopCreateParams,
   type RunloopDevboxSession,
@@ -215,8 +216,9 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   async shutdown(): Promise<void> {
     try {
       await this.box.shutdown();
-    } catch {
-      // idempotent
+    } catch (err) {
+      if (isIdempotentShutdownError(err)) return;
+      throw err;
     }
   }
 

@@ -233,7 +233,7 @@ export class RunloopProvider implements ComputerProvider {
   async destroy(ref: string): Promise<void> {
     const s = await this.requireSession(ref).catch(() => null);
     if (s) {
-      await s.shutdown().catch(() => undefined);
+      await s.shutdown();
     }
     this.sessions.delete(ref);
   }
@@ -496,17 +496,19 @@ export class RunloopProvider implements ComputerProvider {
     if (!request.providerSnapshotRef) {
       throw new ProviderUnavailable("runloop", "providerSnapshotRef required");
     }
-    const existing = request.computerId
-      ? this.sessions.get(request.computerId)
-      : undefined;
+    const birdId = request.birdId?.trim();
+    const flockId = request.flockId?.trim();
+    if (!birdId || !flockId) {
+      throw new ProviderUnavailable("runloop", "birdId and flockId are required to restore");
+    }
     const params: RunloopCreateParams = {
-      birdId: existing?.birdId ?? "restore",
-      flockId: existing?.flockId ?? "restore",
+      birdId,
+      flockId,
       blueprint: this.blueprint,
       architecture: DEFAULT_RUNLOOP_ARCH,
       keepAliveSeconds: this.keepAliveSeconds,
       labels: buildAgentComputerLabels(
-        { birdId: existing?.birdId ?? "restore", flockId: existing?.flockId ?? "restore" },
+        { birdId, flockId },
         { ownerId: this.ownerId, workspaceId: this.workspaceId },
       ),
       envVars: {},
@@ -525,6 +527,20 @@ export class RunloopProvider implements ComputerProvider {
       throw e;
     }
     return { providerRef: session.id, status: "ready" };
+  }
+
+  async healthProbe(ref: string): Promise<void> {
+    const s = await this.requireSession(ref);
+    const st = await s.state();
+    if (st === "deleted" || st === "paused" || st === "stopped" || st === "error") {
+      throw new ProviderUnavailable("runloop", `health probe failed: ${st}`);
+    }
+    await s.ensureInteractiveStack();
+    if (this.requireInteractive && !s.interactiveGuest) {
+      throw new InteractiveBlueprintRequired(
+        "health probe failed: guest is missing flok-ui / Xvfb / Chrome",
+      );
+    }
   }
 
   private createParams(spec: ComputerSpec): RunloopCreateParams {

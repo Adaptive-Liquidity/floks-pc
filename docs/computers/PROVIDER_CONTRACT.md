@@ -87,7 +87,7 @@ interface ProviderCapabilities {
 - `takeover()` stays fail-closed. Local noVNC is bound to `127.0.0.1:6080` only. Do not advertise `vnc: true` until authenticated tunnels exist. Never use `auth_mode=open`. Takeover is **not** launch (L1–L3).
 - Capabilities: `computerUse: true` after paid C3B live gate `32559415086`; `accessibility: false`, `vnc: false`, `pauseMemory: false`.
 - CDP is loopback-only. Never bind `0.0.0.0`. No `--no-sandbox`.
-- L1 Agent Computers require blueprint `flok-runloop-interactive` (or equivalent owner-validated interactive stack). Generic `runloop/universal-ubuntu-24.04-x86_64-dnd` is compute-only and must **fail before** the computer is accepted. Missing Xvfb / `flok-ui` is not success. Current `fromEnv()` fallback to DnD is an L1 implementation gap, not product behavior.
+- L1 Agent Computers require blueprint `flok-runloop-interactive` (or equivalent owner-validated interactive stack). Generic `runloop/universal-ubuntu-24.04-x86_64-dnd` is compute-only and must **fail before** the computer is accepted. Missing Xvfb / `flok-ui` is not success. `fromEnv()` uses `resolveAgentComputerBlueprint()` and fails closed on missing/generic DnD unless `FLOK_RUNLOOP_ALLOW_COMPUTE_ONLY=1` (C3A live compute tests only). Missing `flok-ui` / Xvfb / Chrome fails before ready. This is shipped L1 behavior, not an open gap.
 - MCP has no stop/destroy tool. Paid cleanup is `POST /v1/devboxes/{id}/shutdown` (see `docs/computers/agent-computer-cloud.md`). Process exit is not destroy.
 - Auth: `RUNLOOP_API_KEY`. Never place the key inside a Devbox, exec env, log, or MCP response.
 - Do **not** use `runloopai/deploy-agent`. C3 tests Devboxes, not Runloop Agents.

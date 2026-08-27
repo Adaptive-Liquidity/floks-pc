@@ -195,3 +195,45 @@ export class DestroyProviderRefMismatch extends ComputerError {
     this.name = "DestroyProviderRefMismatch";
   }
 }
+
+export class CheckpointRequired extends ComputerError {
+  constructor() {
+    super(
+      "CHECKPOINT_REQUIRED",
+      "Recovery requires a ready checkpoint; refusing to provision a blank replacement",
+    );
+    this.name = "CheckpointRequired";
+  }
+}
+
+export class ObserveRetryable extends ComputerError {
+  constructor(state: string) {
+    super(
+      "OBSERVE_RETRYABLE",
+      `observe is not available while computer is ${state}; wake or recover first`,
+      { state, retryable: true },
+    );
+    this.name = "ObserveRetryable";
+  }
+}
+
+export class RestoreUnsupported extends ComputerError {
+  constructor(provider: string) {
+    super(
+      "RESTORE_UNSUPPORTED",
+      `${provider} does not restore checkpoints. L4 recovery uses provider-native snapshots (Runloop snapshotDisk / FakeProvider). DockerDev remains local isolation only.`,
+      { provider },
+    );
+    this.name = "RestoreUnsupported";
+  }
+}
+
+export class CleanupFailed extends ComputerError {
+  constructor() {
+    super(
+      "CLEANUP_FAILED",
+      "Destroy failed; computer is cleanup_needed. Retry with the captured providerRef only.",
+    );
+    this.name = "CleanupFailed";
+  }
+}

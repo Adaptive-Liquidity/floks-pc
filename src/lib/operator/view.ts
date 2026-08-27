@@ -6,6 +6,7 @@
 import { workspaceRootForProvider } from "../computers/path.js";
 import type {
   CapabilityScope,
+  CheckpointStatus,
   Computer,
   ComputerProviderName,
   ComputerState,
@@ -79,6 +80,11 @@ export interface OperatorComputerView {
   runtimeMs: number;
   cost: OperatorCost;
   warnings: string[];
+  checkpointStatus: CheckpointStatus | null;
+  checkpointId: string | null;
+  checkpointAt: string | null;
+  recoveryNote: string | null;
+  cleanupNeeded: boolean;
 }
 
 export interface OperatorBetaView {
@@ -105,6 +111,10 @@ export interface OperatorSnapshot {
 export function lifecycleLabel(state: ComputerState): string {
   if (state === "paused") return "sleeping";
   if (state === "ready") return "running";
+  if (state === "deleted") return "destroyed";
+  if (state === "cleanup_needed") return "cleanup needed";
+  if (state === "restore_failed") return "restore failed";
+  if (state === "recovery_failed") return "recovery failed";
   return state;
 }
 
@@ -198,6 +208,13 @@ export function buildOperatorComputerView(
       provider: computer.provider,
       durableStore: extras.durableStore,
     }),
+    checkpointStatus: computer.latestCheckpoint?.status ?? null,
+    checkpointId: computer.latestCheckpoint?.id ?? null,
+    checkpointAt: computer.latestCheckpoint
+      ? computer.latestCheckpoint.createdAt.toISOString()
+      : null,
+    recoveryNote: computer.recoveryNote,
+    cleanupNeeded: computer.state === "cleanup_needed",
   };
   return view;
 }

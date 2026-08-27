@@ -197,6 +197,8 @@ describe("L2 operator console domain", () => {
         lastActiveAt: new Date("2026-08-26T00:00:00.000Z"),
         createdAt: new Date("2026-08-26T00:00:00.000Z"),
         updatedAt: new Date("2026-08-26T00:00:00.000Z"),
+        latestCheckpoint: null,
+        recoveryNote: null,
       },
       {
         pairStatus: "paired",

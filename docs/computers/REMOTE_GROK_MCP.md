@@ -1,6 +1,6 @@
 # Remote Grok Bot MCP (authenticated HTTPS)
 
-Local loopback is **operator smoke**. A real remote Grok Bot needs **authenticated HTTPS**. This document is the L1 runbook for that path. It does **not** claim private beta readiness.
+Local loopback is **operator smoke**. A real remote Grok Bot needs **authenticated HTTPS**. This document is the L1 runbook for that path. Private beta (L3) is closed; the operator session checklist is `PRIVATE_BETA.md`. L4 checkpoints are optional insurance and are not part of this smoke.
 
 **127.0.0.1 is not a real remote Grok Bot endpoint. A remote Grok Bot requires authenticated HTTPS. `FLOK_MCP_AUTH_TOKEN` is mandatory for public/non-loopback exposure.**
 
@@ -84,7 +84,7 @@ npm run computers:destroy-run
 ```
 9. Confirm logs have no wrapper token, pair code, capability token, or `RUNLOOP_API_KEY`.
 
-Exactly eight tools. No takeover/VNC, no C8 snapshots, no C9 handoffs, no Nexus/AEON/Graphiti.
+Exactly eight tools. No takeover/VNC, no C9 handoffs, no Nexus/AEON/Graphiti. L4 checkpoints are not part of this L1 remote-MCP smoke.
 
 Opt-in file (does not deploy, does not start Runloop):
 
@@ -97,7 +97,8 @@ npm run test:live:mcp
 
 ## Not claimed
 
-- Private beta / L3
+- That this L1 smoke replaces the L3 private-beta checklist (`PRIVATE_BETA.md`)
 - That `127.0.0.1` is a remote Grok Bot endpoint
 - Unauthenticated public MCP
 - A hosted FLOKS cloud
+- That L4–L9 are required before a remote Grok Bot can pair

@@ -272,6 +272,8 @@ describe("C3B RunloopProvider (memory)", () => {
         computerId: a.providerRef,
         checkpointId: ck.providerSnapshotRef,
         providerSnapshotRef: ck.providerSnapshotRef,
+        birdId: "leak-restore",
+        flockId: "f",
       }),
     );
     assert.ok(plane.lastCreatedId);

@@ -3,19 +3,21 @@
 This file is the product and architecture authority **for the isolated computer system**.  
 It deliberately does **not** edit the main Flok `FINAL_DESIGN.md` or `BUILD.md`. Those remain the authority for the public Flok product. After Gate G0 the two contracts will be reconciled.
 
-Launch sequence and customer-facing object: `PHASES.md` (L0–L9) and `docs/computers/agent-computer-cloud.md`.
+Usable product is L0–L3. Customer-facing object: `PHASES.md` and `docs/computers/agent-computer-cloud.md`. L4–L9 / G0 are backlog, not a required pipeline.
 
 ## 1. What this package is
 
 **FLOKS Agent Computer Cloud** gives every AI agent its own isolated computer: real Chrome, private files, terminal execution, screenshot observe, CDP accessibility, scoped capability access, lifecycle control, and fail-closed security.
 
-**Agent Computer** (also Isolated Agent Computer, Bot Computer, historically Flok Computer) = a provider-backed machine assigned to **exactly one** Flok Node (one Grok Bot) through pair-code onboarding and scoped capability tokens.
+**Agent Computer** (also Isolated Agent Computer, Bot Computer, historically Flok Computer) = a provider-backed machine assigned to **exactly one** Flok Node (one Grok Bot) through pair-code onboarding and scoped capability tokens. That 1:1 default is the product. Optional shared-trust Team Computers are deferred (`docs/computers/TEAM_COMPUTERS.md`) and must not replace this default.
 
 **Runloop Devbox** = backend **provider v1**. It is infrastructure, not the product name. Do not describe the product as “just Devboxes,” “headless browser orchestration,” or “containerized.”
 
-**Now (L0–L2 closed / L3 private beta):** pair + capability, Runloop v1, authenticated HTTPS remote MCP, Live Node Console, invite/waitlist, per-owner active cap, idle auto-shutdown, cost warning, fail-closed `click_element`. In-memory ComputerService is local/dev only. Workspace snapshots remain L4.
+**Now (L0–L3 closed — usable private beta):** pair + capability, Runloop v1, authenticated HTTPS remote MCP, Live Node Console, invite/waitlist, per-owner active cap, idle auto-shutdown, cost warning, fail-closed `click_element`. In-memory ComputerService is local/dev only. L3 caps are not L7 billing. FakeProvider is not product proof.
 
-**Later:** provider workspace snapshots / recovery (L4), AX-bounds `click_element` (L5), one-file handoff (L6), **real quotas/billing (L7)**, extra providers (L8), enterprise / private infra (L9), authenticated VNC takeover.
+**L4 (optional insurance, PR #24):** provider workspace checkpoints / recovery. Merge only if the owner says merge. Not a private-beta blocker.
+
+**Later (backlog, not a critical path):** AX-bounds `click_element` (L5), one-file handoff (L6), **real quotas/billing (L7)**, extra providers (L8), enterprise / private infra (L9), authenticated VNC takeover, opt-in Team Computers. Do not start these by default.
 
 Do not claim residential proxies, bot-detection bypass, full root / uncensored terminal, unthrottled infra, or production-ready security.
 

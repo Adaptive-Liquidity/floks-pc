@@ -27,7 +27,7 @@ import type {
   RestoreRequest,
   TakeoverGrant,
 } from "../types.js";
-import { ComputerError, ProviderUnavailable, PathEscape } from "../errors.js";
+import { ComputerError, PathEscape, ProviderUnavailable, RestoreUnsupported } from "../errors.js";
 import { assertInsideRoot } from "../path.js";
 
 export const DOCKER_DEV_IMAGE = "flok-computer-dev:0.0.1";
@@ -111,7 +111,7 @@ export class DockerDevProvider implements ComputerProvider {
       accessibility: false,
       vnc: false,
       pauseMemory: false,
-      snapshots: true,
+      snapshots: false,
       forks: false,
       customImages: true,
       networkPolicy: true,
@@ -233,8 +233,26 @@ export class DockerDevProvider implements ComputerProvider {
     const h = this.machines.get(ref);
     const container = h?.container ?? `flok-node-${ref}`;
     const volume = h?.volume ?? `flok-ws-${ref}`;
-    await this.docker(["rm", "-f", container]).catch(() => undefined);
-    await this.docker(["volume", "rm", volume]).catch(() => undefined);
+    const rm = await this.docker(["rm", "-f", container], { allowNonZero: true });
+    if (
+      rm.exitCode !== 0 &&
+      !/no such container/i.test(`${rm.stderr}\n${rm.stdout}`)
+    ) {
+      throw new ProviderUnavailable(
+        "docker-dev",
+        rm.stderr.trim() || "destroy failed",
+      );
+    }
+    const vol = await this.docker(["volume", "rm", volume], { allowNonZero: true });
+    if (
+      vol.exitCode !== 0 &&
+      !/no such volume/i.test(`${vol.stderr}\n${vol.stdout}`)
+    ) {
+      throw new ProviderUnavailable(
+        "docker-dev",
+        vol.stderr.trim() || "volume remove failed",
+      );
+    }
     this.machines.delete(ref);
   }
 
@@ -439,7 +457,14 @@ export class DockerDevProvider implements ComputerProvider {
   }
 
   async restore(_request: RestoreRequest): Promise<ProviderComputer> {
-    throw new ProviderUnavailable("docker-dev", "restore not implemented in C2");
+    throw new RestoreUnsupported("docker-dev");
+  }
+
+  async healthProbe(ref: string): Promise<void> {
+    const st = await this.status(ref);
+    if (st.state !== "ready" && st.state !== "running") {
+      throw new ProviderUnavailable("docker-dev", `health probe failed: ${st.state}`);
+    }
   }
 
   /**

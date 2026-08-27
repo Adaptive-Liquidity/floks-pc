@@ -1,6 +1,6 @@
 # FLOKS Agent Computer Cloud
 
-Product and launch plan for this repository. Historical engineering gates C0–C6 live in `PHASES.md`. This document is the customer-facing object and the launch-fast roadmap.
+Product and launch plan for this repository. Historical engineering gates C0–C6 live in `PHASES.md`. This document is the customer-facing object. **L0–L3 is the usable private-beta product.** L4–L9 are backlog, not a required pipeline.
 
 ## 1. Product object: Agent Computer
 
@@ -14,7 +14,7 @@ An **Agent Computer** is a provider-backed machine assigned to exactly one bot i
 | FLOKS Agent Computer Cloud | The product: every bot gets its own isolated computer. |
 | Runloop Devbox | Backend **provider v1** (infrastructure). Not the product name. |
 | Native Computer | xAI’s shared user-level machine. Agent Computers exist so private bot state does not live there. |
-| One bot, one computer | Pairing binds exactly one `bird_id` / `flock_id` to one Agent Computer. |
+| One bot, one computer | Pairing binds exactly one `bird_id` / `flock_id` to one Agent Computer. Default. Do not weaken. Optional shared-trust Team Computers are deferred: `TEAM_COMPUTERS.md`. |
 
 Do not describe this as “just Devboxes,” “headless browser orchestration,” or “containerized” (v1 isolation is VM-backed). Do not claim a full root shell, uncensored terminal, unthrottled infrastructure, residential proxies, or that traffic “never trips bot detection.”
 
@@ -36,16 +36,16 @@ Later backends (browser-only, cheaper workers, microVM, private cloud) are **Pha
 L0  C7 landing / proof lock     CLOSED — PR #17, live Grok Bot CDP AX
 L1  Launch MVP                  CLOSED — PR #21 live remote HTTPS + Runloop
 L2  Beta dashboard              CLOSED — PR #22 Live Node Console
-L3  Private beta                OPEN — invite, active cap, auto-shutdown, cost warning
-L4  Reliability / recovery      C8-class persistence (after users can join)
-L5  Safer browser control       click_element from real CDP bounds
-L6  Team / workflow             Explicit one-file handoff
-L7  Scale / quotas / billing
-L8  Provider fabric             Keep Runloop v1; add options later
-L9  Enterprise / private infra
+L3  Private beta                CLOSED — PR #23 d118746  ← usable product
+L4  Reliability / recovery      optional insurance (PR #24). Not a beta blocker
+L5  Safer browser control       backlog — click_element from real CDP bounds
+L6  Team / workflow             backlog — explicit one-file handoff
+L7  Scale / quotas / billing    backlog — not L3 caps
+L8  Provider fabric             backlog — keep Runloop v1
+L9  Enterprise / private infra  backlog
 ```
 
-Users may join at L3 with **minimal safety caps** (invite, per-user active-machine cap, default auto-shutdown, visible cost). Snapshots, click_element, handoffs, **real quotas/billing (L7)**, and extra providers ship after that. Nexus-IQ / AEON / Graphiti remain forbidden until Gate G0 in `PHASES.md`. G0 is the pre-Nexus acceptance gate; it is not defined by Nexus/AEON features.
+Users may join at L3 with **minimal safety caps** (invite, per-user active-machine cap, default auto-shutdown, visible cost). That is enough for private beta. Snapshots (L4), `click_element` (L5), handoffs (L6), **real quotas/billing (L7)**, extra providers, and shared Team Computers are backlog — build only if real use shows a blocker. Nexus-IQ / AEON / Graphiti remain forbidden until Gate G0 in `PHASES.md`. G0 is the pre-Nexus acceptance gate; it is not defined by Nexus/AEON features. G0 is not a private-beta blocker.
 
 L1 MCP has **two** start paths. Default listen host is loopback. Do not omit the interactive blueprint.
 
@@ -143,12 +143,12 @@ L1 implementation: `RunloopProvider.fromEnv()` requires `flok-runloop-interactiv
 | Screenshot observe | Proven. |
 | `open_url` / wait / basic act | Proven path. Observe may start Chrome when CDP is down (Grok may block `open_url` as UI automation). |
 | Terminal / exec | Proven. |
-| Private files (stat/list/read/write/mkdir/move/copy/delete) | Implemented; **MCP fs write-ok / read-empty is a known bug** (fix in L1). |
+| Private files (stat/list/read/write/mkdir/move/copy/delete) | Proven live on Runloop (PR #20 MCP fs smoke). Not an L1 blocker. |
 | Lifecycle stop/destroy | Control-plane `ComputerService.stop` / `destroy` exist. **MCP cannot invoke them.** Operator uses the Runloop shutdown API (this doc). L1 must make that obvious before beta. |
 | Fail-closed `click_element` | Current. Not a launch blocker. Real AX-bounds click is L5. |
 | Cleanup / Devbox shutdown | L0 cleanup proof: Devbox shutdown was verified through the Runloop provider/API. Provider ID redacted. Not via MCP or `Ctrl+C`. Never bulk-shutdown the account. |
 | Durable ComputerRecord / pair / capability / active-machine accounting | **Required before L3.** In-memory is local/dev only. Raw capability tokens are never stored. |
-| Provider workspace snapshots | **L4.** Not a substitute for control-plane records. |
+| Provider workspace snapshots | **L4 optional insurance** (PR #24). Provider-native checkpoint/restore. Not required before private beta. Not a substitute for control-plane records. |
 | Takeover / public VNC | Fail-closed. Not launch. |
 | Handoffs | `PHASE_NOT_STARTED` (L6). Still listed as two of the eight tools. |
 | Dashboard / cost / pair UI | L2. |
@@ -171,13 +171,13 @@ L1 implementation: `RunloopProvider.fromEnv()` requires `flok-runloop-interactiv
 
 - `click_element` is fail-closed until L5. Do not treat FakeProvider trees as proof.
 - `capabilities().accessibility` remains `false` until an explicit later lift.
-- MCP `computer_fs`: write can succeed and the file exist on disk while a following MCP read returns empty. Separate from C7 AX. **L1 blocker.**
+- MCP `computer_fs` write-ok / read-empty was an L0-era note. Live Runloop MCP fs smoke passed on PR #20. **Not a current L1 blocker.** Do not reopen it as launch work.
 - In-memory `ComputerService` is acceptable for local/dev only. It is **not** acceptable for private beta. Set `FLOK_CONTROL_PLANE_PATH` (Runloop MCP defaults to `.flok/control-plane.json`). Provider workspace snapshots remain L4.
 - Operator destroy (not an MCP tool): `FLOK_MCP_PROVIDER=runloop FLOK_DESTROY_CONFIRM=1 FLOK_DESTROY_PROVIDER_REF=<captured> npm run computers:destroy-run`. Requires the captured providerRef from this run. If more than one candidate matches or unsure, the command stops.
 - Handoffs are not implemented.
 - Takeover / authenticated VNC is not implemented.
 - Public HTTPS `POST /mcp` is an operator tunnel/proxy choice, not a claim that FLOKS hosts a production cloud. **127.0.0.1 is not a real remote Grok Bot endpoint. A remote Grok Bot needs an authenticated HTTPS endpoint that forwards to the MCP server and requires FLOK_MCP_AUTH_TOKEN.**
-- Interactive Agent Computers need `FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive` (or equivalent validated stack). Generic DnD Ubuntu has no `flok-ui` and is not an Agent Computer. L1 must fail closed before accepting that image. Today’s `fromEnv()` fallback / missing-Xvfb `exit 0` is an **L1 implementation gap**.
+- Interactive Agent Computers need `FLOK_RUNLOOP_BLUEPRINT=flok-runloop-interactive` (or equivalent validated stack). Generic DnD Ubuntu has no `flok-ui` and is not an Agent Computer. `RunloopProvider.fromEnv()` uses `resolveAgentComputerBlueprint()` and **fails closed** on missing/generic DnD unless `FLOK_RUNLOOP_ALLOW_COMPUTE_ONLY=1` (C3A live compute tests only). Missing `flok-ui` / Xvfb / Chrome fails **before** the computer is ready. This is shipped L1 behavior, not an open gap.
 - MCP has **no** stop/destroy tool. `Ctrl+C` does not shut the Devbox down. Use the shutdown runbook.
 - Default live keep-alive is 15 minutes unless `FLOK_RUNLOOP_KEEP_ALIVE_SECONDS` is set (60–3600). That is a fallback, not cleanup.
 - Chrome `.deb` is unpinned stable channel.
@@ -199,9 +199,9 @@ L1 implementation: `RunloopProvider.fromEnv()` requires `flok-runloop-interactiv
 - Residential proxies or “never trips bot detection.”
 - Full root shell / uncensored terminal / unthrottled infra.
 - Production-ready security or proven multi-tenant scale.
-- FakeProvider observe/act as C7 or L0 proof.
+- FakeProvider observe/act/fs as C7 or L0/L1 product proof.
 - That `click_element` works.
-- That fs read is proven end-to-end on live Runloop until the write-ok/read-empty bug is fixed.
+- That MCP fs write-ok/read-empty is still an L1 blocker (PR #20 live smoke passed).
 - That MCP or `Ctrl+C` destroys a paid Devbox, or that an unfiltered account list is a shutdown list.
 - That `127.0.0.1` is a remote Grok Bot endpoint.
 - That generic DnD Ubuntu is an Agent Computer.

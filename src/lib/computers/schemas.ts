@@ -17,11 +17,31 @@ export const ComputerStateSchema = z.enum([
   "running",
   "paused",
   "stopped",
+  "waking",
+  "checkpointing",
   "recovering",
+  "restore_failed",
+  "recovery_failed",
+  "cleanup_needed",
   "error",
   "deleting",
   "deleted",
 ]);
+
+export const CheckpointStatusSchema = z.enum([
+  "pending",
+  "ready",
+  "failed",
+  "restoring",
+  "restored",
+]);
+
+export const ComputerLatestCheckpointSchema = z.object({
+  id: z.string().min(1).max(128),
+  providerSnapshotRef: z.string().min(1).max(256),
+  createdAt: z.coerce.date(),
+  status: CheckpointStatusSchema,
+});
 
 export const OsTypeSchema = z.enum(["linux", "windows"]);
 
@@ -78,6 +98,8 @@ export const ComputerSchema = z.object({
   lastActiveAt: z.coerce.date().nullable(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
+  latestCheckpoint: ComputerLatestCheckpointSchema.nullable().default(null),
+  recoveryNote: z.string().max(512).nullable().default(null),
 });
 
 export const ProviderCapabilitiesSchema = z.object({

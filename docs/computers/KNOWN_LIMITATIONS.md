@@ -10,6 +10,9 @@ This is fail-closed launch security, not production-ready multi-tenant security.
 - Takeover / VNC is not included.
 - Handoffs are not implemented.
 - In-memory ComputerService is local/dev only; private beta requires durable records.
+- Default is one bot, one isolated Agent Computer. Shared Team Computers are not built (`TEAM_COMPUTERS.md`).
+- L4 checkpoints / recovery are optional insurance, not required to join beta. L3 caps are not L7 billing. FakeProvider is not product proof.
+- Runloop `healthProbe` does not yet do a bounded CDP liveness check (dead Chrome + live Xvfb can pass). Deferred follow-up after L4; not a private-beta blocker.
 
 ## Cost
 

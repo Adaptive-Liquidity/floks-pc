@@ -12,22 +12,35 @@ export type ComputerState =
   | "running"
   | "paused"
   | "stopped"
+  | "waking"
+  | "checkpointing"
   | "recovering"
+  | "restore_failed"
+  | "recovery_failed"
+  | "cleanup_needed"
   | "error"
   | "deleting"
   | "deleted";
+
+/** Checkpoint metadata status. Distinct from ComputerState. */
+export type CheckpointStatus = "pending" | "ready" | "failed" | "restoring" | "restored";
 
 /** Legal state transitions (source of truth for validation) */
 export const LEGAL_TRANSITIONS: Readonly<Record<ComputerState, readonly ComputerState[]>> = {
   requested: ["provisioning", "error", "deleting"],
   provisioning: ["ready", "error", "deleting"],
-  ready: ["running", "paused", "stopped", "error", "deleting"],
-  running: ["paused", "stopped", "error", "deleting"],
-  paused: ["running", "stopped", "error", "deleting"],
-  stopped: ["running", "ready", "error", "deleting"],
-  recovering: ["ready", "error", "deleting"],
-  error: ["recovering", "deleting"],
-  deleting: ["deleted"],
+  ready: ["running", "paused", "stopped", "checkpointing", "recovering", "error", "deleting"],
+  running: ["paused", "stopped", "checkpointing", "recovering", "error", "deleting"],
+  paused: ["running", "waking", "stopped", "checkpointing", "recovering", "error", "deleting"],
+  stopped: ["running", "ready", "waking", "recovering", "error", "deleting"],
+  waking: ["ready", "running", "recovery_failed", "error", "deleting"],
+  checkpointing: ["ready", "running", "paused", "error", "deleting"],
+  recovering: ["ready", "restore_failed", "recovery_failed", "cleanup_needed", "error", "deleting"],
+  restore_failed: ["recovering", "cleanup_needed", "deleting"],
+  recovery_failed: ["recovering", "waking", "cleanup_needed", "deleting"],
+  cleanup_needed: ["deleting", "recovering"],
+  error: ["recovering", "deleting", "cleanup_needed"],
+  deleting: ["deleted", "cleanup_needed"],
   deleted: [],
 } as const;
 
@@ -127,6 +140,16 @@ export interface Computer {
   lastActiveAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  latestCheckpoint: ComputerLatestCheckpoint | null;
+  recoveryNote: string | null;
+}
+
+/** Durable checkpoint pointer. No workspace bytes, tokens, or API keys. */
+export interface ComputerLatestCheckpoint {
+  id: string;
+  providerSnapshotRef: string;
+  createdAt: Date;
+  status: CheckpointStatus;
 }
 
 export interface ProviderCapabilities {
@@ -359,4 +382,6 @@ export interface RestoreRequest {
   checkpointId: string;
   providerSnapshotRef?: string;
   workspaceObjectKey?: string;
+  birdId?: string;
+  flockId?: string;
 }
