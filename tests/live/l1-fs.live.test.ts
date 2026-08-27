@@ -12,6 +12,7 @@
 
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
+import { z } from "zod";
 import { ComputerService, RunloopProvider } from "../../src/lib/computers/index.js";
 import { McpGateway } from "../../src/lib/mcp/index.js";
 
@@ -26,6 +27,27 @@ function redact(text: string): string {
   return text
     .replace(/dbx_[A-Za-z0-9]+/g, "dbx_REDACTED")
     .replace(/ak_[A-Za-z0-9]+/g, "ak_REDACTED");
+}
+
+const ToolCallResultSchema = z.object({
+  result: z.object({
+    isError: z.boolean().optional(),
+    structuredContent: z.record(z.string(), z.unknown()),
+  }),
+});
+
+function expectToolResult(res: unknown): {
+  isError: boolean;
+  structuredContent: Record<string, unknown>;
+} {
+  const parsed = ToolCallResultSchema.safeParse(res);
+  if (!parsed.success) {
+    throw new Error(`unexpected JSON-RPC response: ${redact(JSON.stringify(res))}`);
+  }
+  return {
+    isError: parsed.data.result.isError ?? false,
+    structuredContent: parsed.data.result.structuredContent,
+  };
 }
 
 async function fs(
@@ -46,8 +68,7 @@ async function fs(
     },
     {},
   );
-  return (res as { result: { isError: boolean; structuredContent: Record<string, unknown> } })
-    .result;
+  return expectToolResult(res);
 }
 
 describe("L1 live Runloop MCP computer_fs", { skip: !LIVE, timeout: 720_000 }, () => {
@@ -91,8 +112,7 @@ describe("L1 live Runloop MCP computer_fs", { skip: !LIVE, timeout: 720_000 }, (
         },
         {},
       );
-      const payload = (pairRes as { result: { structuredContent: Record<string, unknown> } }).result
-        .structuredContent;
+      const payload = expectToolResult(pairRes).structuredContent;
       const token = String(payload.capability_token);
       const handle = String(payload.computer_handle);
 
