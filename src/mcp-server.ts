@@ -26,13 +26,16 @@ import { assertNexusDisabled } from "./lib/computers/flags.js";
 import type { ComputerProvider } from "./lib/computers/providers/provider.js";
 import {
   assertRemoteMcpExposure,
-  handleMcpHttp,
   loadMcpGatewayConfig,
   mcpComputersEnabled,
   McpGateway,
   MCP_PATH,
 } from "./lib/mcp/index.js";
-import { endUnhandledMcpError } from "./lib/mcp/http.js";
+import { endUnhandledMcpError, handleMcpHttp } from "./lib/mcp/http.js";
+import {
+  OPERATOR_CONSOLE_PATH,
+  handleOperatorHttp,
+} from "./lib/operator/index.js";
 
 function envFlag(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
   const v = env[name]?.trim().toLowerCase();
@@ -146,14 +149,50 @@ async function main(): Promise<void> {
       endUnhandledMcpError(res);
     });
   });
+  const operatorPortRaw = process.env.FLOK_OPERATOR_LISTEN_PORT?.trim();
+  const operatorPort = operatorPortRaw
+    ? Number.parseInt(operatorPortRaw, 10)
+    : 8788;
+  if (
+    !Number.isInteger(operatorPort) ||
+    operatorPort <= 0 ||
+    operatorPort >= 65536
+  ) {
+    throw new ComputerError(
+      "OPERATOR_PORT_INVALID",
+      "FLOK_OPERATOR_LISTEN_PORT must be an integer between 1 and 65535",
+    );
+  }
+  if (operatorPort === port) {
+    throw new ComputerError(
+      "OPERATOR_PORT_COLLISION",
+      "Operator console must not share the MCP listen port (Bot wrapper auth is not operator auth)",
+    );
+  }
+  const operatorServer = createServer((req, res) => {
+    void handleOperatorHttp(req, res, { service, config }).catch(() => {
+      if (!res.writableEnded) {
+        res.statusCode = 500;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ error: { code: "INTERNAL", message: "internal error" } }));
+      }
+    });
+  });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => resolve());
   });
+  await new Promise<void>((resolve, reject) => {
+    operatorServer.once("error", reject);
+    operatorServer.listen(operatorPort, "127.0.0.1", () => resolve());
+  });
 
   const displayHost = host.includes(":") ? `[${host}]` : host;
   process.stdout.write(`flok-mcp-gateway listening on http://${displayHost}:${port}${MCP_PATH}\n`);
+  process.stdout.write(
+    `operator console: http://127.0.0.1:${operatorPort}${OPERATOR_CONSOLE_PATH} (loopback Live Node Console; not an MCP tool; not the Grok wrapper token)\n`,
+  );
   if (isLoopbackListenHost(host)) {
     process.stdout.write(
       "127.0.0.1 is not a real remote Grok Bot endpoint. A remote Grok Bot needs an authenticated HTTPS endpoint that forwards to the MCP server and requires FLOK_MCP_AUTH_TOKEN.\n",

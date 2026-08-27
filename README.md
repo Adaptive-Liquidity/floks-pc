@@ -16,13 +16,13 @@ All computer domain logic, providers, migrations, worker, and MCP surface live h
 
 ## Current status
 
-Product object: **Agent Computer**. Backend v1: **Runloop Devbox**. Open work: **L1 Launch MVP**.
+Product object: **Agent Computer**. Backend v1: **Runloop Devbox**. Open work: **L2 Live Node Console**.
 
 | Launch | Status |
 |--------|--------|
 | **L0** — C7 landing / CDP AX proof | **CLOSED / PASSED** — [PR #17](https://github.com/Adaptive-Liquidity/floks-pc/pull/17) (`bda72e0`). Live Grok Bot `computer_observe({ include_accessibility: true })` → `accessibility_summary.source === "cdp"` with real nodes. FakeProvider is not proof. |
-| **L1** — Launch MVP: one bot, one Agent Computer | **OPEN** — pair, observe, exec, files, interactive blueprint fail-closed, durable control-plane records before L3, scoped Runloop shutdown (this run only). `127.0.0.1` is local smoke; remote Grok needs authenticated HTTPS. Fix MCP fs write-ok/read-empty before beta. |
-| **L2** — Bot Computers / Live Node Console | After L1 |
+| **L1** — Launch MVP: one bot, one Agent Computer | **CLOSED / PASSED** — [PR #21](https://github.com/Adaptive-Liquidity/floks-pc/pull/21) (`61c9747`). Remote Grok Bot over authenticated HTTPS; live Runloop pair/status/observe `source=cdp` + fs; this-run destroy. |
+| **L2** — Bot Computers / Live Node Console | **OPEN** — operator console at `/console` (same process as MCP). Not an MCP tool. |
 | **L3** — Private beta | After L2. **Safety caps only:** invite/approval, visible cost warning, max active machines per beta user, default auto-shutdown. Real quotas/billing are **L7**. |
 | **L4–L9** — recovery, safer click, handoffs, **L7 quotas/billing**, provider fabric, enterprise | After users can join. See `PHASES.md` and `docs/computers/agent-computer-cloud.md`. |
 
@@ -32,7 +32,7 @@ Historical C0–C6 (scaffold → pairing → MCP → shell/fs) are **CLOSED**. `
 
 1. `AGENTS.md` — isolation fence + phase enforcement for every coding agent
 2. `AUTHORITY.md` — local product & architecture contract
-3. `PHASES.md` — launch sequence L0–L9 (current open: L1) plus historical C0–C6 / G0 lock
+3. `PHASES.md` — launch sequence L0–L9 (current open: L2) plus historical C0–C6 / G0 lock
 4. `docs/computers/agent-computer-cloud.md` — product object, feature matrix, what not to claim
 5. `docs/computers/` — architecture, MCP, security, provider contract
 
@@ -67,7 +67,7 @@ FLOK_LIVE_RUNLOOP_TEST=1 npm run test:live:runloop
 
 When the flag is set, missing credentials **fail** the suite. Live Runloop is **not** part of `npm run verify` or required PR CI.
 
-Loopback MCP (FakeProvider, not public, not paid, **not** Agent Computer proof):
+Loopback MCP (FakeProvider, not public, not paid, **not** Agent Computer proof). Same process serves the L2 operator console on a **separate loopback port** at `http://127.0.0.1:8788/console`:
 
 ```bash
 FLOK_MCP_COMPUTERS_ENABLED=1 npm run start:mcp
