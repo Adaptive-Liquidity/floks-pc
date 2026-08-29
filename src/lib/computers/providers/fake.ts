@@ -328,15 +328,34 @@ export class FakeProvider implements ComputerProvider {
     }
   }
 
-  async observe(ref: string, _request: ObserveRequest): Promise<Observation> {
+  async observe(ref: string, request: ObserveRequest): Promise<Observation> {
     this.maybeFail("observe");
     const m = this.getMachine(ref);
-    return {
+    const observation: Observation = {
       screenWidth: 1280,
       screenHeight: 720,
       activeWindow: m.lastUrl ?? "Fake Desktop",
       accessibilitySummary: { nodes: 0 },
     };
+    if (request.includeScreenshot === true) {
+      // 1×1 PNG protocol coverage — not a real display capture.
+      observation.screenshotBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    }
+    if (request.includeAccessibility === true && m.lastUrl) {
+      observation.accessibilitySummary = {
+        source: "fake",
+        nodes: [
+          {
+            id: "fake-submit",
+            role: "button",
+            name: "Submit",
+            bounds: { x: 100, y: 80, width: 80, height: 24 },
+          },
+        ],
+      };
+    }
+    return observation;
   }
 
   async act(ref: string, request: ActionBatch): Promise<ActionResult> {
@@ -348,7 +367,7 @@ export class FakeProvider implements ComputerProvider {
         return {
           action,
           success: false,
-          error: "click_element unsupported until accessibility addressing exists",
+          error: "click_element is rewritten at ComputerService; provider never accepts elementId",
         };
       }
       if (action.type === "open_url") {

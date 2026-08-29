@@ -157,7 +157,7 @@ export function computerWarnings(input: {
   durableStore: boolean;
 }): string[] {
   const warnings = [
-    "click_element stays fail-closed until L5. This console will not guess clicks.",
+    "click_element uses the last observe AX bounds (15s). This console will not guess clicks.",
     "Takeover / VNC is not in this console.",
     "Runtime cost is not metered yet (billing is L7).",
   ];

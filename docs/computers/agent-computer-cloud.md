@@ -38,14 +38,14 @@ L1  Launch MVP                  CLOSED — PR #21 live remote HTTPS + Runloop
 L2  Beta dashboard              CLOSED — PR #22 Live Node Console
 L3  Private beta                CLOSED — PR #23 d118746  ← usable product
 L4  Reliability / recovery      optional insurance (PR #24). Not a beta blocker
-L5  Safer browser control       backlog — click_element from real CDP bounds
+L5  Safer browser control       OPEN — click_element from last observe AX bounds
 L6  Team / workflow             backlog — explicit one-file handoff
 L7  Scale / quotas / billing    backlog — not L3 caps
 L8  Provider fabric             backlog — keep Runloop v1
 L9  Enterprise / private infra  backlog
 ```
 
-Users may join at L3 with **minimal safety caps** (invite, per-user active-machine cap, default auto-shutdown, visible cost). That is enough for private beta. Snapshots (L4), `click_element` (L5), handoffs (L6), **real quotas/billing (L7)**, extra providers, and shared Team Computers are backlog — build only if real use shows a blocker. Nexus-IQ / AEON / Graphiti remain forbidden until Gate G0 in `PHASES.md`. G0 is the pre-Nexus acceptance gate; it is not defined by Nexus/AEON features. G0 is not a private-beta blocker.
+Users may join at L3 with **minimal safety caps** (invite, per-user active-machine cap, default auto-shutdown, visible cost). That is enough for private beta. L4 snapshots shipped as optional insurance. L5 `click_element` is owner-requested (PR #26; merge only with owner approval). Handoffs (L6), **real quotas/billing (L7)**, extra providers, and shared Team Computers stay backlog — build only if real use shows a blocker. Nexus-IQ / AEON / Graphiti remain forbidden until Gate G0 in `PHASES.md`. G0 is the pre-Nexus acceptance gate; it is not defined by Nexus/AEON features. G0 is not a private-beta blocker.
 
 L1 MCP has **two** start paths. Default listen host is loopback. Do not omit the interactive blueprint.
 
@@ -145,7 +145,7 @@ L1 implementation: `RunloopProvider.fromEnv()` requires `flok-runloop-interactiv
 | Terminal / exec | Proven. |
 | Private files (stat/list/read/write/mkdir/move/copy/delete) | Proven live on Runloop (PR #20 MCP fs smoke). Not an L1 blocker. |
 | Lifecycle stop/destroy | Control-plane `ComputerService.stop` / `destroy` exist. **MCP cannot invoke them.** Operator uses the Runloop shutdown API (this doc). L1 must make that obvious before beta. |
-| Fail-closed `click_element` | Current. Not a launch blocker. Real AX-bounds click is L5. |
+| `click_element` from last observe AX | L5. Guessed/offscreen/unmapped clicks fail closed. FakeProvider is not live proof. |
 | Cleanup / Devbox shutdown | L0 cleanup proof: Devbox shutdown was verified through the Runloop provider/API. Provider ID redacted. Not via MCP or `Ctrl+C`. Never bulk-shutdown the account. |
 | Durable ComputerRecord / pair / capability / active-machine accounting | **Required before L3.** In-memory is local/dev only. Raw capability tokens are never stored. |
 | Provider workspace snapshots | **L4 optional insurance** (PR #24). Provider-native checkpoint/restore. Not required before private beta. Not a substitute for control-plane records. |
@@ -169,7 +169,7 @@ L1 implementation: `RunloopProvider.fromEnv()` requires `flok-runloop-interactiv
 
 ## 6. Known limitations
 
-- `click_element` is fail-closed until L5. Do not treat FakeProvider trees as proof.
+- `click_element` uses the last `observe({ include_accessibility: true })` AX bounds (15s). Guessed, offscreen, unmapped, and same-batch-after-mutate clicks fail closed. Do not treat FakeProvider trees as live proof.
 - `capabilities().accessibility` remains `false` until an explicit later lift.
 - MCP `computer_fs` write-ok / read-empty was an L0-era note. Live Runloop MCP fs smoke passed on PR #20. **Not a current L1 blocker.** Do not reopen it as launch work.
 - In-memory `ComputerService` is acceptable for local/dev only. It is **not** acceptable for private beta. Set `FLOK_CONTROL_PLANE_PATH` (Runloop MCP defaults to `.flok/control-plane.json`). Provider workspace snapshots remain L4.

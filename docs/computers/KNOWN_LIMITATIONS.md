@@ -2,7 +2,7 @@
 
 This is fail-closed launch security, not production-ready multi-tenant security. Report bugs with `.github/ISSUE_TEMPLATE/bug_report.md` and the operator debug packet (`GET /operator/v1/debug-packet`). Do not paste wrapper tokens, pair codes, capability tokens, or provider IDs.
 
-- `click_element` is not yet supported (fail-closed until L5).
+- `click_element` uses the last `observe({ include_accessibility: true })` AX bounds (15s). Missing tree, unknown id, no box model, and offscreen targets fail closed. Guessed clicks are not allowed.
 - Proxies and residential egress are not included.
 - Production scale is not proven.
 - No guaranteed bot-detection bypass.

@@ -4,7 +4,7 @@
 **Working project:** `flok-node-runtime` / `floks-pc` only  
 **Product:** FLOKS Agent Computer Cloud (one bot, one Agent Computer; Runloop is provider v1)  
 **Main Flok source:** `/workspace/artifacts/Floks-main/` or `/home/workdir/artifacts/Floks-main/` — READ ONLY  
-**Current product:** L0–L3 private beta is CLOSED and usable. L4 (PR #24) is optional insurance — merge only if the owner says merge. Do **not** automatically start L5 / L6 / L7 / L8 / G0. `PHASES.md` lists L4–L9 as backlog, not a required pipeline.  
+**Current product:** L0–L3 private beta is CLOSED and usable. L4 optional insurance is CLOSED (PR #24, `35b5e71`). **Owner-requested work: L5 click_element + visible observe screenshot.** Merge L5 only with explicit owner approval. Do **not** automatically start L6 / L7 / L8 / G0.  
 **Hard gate:** Nexus-IQ / AEON / Graphiti remain disabled until Gate G0 is explicitly PASSED. G0 is not an L1–L3 launch blocker.
 
 This document defines the mandatory operating procedure for Grok Build, subagents, worktrees, commits, CI, PR reviews, review-comment verification, fixes, gate closure, and merges.

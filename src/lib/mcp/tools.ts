@@ -161,13 +161,13 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "computer_observe",
     description:
-      "Observe the computer display. Screenshot only when include_screenshot is true. Accessibility only when include_accessibility is true; capability-gated, never fabricated.",
+      "Observe the computer display. Set include_screenshot true to see the screen as an image. Set include_accessibility true for AX node ids (required before click_element). Accessibility is never fabricated as live CDP.",
     inputSchema: advertisedSchema(ComputerObserveArgsSchema, ["capability_token", "computer_handle"]),
   },
   {
     name: "computer_act",
     description:
-      "Apply a bounded action batch (click_coordinates/type/key/scroll/open_url/launch_application/wait). No public VNC/takeover.",
+      "Apply a bounded action batch. For clicks: computer_observe({ include_accessibility: true }) then click_element with an AX node id from that tree (15s). Guessed/offscreen clicks fail closed. Also open_url/type/key/scroll/wait. No public VNC/takeover.",
     inputSchema: advertisedSchema(ComputerActArgsSchema, [
       "capability_token",
       "computer_handle",

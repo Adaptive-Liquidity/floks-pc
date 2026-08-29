@@ -1,6 +1,6 @@
 # PHASES — FLOKS Agent Computer Cloud
 
-**Usable private-beta product is L0–L3.** That is enough. L4–L9 / G0 below are a **backlog**, not a critical path. Use the product before building more roadmap. Do **not** automatically start L5 / L6 / L7 / L8 / G0.
+**Usable private-beta product is L0–L3.** That is enough. L4–L9 / G0 below are a **backlog**, not a critical path. Use the product before building more roadmap. **L5 is owner-requested** (click is the join hook). Do **not** automatically start L6 / L7 / L8 / G0.
 
 Historical C0–C6 remain the closed engineering record (do not re-open them). Landed C7 is **L0**. Original leftover C7 goals (three concurrent Bots, public VNC takeover) plus C8–C15 map into **L4–L9 / G0** so we do **not** overbuild.
 
@@ -10,7 +10,7 @@ Nexus-IQ / AEON / Graphiti stay **forbidden** until **Gate G0** is marked PASSED
 **L1 is CLOSED** — Adaptive-Liquidity/floks-pc#21 (`61c9747`). Live remote Grok Bot over authenticated HTTPS + paid Runloop Agent Computer (CDP AX + fs) + this-run destroy.  
 **L2 is CLOSED** — Adaptive-Liquidity/floks-pc#22 (`7a3402d`). Loopback Live Node Console.  
 **L3 is CLOSED** — Adaptive-Liquidity/floks-pc#23 (`d118746`). Private-beta invite cap, idle auto-shutdown, cost warning. Usable private beta.  
-**L4 is optional insurance** — Adaptive-Liquidity/floks-pc#24 (open; merge only if the owner says merge). Provider workspace checkpoints / recovery. **Not** a required pipeline blocker.
+**L4 is optional insurance** — Adaptive-Liquidity/floks-pc#24 squash-merged as `35b5e71`. Provider workspace checkpoints / recovery. **Not** a required pipeline blocker.
 
 Product language: `docs/computers/agent-computer-cloud.md`.  
 Runloop Devbox is **provider v1**, not the product name.
@@ -129,7 +129,7 @@ Do **not** build L7 here: no billing ledger, no worker queue, no OpenTelemetry p
 
 **Purpose:** Agent Computers survive real use. Maps former Phase 8 (C8). **Provider workspace snapshots** (pause/wake/restore of guest disk), not control-plane ComputerRecord/pair/capability persistence — that shipped in L1/L3.
 
-**Status:** OPEN on PR #24 — merge-ready if the owner says merge. Optional insurance, **not** a private-beta blocker. Do not start L5+ after merge by default.
+**Status:** CLOSED / PASSED (2026-08-27). Optional insurance, **not** a private-beta blocker. Evidence: Adaptive-Liquidity/floks-pc#24 squash `35b5e71`.
 
 Includes: provider-native snapshots, wake/pause/resume polish, failed-boot recovery, stale-machine cleanup, restore runbook, better errors, retry-safe observe.
 
@@ -153,7 +153,18 @@ Includes: provider-native snapshots, wake/pause/resume polish, failed-boot recov
 
 **Purpose:** Structured clicks from real CDP/accessibility bounds. Never guessed clicks. Offscreen/subpixel fail-closed. Optional human approval for risky clicks. No FakeProvider proof.
 
+**Status:** OPEN — owner-requested. Private beta already works without this; L5 is the join hook (the bot can use the page, not only see it).
+
+**Must include:**
+- `ComputerService.act` rewrites `click_element` → integer `click_coordinates` from the last `observe({ include_accessibility: true })` AX cache (15s).
+- Missing cache, unknown id, missing box model, non-integer mapping, and offscreen targets **fail closed**. No guessed clicks.
+- Provider never receives `elementId`. Runloop `validateAction("click_element")` stays fail-closed as defense in depth.
+- `computer_observe({ include_screenshot: true })` returns an MCP image content block so the human sees the computer. Pixel bytes are not dumped into the text JSON.
+- Exactly eight MCP tools. FakeProvider trees/1×1 screenshots are unpaid protocol coverage, not live proof.
+
 **Gate:** Bot can click real page elements through verified CDP mapping; bad mappings fail closed.
+
+**Non-goals:** human approval UI, takeover/VNC, extra MCP tools, FakeProvider as product proof.
 
 ---
 

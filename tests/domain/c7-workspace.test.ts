@@ -189,7 +189,7 @@ describe("C7 Fake per-machine desktop", () => {
     });
     assert.equal(clicked.ok, false);
     assert.equal(clicked.results[0]?.success, false);
-    assert.match(String(clicked.results[0]?.error), /unsupported/i);
+    assert.match(String(clicked.results[0]?.error), /fresh AX|unsupported/i);
   });
 
   it("does not delete a file when move aliases collapse to the same path", async () => {

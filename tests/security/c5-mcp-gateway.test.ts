@@ -398,6 +398,33 @@ describe("C5 MCP gateway", () => {
     assert.equal("accessibility_summary" in body, false);
     assert.equal("screenshot_base64" in body, false);
     assert.equal(typeof body.screen_width, "number");
+    const content = (res.result as { content: Array<{ type: string }> }).content;
+    assert.equal(content.some((c) => c.type === "image"), false);
+  });
+
+  it("observe screenshot is an MCP image, not a JSON pixel dump", async () => {
+    const noema = await pairThroughMcp("bird-shot");
+    const res = await rpc("tools/call", {
+      name: "computer_observe",
+      arguments: {
+        capability_token: noema.token,
+        computer_handle: noema.handle,
+        include_screenshot: true,
+      },
+    });
+    const result = res.result as {
+      content: Array<Record<string, unknown>>;
+      structuredContent: Record<string, unknown>;
+    };
+    const image = result.content.find((c) => c.type === "image");
+    assert.equal(image?.mimeType, "image/png");
+    assert.equal(typeof image?.data, "string");
+    const text = result.content.find((c) => c.type === "text");
+    const parsed = JSON.parse(String(text?.text)) as Record<string, unknown>;
+    assert.equal("screenshot_base64" in parsed, false);
+    assert.equal(parsed.has_screenshot, true);
+    assert.equal("screenshot_base64" in result.structuredContent, false);
+    assert.equal(result.structuredContent.has_screenshot, true);
   });
 
   it("computer_observe advertises optional include_accessibility and stays eight tools", async () => {
@@ -560,7 +587,7 @@ describe("C5 MCP gateway", () => {
       error?: string;
     }>;
     assert.equal(clickResults[0]?.success, false);
-    assert.match(String(clickResults[0]?.error), /unsupported/i);
+    assert.match(String(clickResults[0]?.error), /fresh AX/i);
 
     await rpc("tools/call", {
       name: "computer_act",

@@ -68,8 +68,8 @@ describe("L2 operator console domain", () => {
     });
     assert.equal(obs.screenWidth, 1280);
     assert.equal(obs.screenHeight, 720);
-    assert.equal(obs.hasScreenshot, false);
-    assert.equal(obs.screenshotBase64, undefined);
+    assert.equal(obs.hasScreenshot, true);
+    assert.equal(typeof obs.screenshotBase64, "string");
     assert.equal(obs.accessibility.source, "unknown");
     assert.equal(obs.accessibility.nodeCount, 0);
 

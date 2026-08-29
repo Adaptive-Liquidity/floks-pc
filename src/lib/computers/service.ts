@@ -84,6 +84,12 @@ import {
 } from "../operator/view.js";
 import { assertTransition, canTransition } from "./state.js";
 import {
+  axCacheFromObservation,
+  rewriteActSlots,
+  stitchActResults,
+  type AxClickCache,
+} from "./click-element.js";
+import {
   copyScopes,
   DEFAULT_CAPABILITY_TTL_MS,
   DEFAULT_PAIR_SCOPES,
@@ -150,6 +156,7 @@ export class ComputerService {
   private persistChain: Promise<void> = Promise.resolve();
   private operatorEvents: OperatorEvent[] = [];
   private destroyChains = new Map<string, Promise<unknown>>();
+  private axByComputer = new Map<string, AxClickCache>();
   private readonly beta: BetaPolicy;
   private readonly betaRegistry: BetaRegistry | undefined;
   private readonly now: () => number;
@@ -247,6 +254,7 @@ export class ComputerService {
     this.pairFailuresByIdentity.clear();
     this.operatorEvents = [];
     this.destroyChains.clear();
+    this.axByComputer.clear();
   }
 
   /**
@@ -584,6 +592,7 @@ export class ComputerService {
   ): Promise<Computer> {
     const computer = await this.get(computerId);
     if (computer.state === "deleted") return computer;
+    this.axByComputer.delete(computerId);
     if (!computer.providerRef) throw new DestroyProviderRefMismatch();
     if (providerRef !== computer.providerRef) {
       throw new DestroyProviderRefMismatch();
@@ -940,6 +949,11 @@ export class ComputerService {
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
     const observation = await this.provider.observe(ref, request);
+    if (request.includeAccessibility === true) {
+      const cache = axCacheFromObservation(observation, this.now());
+      if (cache) this.axByComputer.set(computer.id, cache);
+      else this.axByComputer.delete(computer.id);
+    }
     this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,
@@ -959,19 +973,39 @@ export class ComputerService {
     const { computer } = this.authorize(auth, computerId, "act");
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
-    const actResult = await this.provider.act(ref, request);
-    const failClosed = actResult.results.some(
-      (row) => row.action.type === "click_element" && !row.success,
+    const slots = rewriteActSlots(
+      request.actions,
+      this.axByComputer.get(computer.id) ?? null,
+      this.now(),
     );
+    const forwarded = slots.filter((slot) => slot.kind === "forward").map((slot) => slot.action);
+    if (forwarded.length === 0) {
+      const stitched = stitchActResults(slots, []);
+      this.recordOperatorEvent({
+        computerId: computer.id,
+        birdId: computer.birdId,
+        kind: "fail-closed",
+        operation: "click_element",
+        success: false,
+        errorCode: stitched.failCode ?? "ELEMENT_STALE",
+      });
+      return { ok: false, results: stitched.results };
+    }
+    const actResult = await this.provider.act(ref, { actions: forwarded });
+    const stitched = stitchActResults(slots, actResult.results);
+    if (actResult.results.some((row) => row.success)) {
+      this.axByComputer.delete(computer.id);
+    }
+    const ok = stitched.results.every((row) => row.success);
     this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,
-      kind: failClosed ? "fail-closed" : "browser",
-      operation: failClosed ? "click_element" : "act",
-      success: actResult.ok && !failClosed,
-      errorCode: failClosed ? "CLICK_ELEMENT_UNSUPPORTED" : null,
+      kind: stitched.failClosed ? "fail-closed" : "browser",
+      operation: stitched.failClosed ? "click_element" : "act",
+      success: ok,
+      errorCode: stitched.failClosed ? (stitched.failCode ?? "ELEMENT_STALE") : null,
     });
-    return actResult;
+    return { ok, results: stitched.results };
   }
 
   async wake(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {
@@ -1251,6 +1285,7 @@ export class ComputerService {
       ...latest,
       status: "restored",
     };
+    this.axByComputer.delete(computerId);
     this.applyTransition(await this.get(computerId), "ready");
     computer = await this.patchComputer(computerId, {
       latestCheckpoint: restoredCheckpoint,

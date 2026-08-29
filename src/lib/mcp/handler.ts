@@ -28,6 +28,7 @@ import {
   publicErrorFromUnknown,
 } from "./errors.js";
 import { silentLogger, type McpLogger } from "./log.js";
+import { screenshotImageContent, textPayloadWithoutPixels } from "./observe-content.js";
 import {
   assertHeaderAgreement,
   initializeResult,
@@ -73,6 +74,7 @@ export interface McpGatewayOptions {
 interface ToolOk {
   isError: false;
   payload: Record<string, unknown>;
+  images?: ReadonlyArray<{ data: string; mimeType: string }>;
 }
 
 interface ToolErr {
@@ -210,6 +212,9 @@ export class McpGateway {
       return toolEnvelope(true, { code: "UNKNOWN_TOOL", message: "unknown tool" });
     }
     const outcome = await this.invokeTool(name, args, ctx);
+    if (outcome.isError === false && outcome.images && outcome.images.length > 0) {
+      return toolEnvelope(false, outcome.payload, outcome.images);
+    }
     return toolEnvelope(outcome.isError, outcome.payload);
   }
 
@@ -389,13 +394,20 @@ export class McpGateway {
     if (observation.activeWindow !== undefined) {
       payload.active_window = observation.activeWindow;
     }
-    if (parsed.include_screenshot === true && observation.screenshotBase64) {
-      payload.screenshot_base64 = observation.screenshotBase64;
-    }
     if (parsed.include_accessibility === true && observation.accessibilitySummary !== undefined) {
       payload.accessibility_summary = observation.accessibilitySummary;
     }
-    return { isError: false, payload };
+    const outcome: ToolOk = { isError: false, payload };
+    if (parsed.include_screenshot === true) {
+      const image = screenshotImageContent(observation.screenshotBase64);
+      if (image) {
+        payload.has_screenshot = true;
+        outcome.images = [{ data: image.data, mimeType: image.mimeType }];
+      } else {
+        payload.has_screenshot = false;
+      }
+    }
+    return outcome;
   }
 
   private async computerAct(args: unknown): Promise<ToolOutcome> {
@@ -473,9 +485,21 @@ function toAction(item: {
   return action;
 }
 
-function toolEnvelope(isError: boolean, payload: Record<string, unknown>): Record<string, unknown> {
+function toolEnvelope(
+  isError: boolean,
+  payload: Record<string, unknown>,
+  images?: ReadonlyArray<{ data: string; mimeType: string }>,
+): Record<string, unknown> {
+  const content: Array<Record<string, unknown>> = [];
+  if (images) {
+    for (const img of images) {
+      content.push({ type: "image", data: img.data, mimeType: img.mimeType });
+    }
+  }
+  const textPayload = "screenshot_base64" in payload ? textPayloadWithoutPixels(payload) : payload;
+  content.push({ type: "text", text: JSON.stringify(textPayload) });
   return {
-    content: [{ type: "text", text: JSON.stringify(payload) }],
+    content,
     isError,
     structuredContent: payload,
   };

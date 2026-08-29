@@ -11,7 +11,7 @@ export const BETA_COST_WARNING =
   "Runloop Devboxes are billed by the provider while they exist. FLOKS does not meter or invoice (that is L7). Idle machines auto-shut after the configured TTL. Stop computers you are not using.";
 
 export const BETA_LIMITATIONS: readonly string[] = [
-  "click_element is not yet supported (fail-closed until L5).",
+  "click_element requires a fresh observe({ include_accessibility: true }) AX tree; guessed and offscreen clicks fail closed.",
   "Proxies and residential egress are not included.",
   "Production scale is not proven.",
   "No guaranteed bot-detection bypass.",

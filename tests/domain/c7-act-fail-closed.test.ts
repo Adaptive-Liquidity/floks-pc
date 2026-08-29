@@ -1,6 +1,6 @@
 /**
  * C7 PR2: Fake observe/act stay honest.
- * Safety/routing/isolation only — no fake AX, no fake clicking.
+ * Safety/routing/isolation only. Fake AX is L5 protocol coverage (`source: "fake"`), never `cdp`.
  */
 
 import { describe, it, beforeEach } from "node:test";
@@ -55,7 +55,7 @@ describe("C7 Fake observe/act fail-closed", () => {
     assert.equal(clicked.results.length, 1);
     assert.equal(clicked.results[0]?.success, false);
     assert.match(String(clicked.results[0]?.error), /click_element/i);
-    assert.match(String(clicked.results[0]?.error), /unsupported/i);
+    assert.match(String(clicked.results[0]?.error), /fresh AX|unsupported/i);
   });
 
   it("keeps open_url markers isolated and still fail-closes click_element in a mixed batch", async () => {
@@ -104,15 +104,18 @@ describe("C7 Fake observe/act fail-closed", () => {
     assertNoActionableAx(obsResearch.accessibilitySummary);
   });
 
-  it("does not fabricate actionable accessibility on observe", async () => {
+  it("does not label Fake AX as live CDP", async () => {
     const { computer, auth } = await provisionAndPair("bird-observe");
     await service.act(auth, computer.id, {
       actions: [{ type: "open_url", url: "https://example.test/" }],
     });
+    const hidden = await service.observe(auth, computer.id, {});
+    assertNoActionableAx(hidden.accessibilitySummary);
     const obs = await service.observe(auth, computer.id, {
       includeAccessibility: true,
     });
-    assertNoActionableAx(obs.accessibilitySummary);
+    const summary = obs.accessibilitySummary as { source?: string };
+    assert.notEqual(summary.source, "cdp");
   });
 
   it("fail-closes open_url without a url", async () => {
