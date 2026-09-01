@@ -6,7 +6,7 @@ This package does **not** change pairing, MCP tools, Stripe webhooks, GCP, env s
 
 ## What this is
 
-- Routes: `/`, `/join`, `/setup`, `/callback`, `/oauth/authorize`, `/legal` + existing policy pages, 404 / 5xx. This is the FLOKS product door only — not the Asentxia company homepage, not DCA Architecture/Systems/Research/Evidence pages.
+- Routes: `/`, `/join`, `/setup`, `/callback`, `/oauth/authorize`, `/legal` + existing policy pages, 404 / 5xx. FLOKS product door only. Footer may credit Asentxia Systems. No Architecture/Systems/Research/Evidence/Company routes or nav.
 - Look: Stitch product UI on live routes — ground `#131313`, neon lime `#d3fd64`, glass modules, Space Grotesk / Geist / JetBrains Mono. Not a second app, not a dumped mock folder.
 - Pay: existing Stripe Payment Links
 - Setup unauthenticated: magic-link gate. `session_id` never mints a cookie

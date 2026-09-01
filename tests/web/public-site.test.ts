@@ -91,8 +91,10 @@ describe("public site lock", () => {
 
   it("keeps locked copy and kills mock lines", () => {
     const copy = read("lib/copy.ts");
-    assert.match(copy, /Where does this Bot sit when the shared machine is full\?/);
-    assert.match(copy, /Pick a desk\./);
+    assert.match(copy, /First operational layer/);
+    assert.match(copy, /An environment that outlives the request\./);
+    assert.match(copy, /Isolated runtime\. Private files\. Browser\. Scoped tools\./);
+    assert.match(copy, /Distributed Cognitive Architecture\. Pick a desk\./);
     assert.match(copy, /Spark — \$19\/mo — 8 hours — 1 computer/);
     assert.match(copy, /Desk — \$39\/mo — 25 hours — 1 computer/);
     assert.match(copy, /Shift — \$69\/mo — 60 hours — 1 computer/);
@@ -109,13 +111,13 @@ describe("public site lock", () => {
     assert.match(copy, /Asleep and shutdown do not/);
     assert.match(copy, /Unused hours are not cash back/);
     assert.match(copy, /This page isn’t here\./);
+    assert.doesNotMatch(copy, /Where does this Bot sit when the shared machine is full\?/);
     assert.doesNotMatch(copy, /Your Bots are capable of more/);
     assert.doesNotMatch(copy, /Operating Layer for Bot Crews/i);
     assert.doesNotMatch(copy, /The Missing Operating Layer/);
-    assert.doesNotMatch(copy, /First operational layer/);
-    assert.doesNotMatch(copy, /An environment that outlives the request/);
     assert.doesNotMatch(copy, /Your Grok Bot gets its own computer\./);
     const text = surface();
+    assert.doesNotMatch(text, /Where does this Bot sit when the shared machine is full\?/);
     assert.doesNotMatch(text, /Your Bots are capable of more/);
     assert.doesNotMatch(text, /Operating Layer for Bot Crews/i);
     assert.doesNotMatch(text, /The Missing Operating Layer/);
@@ -125,13 +127,11 @@ describe("public site lock", () => {
     assert.doesNotMatch(text, /© 2024 FLOKS Agent Computer/);
     assert.doesNotMatch(text, /Agent Computer\./);
     assert.doesNotMatch(text, /Watch a Crew Work/i);
+    assert.doesNotMatch(text, /Request FLOKS access/);
+    assert.doesNotMatch(text, /private-beta application/i);
     assert.doesNotMatch(text, /font-family:\s*Inter/i);
     assert.doesNotMatch(text, /Instrument_Serif/);
     assert.doesNotMatch(text, /\bNodes\b.*\bMascots\b|\bMascots\b.*\bWorkspaces\b/);
-    assert.doesNotMatch(text, /Asentxia/);
-    assert.doesNotMatch(text, /Request FLOKS access/);
-    assert.doesNotMatch(text, /Distributed Cognitive Architecture/);
-    assert.doesNotMatch(text, /private-beta application/i);
     assert.doesNotMatch(text, /href=["']\/architecture/);
     assert.doesNotMatch(text, /href=["']\/systems/);
     assert.doesNotMatch(text, /href=["']\/research/);
@@ -141,7 +141,9 @@ describe("public site lock", () => {
     assert.match(header, /FLOKS/);
     assert.match(header, /href="\/setup"/);
     assert.doesNotMatch(header, /Architecture|Systems|Research|Evidence|Company/);
-    const footer = `${read("components/LegalFooter.tsx")}\n${read("lib/legal.ts")}`;
+    const footer = `${read("components/LegalFooter.tsx")}\n${read("lib/legal.ts")}\n${read("lib/copy.ts")}`;
+    assert.match(footer, /Asentxia Systems/);
+    assert.match(footer, /FOOTER_MARK/);
     assert.match(footer, /FOOTER_NAV/);
     assert.match(footer, /label: "Terms"/);
     assert.match(footer, /label: "Privacy"/);
