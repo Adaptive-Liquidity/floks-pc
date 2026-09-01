@@ -30,7 +30,7 @@ export default async function JoinPage({
         <Door kicker={HOME_KICKER} title={HOME_HEADLINE}>
           <p className="lede">{HOME_SUB}</p>
           <p className="lede">{HOME_LINE}</p>
-          <p className="lede">{JOIN_LINE}</p>
+          <p className="mono-line">{JOIN_LINE}</p>
           {handoff ? <p className="handoff">{handoff}</p> : null}
           <PayPills />
           <p className="lede">{HOME_TOOLS}</p>

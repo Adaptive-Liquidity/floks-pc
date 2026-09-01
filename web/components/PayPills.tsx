@@ -9,16 +9,17 @@ const HREF = {
 
 export function PayPills() {
   return (
-    <div className="pills">
+    <div className="desks">
       {PLANS.map((plan) => (
-        <a
-          key={plan.id}
-          className="pill"
-          href={HREF[plan.id]}
-          rel="noopener noreferrer"
-        >
-          {plan.line}
-        </a>
+        <article key={plan.id} className="desk-plate">
+          <p className="kicker">{plan.name}</p>
+          <p className="meta">
+            {plan.price} · {plan.hours} · 1 computer
+          </p>
+          <a className="pill" href={HREF[plan.id]} rel="noopener noreferrer">
+            {plan.line}
+          </a>
+        </article>
       ))}
     </div>
   );

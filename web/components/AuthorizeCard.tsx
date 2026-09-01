@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { OAUTH_BODY, OAUTH_TITLE } from "@/lib/copy";
+import {
+  OAUTH_ALREADY,
+  OAUTH_BODY,
+  OAUTH_ERROR,
+  OAUTH_INVALID,
+  OAUTH_LOADING,
+  OAUTH_TITLE,
+} from "@/lib/copy";
 import { CONNECTOR } from "@/lib/config";
 import type { OauthUiState } from "@/lib/types";
 
@@ -55,20 +62,18 @@ export function AuthorizeCard() {
   return (
     <section className="stage">
       <div className="card">
-        <h1 className="question" style={{ fontSize: "1.8rem" }}>
-          {OAUTH_TITLE}
-        </h1>
+        <h1 className="question">{OAUTH_TITLE}</h1>
         <p className="lede">{OAUTH_BODY}</p>
-        {state === "loading" ? <p className="note">Loading…</p> : null}
-        {state === "invalid_client" ? <p className="fail">invalid_client</p> : null}
-        {state === "already_allowed" ? <p className="note">Already allowed for this customer.</p> : null}
-        {state === "error" ? <p className="fail">{detail ?? "error"}</p> : null}
+        {state === "loading" ? <p className="note">{OAUTH_LOADING}</p> : null}
+        {state === "invalid_client" ? <p className="fail">{OAUTH_INVALID}</p> : null}
+        {state === "already_allowed" ? <p className="note">{OAUTH_ALREADY}</p> : null}
+        {state === "error" ? <p className="fail">{detail ?? OAUTH_ERROR}</p> : null}
         {state === "ready" ? (
           <form className="actions" method="post" action={CONNECTOR.authorizeUrl}>
             {Array.from(params.entries()).map(([key, value]) => (
               <input key={key} type="hidden" name={key} value={value} />
             ))}
-            <button className="btn wide" type="submit" name="allow" value="1">
+            <button className="key wide" type="submit" name="allow" value="1">
               Allow
             </button>
             <a className="ghost wide" href={cancelHref}>

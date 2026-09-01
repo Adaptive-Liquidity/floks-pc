@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useChrome } from "@/components/Chrome";
 import { PayPills } from "@/components/PayPills";
 import { CONNECTOR } from "@/lib/config";
 import {
@@ -8,21 +9,13 @@ import {
   DENY_LABEL,
   DENY_NOTE,
   DESK_COPY,
-  LOGOUT,
-  MANAGE_BILLING,
   PAST_DUE,
   PASTE_FALLBACK,
   USER_CODE_LABEL,
   WEBHOOK_LAG,
   ZERO_SEATS,
 } from "@/lib/copy";
-import {
-  approvePair,
-  denyPair,
-  logoutSetup,
-  openPortal,
-  type ActionResult,
-} from "@/lib/setup-client";
+import { approvePair, denyPair, type ActionResult } from "@/lib/setup-client";
 import type { SeatSession } from "@/lib/types";
 
 export function SetupDesk({
@@ -32,14 +25,17 @@ export function SetupDesk({
   session: SeatSession;
   preview: boolean;
 }) {
+  const { setAuthed } = useChrome();
   const [code, setCode] = useState(session.desk?.userCode ?? "");
-  const [busy, setBusy] = useState<"approve" | "deny" | "portal" | "logout" | null>(null);
+  const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  async function run(
-    kind: "approve" | "deny" | "portal" | "logout",
-    fn: () => Promise<ActionResult>,
-  ) {
+  useEffect(() => {
+    setAuthed(true);
+    return () => setAuthed(false);
+  }, [setAuthed]);
+
+  async function run(kind: "approve" | "deny", fn: () => Promise<ActionResult>) {
     if (busy) return;
     setBusy(kind);
     setMessage(null);
@@ -53,26 +49,22 @@ export function SetupDesk({
       );
       return;
     }
-    if (kind === "logout") {
-      window.location.assign("/setup");
-      return;
-    }
-    if (kind === "portal") {
-      setMessage("If the portal is ready, Stripe should open from this host.");
-      return;
-    }
     setMessage("Request sent.");
   }
 
   const desk = session.desk;
   const showPay = session.seats === 0 && session.pluginAllowed && !session.webhookPending;
+  const live = desk?.state === "running";
+  const failed = desk?.state === "failed";
+  const showPair = Boolean(desk && (desk.pendingRequest || desk.userCode));
 
   return (
-    <div className="paper column" style={{ width: "min(100%, 40rem)", margin: "0 auto" }}>
+    <div className="paper rack">
       {preview ? (
         <p className="preview-flag">Preview — not a live seat. session_id did not mint this.</p>
       ) : null}
-      <header className="module">
+      <section className="bay">
+        <p className="kicker">Desk</p>
         <div className="row">
           <strong>{session.billingEmail}</strong>
           <span className="meta">
@@ -80,29 +72,11 @@ export function SetupDesk({
             {session.periodLabel ? ` · ${session.periodLabel}` : ""}
           </span>
         </div>
-        <div className="actions">
-          <button
-            className="btn wide"
-            type="button"
-            disabled={busy !== null}
-            onClick={() => void run("portal", () => openPortal())}
-          >
-            {MANAGE_BILLING}
-          </button>
-          <button
-            className="ghost wide"
-            type="button"
-            disabled={busy !== null}
-            onClick={() => void run("logout", () => logoutSetup())}
-          >
-            {LOGOUT}
-          </button>
-        </div>
-      </header>
+      </section>
 
       {session.flockStatus === "past_due" ? (
-        <p className="banner warn">
-          {PAST_DUE} Use {MANAGE_BILLING}.
+        <p className="banner danger">
+          {PAST_DUE}
         </p>
       ) : null}
       {session.webhookPending ? <p className="banner">{WEBHOOK_LAG}</p> : null}
@@ -114,7 +88,8 @@ export function SetupDesk({
       ) : null}
 
       {desk ? (
-        <section className="module">
+        <section className={`bay${live ? " live" : ""}${failed ? " fail" : ""}`}>
+          {live ? <span className="lamp" aria-hidden="true" /> : null}
           <p className="kicker">{desk.state.replace("_", " ")}</p>
           <p>{DESK_COPY[desk.state]}</p>
           {session.hoursUsed !== null && session.hoursIncluded !== null ? (
@@ -128,10 +103,10 @@ export function SetupDesk({
               <p className="user-code">{desk.userCode}</p>
             </div>
           ) : null}
-          {desk.pendingRequest || desk.userCode ? (
+          {showPair ? (
             <div className="actions">
               <button
-                className="btn wide"
+                className="key wide"
                 type="button"
                 disabled={busy !== null || !code}
                 onClick={() => void run("approve", () => approvePair(code))}
@@ -139,7 +114,7 @@ export function SetupDesk({
                 {APPROVE_LABEL}
               </button>
               <button
-                className="ghost wide"
+                className="ghost danger wide"
                 type="button"
                 disabled={busy !== null || !code}
                 onClick={() => void run("deny", () => denyPair(code))}
@@ -163,7 +138,7 @@ export function SetupDesk({
         </section>
       ) : null}
 
-      <section className="module connector">
+      <section className="bay connector">
         <p className="kicker">Grok plugin connector</p>
         <dl>
           <dt>MCP URL</dt>

@@ -8,6 +8,7 @@ import {
   SETUP_EXPIRED,
   SETUP_INVALID,
   SETUP_JUST_PAID,
+  SETUP_PAID_CHIP,
 } from "@/lib/copy";
 import { resendMagicLink } from "@/lib/setup-client";
 import type { GateState } from "@/lib/types";
@@ -42,9 +43,10 @@ export function SetupGate({
 
   return (
     <Door title={COPY[gate]}>
+      {gate === "just_paid" ? <p className="chip">{SETUP_PAID_CHIP}</p> : null}
       {gate === "expired" ? (
         <div className="actions" style={{ marginTop: 22 }}>
-          <button className="btn wide" type="button" disabled={busy} onClick={() => void resend()}>
+          <button className="key wide" type="button" disabled={busy} onClick={() => void resend()}>
             {RESEND_LINK}
           </button>
         </div>

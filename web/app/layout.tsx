@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, JetBrains_Mono, Space_Grotesk } from "next/font/google";
+import { ChromeProvider } from "@/components/Chrome";
 import { LegalFooter } from "@/components/LegalFooter";
 import { SiteHeader } from "@/components/SiteHeader";
 import { HOME_HEADLINE, HOME_LINE, HOME_SUB } from "@/lib/copy";
@@ -43,13 +44,15 @@ export default function RootLayout({
         <a className="skip" href="#content">
           Skip to content
         </a>
-        <div className="shell">
-          <SiteHeader />
-          <main id="content" className="main">
-            {children}
-          </main>
-          <LegalFooter />
-        </div>
+        <ChromeProvider>
+          <div className="shell">
+            <SiteHeader />
+            <main id="content" className="main">
+              {children}
+            </main>
+            <LegalFooter />
+          </div>
+        </ChromeProvider>
       </body>
     </html>
   );

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { AuthorizeCard } from "@/components/AuthorizeCard";
+import { OAUTH_LOADING } from "@/lib/copy";
 
 export const metadata: Metadata = {
   title: "Allow FLOKS",
@@ -12,7 +13,7 @@ export default function AuthorizePage() {
     <Suspense
       fallback={
         <section className="flash">
-          <p>Allow FLOKS</p>
+          <p>{OAUTH_LOADING}</p>
         </section>
       }
     >

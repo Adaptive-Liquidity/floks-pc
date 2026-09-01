@@ -21,13 +21,19 @@ export const JOIN_LINE = "Give this URL to the Bot you paid for.";
 export const SETUP_COLD =
   "Open the magic link from your billing email. Typing an email is not enough.";
 
-export const SETUP_JUST_PAID =
-  "Check the billing email. The payment is in. This tab is not the login.";
+export const SETUP_PAID_CHIP = "Paid";
+
+export const SETUP_JUST_PAID = "Check the Stripe inbox.";
 
 export const SETUP_EXPIRED =
-  "That link is done. We can send another to the same billing email.";
+  "That link expired. We can send another to the same billing email.";
 
-export const SETUP_INVALID = "That link isn’t valid.";
+export const SETUP_INVALID = "This link is not valid.";
+
+export const OAUTH_LOADING = "Loading…";
+export const OAUTH_INVALID = "This client is not valid.";
+export const OAUTH_ERROR = "FLOKS could not finish that request.";
+export const OAUTH_ALREADY = "Already allowed for this customer.";
 
 export const CALLBACK_FLASH = "Signing you in…";
 
