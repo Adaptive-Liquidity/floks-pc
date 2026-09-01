@@ -21,6 +21,15 @@ function read(rel: string): string {
   return readFileSync(join(WEB, rel), "utf8");
 }
 
+function surface(): string {
+  return walk(join(WEB, "app"))
+    .concat(walk(join(WEB, "components")))
+    .concat([join(WEB, "lib/copy.ts"), join(WEB, "lib/legal.ts")])
+    .filter((path) => path.endsWith(".tsx") || path.endsWith(".ts") || path.endsWith(".css"))
+    .map((path) => readFileSync(path, "utf8"))
+    .join("\n");
+}
+
 describe("public site lock", () => {
   it("ships routed app files, not one HTML file", () => {
     const pages = [
@@ -70,41 +79,62 @@ describe("public site lock", () => {
     }
   });
 
-  it("keeps locked copy and kills live marketing lines", () => {
+  it("keeps locked copy and kills mock lines", () => {
     const copy = read("lib/copy.ts");
-    assert.match(copy, /First operational layer\./);
-    assert.match(copy, /An environment that outlives the request\./);
-    assert.match(copy, /Isolated runtime\. Private files\. Browser\. Scoped tools\./);
-    assert.match(copy, /Distributed Cognitive Architecture\. Pick a desk\./);
+    assert.match(copy, /Where does this Bot sit when the shared machine is full\?/);
+    assert.match(copy, /Pick a desk\./);
+    assert.match(copy, /Spark — \$19\/mo — 8 hours — 1 computer/);
+    assert.match(copy, /Desk — \$39\/mo — 25 hours — 1 computer/);
+    assert.match(copy, /Shift — \$69\/mo — 60 hours — 1 computer/);
+    assert.match(copy, /Same eight tools on every desk\. Renews monthly until you cancel\./);
+    assert.match(copy, /Give this URL to the Bot you paid for\./);
     assert.match(copy, /Open the magic link from your billing email/);
-    assert.match(copy, /session_id is not login/);
-    assert.match(copy, /We can send another to the same billing email/);
+    assert.match(copy, /This tab is not the login/);
+    assert.match(copy, /That link is done\. We can send another to the same billing email/);
+    assert.match(copy, /That link isn’t valid\./);
     assert.match(copy, /Signing you in/);
     assert.match(copy, /Allow FLOKS to connect this Grok Bot as this paying customer/);
-    assert.match(
-      copy,
-      /Hours billed: initializing, running, suspending, resuming/,
-    );
+    assert.match(copy, /Pairing is on \/setup/);
+    assert.match(copy, /Hours bill while the computer is initializing, running, suspending, or resuming/);
     assert.match(copy, /Asleep and shutdown do not/);
-    assert.match(copy, /Unused hours are not cash-back/);
-    assert.doesNotMatch(copy, /Where does this Bot sit when the shared machine is full\?/);
-    assert.doesNotMatch(copy, /Operating layer for bot crews/);
+    assert.match(copy, /Unused hours are not cash back/);
+    assert.match(copy, /This page isn’t here\./);
+    assert.doesNotMatch(copy, /Your Bots are capable of more/);
+    assert.doesNotMatch(copy, /Operating Layer for Bot Crews/i);
+    assert.doesNotMatch(copy, /The Missing Operating Layer/);
+    assert.doesNotMatch(copy, /First operational layer/);
+    assert.doesNotMatch(copy, /An environment that outlives the request/);
     assert.doesNotMatch(copy, /Your Grok Bot gets its own computer\./);
-    const surface = walk(join(WEB, "app"))
-      .concat(walk(join(WEB, "components")))
-      .concat([join(WEB, "lib/copy.ts")])
-      .filter((path) => path.endsWith(".tsx") || path.endsWith(".ts") || path.endsWith(".css"))
-      .map((path) => readFileSync(path, "utf8"))
-      .join("\n");
-    assert.doesNotMatch(surface, /Where does this Bot sit when the shared machine is full\?/);
-    assert.doesNotMatch(surface, /Operating layer for bot crews/);
-    assert.doesNotMatch(surface, /Your Grok Bot gets its own computer\./);
-    assert.doesNotMatch(surface, /Agent Computer\./);
-    assert.doesNotMatch(surface, /Join Waitlist/i);
-    assert.doesNotMatch(surface, /Watch a Crew Work/i);
-    assert.doesNotMatch(surface, /font-family:\s*Inter/i);
-    assert.doesNotMatch(surface, /Instrument_Serif/);
-    assert.doesNotMatch(surface, /\bNodes\b.*\bMascots\b|\bMascots\b.*\bWorkspaces\b/);
+    const text = surface();
+    assert.doesNotMatch(text, /Your Bots are capable of more/);
+    assert.doesNotMatch(text, /Operating Layer for Bot Crews/i);
+    assert.doesNotMatch(text, /The Missing Operating Layer/);
+    assert.doesNotMatch(text, /Join Waitlist/i);
+    assert.doesNotMatch(text, /manual approval/i);
+    assert.doesNotMatch(text, /experimental pairing/i);
+    assert.doesNotMatch(text, /© 2024 FLOKS Agent Computer/);
+    assert.doesNotMatch(text, /Agent Computer\./);
+    assert.doesNotMatch(text, /Watch a Crew Work/i);
+    assert.doesNotMatch(text, /font-family:\s*Inter/i);
+    assert.doesNotMatch(text, /Instrument_Serif/);
+    assert.doesNotMatch(text, /\bNodes\b.*\bMascots\b|\bMascots\b.*\bWorkspaces\b/);
+    const footer = `${read("components/LegalFooter.tsx")}\n${read("lib/legal.ts")}`;
+    assert.match(footer, /FOOTER_NAV/);
+    assert.match(footer, /label: "Terms"/);
+    assert.match(footer, /label: "Privacy"/);
+    assert.match(footer, /label: "Acceptable Use"/);
+    assert.match(footer, /label: "Refund"/);
+    assert.match(footer, /label: "Cancellation"/);
+    assert.match(footer, /label: "Data retention"/);
+    assert.match(footer, /label: "Support"/);
+    assert.doesNotMatch(read("lib/legal.ts"), /label: "Security"/);
+    assert.doesNotMatch(read("lib/legal.ts"), /label: "Status"/);
+    assert.doesNotMatch(read("components/LegalFooter.tsx"), /href="\/legal"/);
+    assert.match(read("app/layout.tsx"), /default: "FLOKS"/);
+    assert.match(read("app/not-found.tsx"), /href="\/"/);
+    assert.match(read("app/not-found.tsx"), /href="\/legal"/);
+    assert.match(read("components/AuthorizeCard.tsx"), /Allow/);
+    assert.match(read("components/AuthorizeCard.tsx"), /Cancel/);
   });
 
   it("uses Stitch product tokens on the live routes, not brown night-metal", () => {

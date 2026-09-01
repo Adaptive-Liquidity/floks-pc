@@ -55,7 +55,6 @@ export function AuthorizeCard() {
   return (
     <section className="stage">
       <div className="card">
-        <p className="kicker">OAuth</p>
         <h1 className="question" style={{ fontSize: "1.8rem" }}>
           {OAUTH_TITLE}
         </h1>

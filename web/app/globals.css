@@ -371,9 +371,10 @@ input {
   padding: 24px var(--gutter) 36px;
   background: var(--void);
   border-top: 1px solid var(--line);
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
   color: var(--muted);
 }
@@ -405,7 +406,6 @@ input {
 }
 
 .foot-copy {
-  justify-self: end;
   margin: 0;
 }
 

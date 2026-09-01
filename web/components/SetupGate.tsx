@@ -21,10 +21,9 @@ const COPY: Record<GateState, string> = {
 
 export function SetupGate({
   gate,
-  sessionId,
 }: {
   gate: GateState;
-  sessionId: string | null;
+  sessionId?: string | null;
 }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -42,13 +41,7 @@ export function SetupGate({
   }
 
   return (
-    <Door kicker="Setup" title="The door opens from mail.">
-      <p className="lede">{COPY[gate]}</p>
-      {sessionId ? (
-        <p className="note">
-          Checkout session is recorded. It does not sign you in.
-        </p>
-      ) : null}
+    <Door title={COPY[gate]}>
       {gate === "expired" ? (
         <div className="actions" style={{ marginTop: 22 }}>
           <button className="btn wide" type="button" disabled={busy} onClick={() => void resend()}>

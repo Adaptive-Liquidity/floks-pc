@@ -17,10 +17,7 @@ export function PayPills() {
           href={HREF[plan.id]}
           rel="noopener noreferrer"
         >
-          <span>
-            {plan.name} {plan.price}
-          </span>
-          <small>{plan.hours}</small>
+          {plan.line}
         </a>
       ))}
     </div>

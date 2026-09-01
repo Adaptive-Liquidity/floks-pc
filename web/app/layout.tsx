@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Geist, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import { LegalFooter } from "@/components/LegalFooter";
 import { SiteHeader } from "@/components/SiteHeader";
-import { HOME_HEADLINE, HOME_LINE, HOME_SUB } from "@/lib/copy";
+import { HOME_NEXT, HOME_QUESTION } from "@/lib/copy";
 import "./globals.css";
 
 const sans = Geist({
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
     default: "FLOKS",
     template: "%s — FLOKS",
   },
-  description: `${HOME_HEADLINE} ${HOME_SUB} ${HOME_LINE}`,
+  description: `${HOME_QUESTION} ${HOME_NEXT}`,
   robots: { index: true, follow: true },
 };
 

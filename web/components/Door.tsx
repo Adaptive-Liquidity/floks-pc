@@ -5,9 +5,9 @@ export function Door({
   title,
   children,
 }: {
-  kicker: string;
+  kicker?: string;
   title: string;
-  children: ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <section className="stage">
@@ -15,7 +15,7 @@ export function Door({
         <div className="door-interior" aria-hidden="true" />
         <span className="door-lamp" aria-hidden="true" />
         <div className="door-copy">
-          <p className="kicker kicker-badge">{kicker}</p>
+          {kicker ? <p className="kicker kicker-badge">{kicker}</p> : null}
           <h1 className="question">{title}</h1>
           {children}
         </div>

@@ -19,8 +19,7 @@ export type LegalDoc = {
   sections: Array<{ heading?: string; paragraphs?: string[]; bullets?: string[] }>;
 };
 
-export const LEGAL_NAV: Array<{ href: string; label: string }> = [
-  { href: "/legal", label: "Policies" },
+export const FOOTER_NAV: Array<{ href: string; label: string }> = [
   { href: "/legal/terms", label: "Terms" },
   { href: "/legal/privacy", label: "Privacy" },
   { href: "/legal/aup", label: "Acceptable Use" },
@@ -28,6 +27,11 @@ export const LEGAL_NAV: Array<{ href: string; label: string }> = [
   { href: "/legal/cancellation", label: "Cancellation" },
   { href: "/legal/retention", label: "Data retention" },
   { href: "/legal/support", label: "Support" },
+];
+
+export const LEGAL_NAV: Array<{ href: string; label: string }> = [
+  { href: "/legal", label: "Policies" },
+  ...FOOTER_NAV,
 ];
 
 export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {

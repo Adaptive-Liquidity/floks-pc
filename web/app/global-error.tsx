@@ -16,10 +16,10 @@ export default function GlobalError(_props: {
           </p>
           <p>
             <a href="/" style={{ color: "#d3fd64" }}>
-              Home
+              /
             </a>{" "}
             <a href="/legal" style={{ color: "#d3fd64" }}>
-              Policies
+              /legal
             </a>{" "}
             <a href={`mailto:${SUPPORT_EMAIL}`} style={{ color: "#d3fd64" }}>
               Support

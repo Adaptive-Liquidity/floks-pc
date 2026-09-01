@@ -1,31 +1,25 @@
 /** Locked public copy. Tests grep this file. Do not reintroduce killed lines. */
 
-export const HOME_KICKER = "First operational layer.";
+export const HOME_QUESTION =
+  "Where does this Bot sit when the shared machine is full?";
 
-export const HOME_HEADLINE = "An environment that outlives the request.";
+export const HOME_NEXT = "Pick a desk.";
 
-export const HOME_SUB =
-  "Isolated runtime. Private files. Browser. Scoped tools. One Bot, one computer.";
+export const HOME_TOOLS =
+  "Same eight tools on every desk. Renews monthly until you cancel.";
 
-export const HOME_LINE =
-  "FLOKS is the persistent runtime in a Distributed Cognitive Architecture. Pick a desk.";
-
-export const JOIN_HEADLINE = "Pay for this seat.";
-
-export const JOIN_SUB =
-  "Named buy URL. Same three plans. After Stripe, a magic link goes to the billing email — not a cookie from checkout.";
+export const JOIN_LINE = "Give this URL to the Bot you paid for.";
 
 export const SETUP_COLD =
   "Open the magic link from your billing email. Typing an email is not enough.";
 
 export const SETUP_JUST_PAID =
-  "Checkout received. Check the inbox for that Stripe billing email. session_id is not login.";
+  "Check the billing email. The payment is in. This tab is not the login.";
 
 export const SETUP_EXPIRED =
-  "This magic link expired. We can send another to the same billing email.";
+  "That link is done. We can send another to the same billing email.";
 
-export const SETUP_INVALID =
-  "This magic link is not valid. Open the latest mail from FLOKS, or ask support if it never arrived.";
+export const SETUP_INVALID = "That link isn’t valid.";
 
 export const CALLBACK_FLASH = "Signing you in…";
 
@@ -33,16 +27,10 @@ export const OAUTH_TITLE =
   "Allow FLOKS to connect this Grok Bot as this paying customer.";
 
 export const OAUTH_BODY =
-  "This proves who paid. It does not pick the Bot. Pair is on /setup.";
+  "This proves who paid. It does not pick the Bot. Pairing is on /setup.";
 
-export const HONESTY = {
-  hours:
-    "Hours billed: initializing, running, suspending, resuming. Asleep and shutdown do not. Unused hours are not cash-back.",
-  disk:
-    "Copy files while the computer is up. Disk is not kept after the subscription ends.",
-  cancel:
-    "Cancel in the Stripe Customer Portal from /setup. Zero hours auto-suspends. No overage invoice.",
-} as const;
+export const HONESTY =
+  "Hours bill while the computer is initializing, running, suspending, or resuming. Asleep and shutdown do not. Unused hours are not cash back. Copy files while it’s up. The disk is not kept after the subscription ends. Cancel from /setup. Zero hours auto-suspends. No overage invoice.";
 
 export const PLANS = [
   {
@@ -50,25 +38,23 @@ export const PLANS = [
     name: "Spark",
     price: "$19/mo",
     hours: "8 hours",
-    line: "Spark — $19 / month — 8 included hours — 1 isolated computer (renews monthly until you cancel)",
+    line: "Spark — $19/mo — 8 hours — 1 computer",
   },
   {
     id: "desk" as const,
     name: "Desk",
     price: "$39/mo",
     hours: "25 hours",
-    line: "Desk — $39 / month — 25 included hours — 1 isolated computer (renews monthly until you cancel)",
+    line: "Desk — $39/mo — 25 hours — 1 computer",
   },
   {
     id: "shift" as const,
     name: "Shift",
     price: "$69/mo",
     hours: "60 hours",
-    line: "Shift — $69 / month — 60 included hours — 1 isolated computer (renews monthly until you cancel)",
+    line: "Shift — $69/mo — 60 hours — 1 computer",
   },
 ] as const;
-
-export const SEAT_RULE = "One paid seat = one Bot = one computer. Same eight tools.";
 
 export const WEBHOOK_LAG =
   "Payment received. The seat appears when Stripe confirms.";
@@ -98,7 +84,7 @@ export const MANAGE_BILLING = "Manage billing";
 export const LOGOUT = "Logout";
 export const RESEND_LINK = "Send another link to the same billing email";
 
-export const ERROR_ONE_LINE = "This page is not on FLOKS.";
+export const ERROR_ONE_LINE = "This page isn’t here.";
 export const SERVER_ERROR_ONE_LINE = "FLOKS could not finish that request.";
 
 export const LEGAL_DISCLAIMER =

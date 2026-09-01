@@ -6,8 +6,8 @@ export default function NotFound() {
     <section className="one-line">
       <p>{ERROR_ONE_LINE}</p>
       <nav>
-        <a href="/">Home</a>
-        <a href="/legal">Policies</a>
+        <a href="/">/</a>
+        <a href="/legal">/legal</a>
         <a href={`mailto:${SUPPORT_EMAIL}`}>Support</a>
       </nav>
     </section>
