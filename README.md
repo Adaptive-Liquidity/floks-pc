@@ -43,6 +43,14 @@ Historical C0–C6 (scaffold → pairing → MCP → shell/fs) are **CLOSED**. `
 - `FLOK_GRAPH_MEMORY_ENABLED=false` until after Nexus core
 - Production isolation boundary is a **VM** (Runloop Devboxes → later Kata/Firecracker), never a shared-kernel container
 
+## Public site (UI only)
+
+The floks-pc.com frontend lives in `web/` (Next.js routes, layouts, CSS). It restyles the live night-metal door. It does not change pairing, MCP tools, Stripe webhooks, GCP, or the hour-meter. Production is untouched until an owner merges and deploys.
+
+```bash
+cd web && npm ci && npm run dev   # http://127.0.0.1:3173
+```
+
 ## Quick start
 
 ```bash

@@ -9,7 +9,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/domain/**/*.test.ts tests/providers/**/*.test.ts tests/security/**/*.test.ts tests/ci/**/*.test.ts",
+    "test": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/domain/**/*.test.ts tests/providers/**/*.test.ts tests/security/**/*.test.ts tests/ci/**/*.test.ts tests/web/**/*.test.ts",
+    "web:verify": "npm --prefix web run verify",
     "test:domain": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/domain/**/*.test.ts",
     "test:providers": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/providers/**/*.test.ts",
     "test:live": "node --experimental-vm-modules node_modules/tsx/dist/cli.mjs --test tests/live/**/*.test.ts",
