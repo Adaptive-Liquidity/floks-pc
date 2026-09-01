@@ -3,6 +3,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { oauthUiFromPreflight, parseAuthorizePreflightBody } from "../../web/lib/oauth.ts";
+import { callbackFinishPlan } from "../../web/lib/setup-client.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const WEB = join(ROOT, "web");
@@ -254,5 +256,59 @@ describe("public site lock", () => {
     assert.match(callback, /session_id/);
     assert.match(callback, /\/setup/);
     assert.doesNotMatch(callback, /document\.cookie/);
+    assert.doesNotMatch(callback, /setTimeout/);
+    assert.doesNotMatch(callback, /\b900\b/);
+    assert.match(callback, /await finishCallback/);
+    assert.match(callback, /callbackFinishPlan/);
+    assert.equal(callbackFinishPlan(new URLSearchParams("session_id=cs_test")).shouldPost, false);
+    assert.equal(
+      callbackFinishPlan(new URLSearchParams("session_id=cs_test")).nextHref,
+      "/setup?session_id=cs_test",
+    );
+    assert.equal(callbackFinishPlan(new URLSearchParams()).shouldPost, false);
+    assert.equal(callbackFinishPlan(new URLSearchParams()).nextHref, "/setup");
+    const magic = callbackFinishPlan(new URLSearchParams("code=abc&session_id=cs_test"));
+    assert.equal(magic.shouldPost, true);
+    assert.equal(magic.nextHref, "/setup");
+  });
+
+  it("posts Manage billing as a browser form, not fetch+follow", () => {
+    const client = read("lib/setup-client.ts");
+    const start = client.indexOf("export function openPortal");
+    assert.ok(start >= 0);
+    const rest = client.slice(start);
+    const next = rest.indexOf("\nexport ", 1);
+    const portal = next === -1 ? rest : rest.slice(0, next);
+    assert.match(portal, /createElement\("form"\)/);
+    assert.match(portal, /method = "POST"/);
+    assert.match(portal, /SETUP_ACTIONS\.portal/);
+    assert.match(portal, /form\.submit\(/);
+    assert.doesNotMatch(portal, /postForm/);
+    assert.doesNotMatch(portal, /fetch\(/);
+    assert.doesNotMatch(portal, /redirect:\s*"follow"/);
+    const header = read("components/SiteHeader.tsx");
+    assert.match(header, /openPortal\(/);
+    assert.doesNotMatch(header, /await openPortal/);
+  });
+
+  it("keeps Allow off until authorize preflight has a success shape", () => {
+    const card = read("components/AuthorizeCard.tsx");
+    assert.match(card, /oauthUiFromPreflight/);
+    assert.doesNotMatch(card, /setState\("ready"\)/);
+    assert.equal(oauthUiFromPreflight(false, null).state, "error");
+    assert.equal(oauthUiFromPreflight(false, {}).state, "error");
+    assert.equal(oauthUiFromPreflight(true, null).state, "error");
+    assert.equal(oauthUiFromPreflight(true, {}).state, "error");
+    assert.equal(oauthUiFromPreflight(true, parseAuthorizePreflightBody("not-json")).state, "error");
+    assert.equal(oauthUiFromPreflight(false, { error: "invalid_client" }).state, "invalid_client");
+    assert.equal(oauthUiFromPreflight(true, { error: "invalid_client" }).state, "invalid_client");
+    assert.equal(oauthUiFromPreflight(false, { error: "already_allowed" }).state, "already_allowed");
+    assert.equal(oauthUiFromPreflight(true, { status: "already_allowed" }).state, "already_allowed");
+    assert.equal(oauthUiFromPreflight(false, { error: "invalid_request" }).state, "error");
+    assert.equal(oauthUiFromPreflight(true, { status: "ready" }).state, "ready");
+    assert.equal(oauthUiFromPreflight(true, { status: "ok" }).state, "ready");
+    assert.equal(oauthUiFromPreflight(true, { ok: true }).state, "ready");
+    assert.equal(oauthUiFromPreflight(false, { status: "ready" }).state, "error");
+    assert.equal(oauthUiFromPreflight(true, { ok: false }).state, "error");
   });
 });

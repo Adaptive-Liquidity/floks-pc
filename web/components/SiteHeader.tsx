@@ -9,8 +9,8 @@ import { logoutSetup, openPortal } from "@/lib/setup-client";
 export function SiteHeader() {
   const { authed } = useChrome();
 
-  async function billing() {
-    await openPortal();
+  function billing() {
+    openPortal();
   }
 
   async function logout() {

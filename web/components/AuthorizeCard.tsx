@@ -11,6 +11,7 @@ import {
   OAUTH_TITLE,
 } from "@/lib/copy";
 import { CONNECTOR } from "@/lib/config";
+import { oauthUiFromPreflight, parseAuthorizePreflightBody } from "@/lib/oauth";
 import type { OauthUiState } from "@/lib/types";
 
 export function AuthorizeCard() {
@@ -31,29 +32,15 @@ export function AuthorizeCard() {
     void fetch(href, { headers: { Accept: "application/json" }, credentials: "include" })
       .then(async (res) => {
         const text = await res.text();
-        let json: { error?: string; error_description?: string; status?: string } = {};
-        try {
-          json = JSON.parse(text) as { error?: string; error_description?: string; status?: string };
-        } catch {
-          json = {};
-        }
-        if (json.status === "already_allowed" || json.error === "already_allowed") {
-          setState("already_allowed");
-          return;
-        }
-        if (json.error === "invalid_client") {
-          setState("invalid_client");
-          return;
-        }
-        if (!res.ok && json.error) {
-          setState("error");
-          setDetail(json.error_description ?? json.error);
-          return;
-        }
-        setState("ready");
+        const raw = parseAuthorizePreflightBody(text);
+        const nextState = oauthUiFromPreflight(res.ok, raw);
+        setDetail(nextState.detail);
+        setState(nextState.state);
       })
       .catch(() => {
-        setState("ready");
+        const failed = oauthUiFromPreflight(false, null);
+        setDetail(failed.detail);
+        setState(failed.state);
       });
   }, [query]);
 

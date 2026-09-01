@@ -47,8 +47,30 @@ export function logoutSetup(): Promise<ActionResult> {
   return postForm(SETUP_ACTIONS.logout, {});
 }
 
-export function openPortal(): Promise<ActionResult> {
-  return postForm(SETUP_ACTIONS.portal, {});
+/** Live /setup/portal 302s to Stripe. fetch+follow swallows Location. */
+export function openPortal(): void {
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = actionHref(SETUP_ACTIONS.portal);
+  document.body.appendChild(form);
+  form.submit();
+}
+
+export function callbackFinishPlan(params: URLSearchParams): {
+  shouldPost: boolean;
+  nextHref: string;
+} {
+  const hasMagic = [...params.keys()].some((key) => key !== "session_id");
+  if (!hasMagic) {
+    const sessionId = params.get("session_id");
+    return {
+      shouldPost: false,
+      nextHref: sessionId
+        ? `/setup?session_id=${encodeURIComponent(sessionId)}`
+        : "/setup",
+    };
+  }
+  return { shouldPost: true, nextHref: "/setup" };
 }
 
 export function finishCallback(params: URLSearchParams): Promise<ActionResult> {
