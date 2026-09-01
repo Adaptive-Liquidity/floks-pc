@@ -41,6 +41,9 @@ export function SiteHeader() {
             <a className="top-link" href="/legal">
               Policies
             </a>
+            <a className="top-cta" href="/setup">
+              Sign in
+            </a>
           </>
         )}
       </nav>
