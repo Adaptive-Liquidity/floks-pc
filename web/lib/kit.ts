@@ -1,33 +1,47 @@
-/** Kit-only marks: 8 shapes, 11 colors, two slanted black pill eyes. No mouth, no limbs, no names. */
+/** Locked kit sheet: 8 shapes, 11 named fills. Two slanted black pill eyes. No mouth, no limbs. */
 
 export const KIT_SHAPES = [
-  "cube",
   "circle",
-  "capsule",
-  "hex",
-  "diamond",
-  "squircle",
-  "trap",
-  "pent",
+  "blob",
+  "square",
+  "pill",
+  "triangle",
+  "hexagon",
+  "cloud",
+  "tear",
 ] as const;
 
 export type KitShape = (typeof KIT_SHAPES)[number];
 
+export const KIT_PALETTE = {
+  white: "#f5f5f4",
+  brown: "#6b4226",
+  red: "#d64545",
+  orange: "#e67a2e",
+  gold: "#d4a017",
+  green: "#3f9a4a",
+  teal: "#2a9d8f",
+  blue: "#3a6fd8",
+  purple: "#7a4fc9",
+  pink: "#e36b9a",
+  gray: "#7a7a7a",
+} as const;
+
 export const KIT_COLORS = [
-  "#d3fd64",
-  "#e5e2e1",
-  "#c5c9c2",
-  "#9aa09a",
-  "#6b7068",
-  "#c8cbc4",
-  "#8a8f88",
-  "#b8bbb4",
-  "#5c6158",
-  "#d4d6d0",
-  "#7a8078",
+  KIT_PALETTE.white,
+  KIT_PALETTE.brown,
+  KIT_PALETTE.red,
+  KIT_PALETTE.orange,
+  KIT_PALETTE.gold,
+  KIT_PALETTE.green,
+  KIT_PALETTE.teal,
+  KIT_PALETTE.blue,
+  KIT_PALETTE.purple,
+  KIT_PALETTE.pink,
+  KIT_PALETTE.gray,
 ] as const;
 
 export type KitColor = (typeof KIT_COLORS)[number];
 
-export const HOME_KIT = { shape: "cube" as const, color: KIT_COLORS[0] };
-export const JOIN_KIT = { shape: "capsule" as const, color: KIT_COLORS[1] };
+export const HOME_KIT = { shape: "square" as const, color: KIT_PALETTE.green };
+export const JOIN_KIT = { shape: "pill" as const, color: KIT_PALETTE.white };

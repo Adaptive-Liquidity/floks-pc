@@ -111,6 +111,8 @@ describe("public site lock", () => {
     assert.match(copy, /Asleep and shutdown do not/);
     assert.match(copy, /Unused hours are not cash back/);
     assert.match(copy, /This page isn’t here\./);
+    assert.match(copy, /Approve isn’t working\./);
+    assert.doesNotMatch(copy, /Paste a pair code/);
     assert.doesNotMatch(copy, /Where does this Bot sit when the shared machine is full\?/);
     assert.doesNotMatch(copy, /Your Bots are capable of more/);
     assert.doesNotMatch(copy, /Operating Layer for Bot Crews/i);
@@ -232,7 +234,17 @@ describe("public site lock", () => {
     const kit = read("lib/kit.ts");
     assert.match(kit, /KIT_SHAPES/);
     assert.match(kit, /KIT_COLORS/);
+    for (const shape of ["circle", "blob", "square", "pill", "triangle", "hexagon", "cloud", "tear"]) {
+      assert.match(kit, new RegExp(`"${shape}"`));
+    }
+    assert.doesNotMatch(kit, /"cube"|"capsule"|"squircle"|"diamond"|"trap"|"pent"/);
+    for (const name of ["white", "brown", "red", "orange", "gold", "green", "teal", "blue", "purple", "pink", "gray"]) {
+      assert.match(kit, new RegExp(`${name}:`));
+    }
     assert.equal((kit.match(/"#/g) ?? []).length, 11);
+    const desk = read("components/SetupDesk.tsx");
+    assert.match(desk, /<details className="fallback">/);
+    assert.ok(desk.indexOf("APPROVE_LABEL") < desk.indexOf("PASTE_FALLBACK"));
   });
 
   it("does not treat session_id as a login cookie", () => {
