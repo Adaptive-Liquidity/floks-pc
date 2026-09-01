@@ -10,7 +10,7 @@ export function LegalFooter() {
         </a>
       ))}
       <span>
-        © {SELLER}. {SUPPORT_EMAIL}
+        © {SELLER} · {SUPPORT_EMAIL}
       </span>
     </footer>
   );

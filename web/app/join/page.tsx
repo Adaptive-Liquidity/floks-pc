@@ -5,6 +5,7 @@ import { JOIN_HEADLINE, JOIN_SUB } from "@/lib/copy";
 
 export const metadata = {
   title: "Join",
+  description: "Pay for this seat. Same three plans. After Stripe, a magic link goes to the billing email.",
   robots: { index: true, follow: true },
 };
 
