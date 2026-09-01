@@ -5,6 +5,7 @@ import { LegalFooter } from "@/components/LegalFooter";
 import { SiteHeader } from "@/components/SiteHeader";
 import { HOME_HEADLINE, HOME_LINE, HOME_SUB } from "@/lib/copy";
 import "./globals.css";
+import "./authkit.css";
 
 const sans = Geist({
   subsets: ["latin"],
