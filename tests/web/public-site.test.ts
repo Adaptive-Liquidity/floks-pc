@@ -73,6 +73,16 @@ describe("public site lock", () => {
       "spark",
       "desk",
       "shift",
+      "architecture",
+      "systems",
+      "research",
+      "evidence",
+      "company",
+      "asentxia",
+      "waitlist",
+      "access",
+      "apply",
+      "dca",
     ];
     for (const name of forbidden) {
       assert.equal(existsSync(join(WEB, "app", name)), false, name);
@@ -118,6 +128,19 @@ describe("public site lock", () => {
     assert.doesNotMatch(text, /font-family:\s*Inter/i);
     assert.doesNotMatch(text, /Instrument_Serif/);
     assert.doesNotMatch(text, /\bNodes\b.*\bMascots\b|\bMascots\b.*\bWorkspaces\b/);
+    assert.doesNotMatch(text, /Asentxia/);
+    assert.doesNotMatch(text, /Request FLOKS access/);
+    assert.doesNotMatch(text, /Distributed Cognitive Architecture/);
+    assert.doesNotMatch(text, /private-beta application/i);
+    assert.doesNotMatch(text, /href=["']\/architecture/);
+    assert.doesNotMatch(text, /href=["']\/systems/);
+    assert.doesNotMatch(text, /href=["']\/research/);
+    assert.doesNotMatch(text, /href=["']\/evidence/);
+    assert.doesNotMatch(text, /href=["']\/company/);
+    const header = read("components/SiteHeader.tsx");
+    assert.match(header, /FLOKS/);
+    assert.match(header, /href="\/setup"/);
+    assert.doesNotMatch(header, /Architecture|Systems|Research|Evidence|Company/);
     const footer = `${read("components/LegalFooter.tsx")}\n${read("lib/legal.ts")}`;
     assert.match(footer, /FOOTER_NAV/);
     assert.match(footer, /label: "Terms"/);
