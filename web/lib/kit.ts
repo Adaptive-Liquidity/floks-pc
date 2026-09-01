@@ -14,9 +14,9 @@ export const KIT_SHAPES = [
 export type KitShape = (typeof KIT_SHAPES)[number];
 
 export const KIT_COLORS = [
-  "#c3f400",
+  "#d3fd64",
   "#e5e2e1",
-  "#abd600",
+  "#c5c9c2",
   "#9aa09a",
   "#6b7068",
   "#c8cbc4",

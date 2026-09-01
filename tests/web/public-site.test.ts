@@ -72,7 +72,10 @@ describe("public site lock", () => {
 
   it("keeps locked copy and kills live marketing lines", () => {
     const copy = read("lib/copy.ts");
-    assert.match(copy, /Where does this Bot sit when the shared machine is full\?/);
+    assert.match(copy, /First operational layer\./);
+    assert.match(copy, /An environment that outlives the request\./);
+    assert.match(copy, /Isolated runtime\. Private files\. Browser\. Scoped tools\./);
+    assert.match(copy, /Distributed Cognitive Architecture\. Pick a desk\./);
     assert.match(copy, /Open the magic link from your billing email/);
     assert.match(copy, /session_id is not login/);
     assert.match(copy, /We can send another to the same billing email/);
@@ -84,12 +87,17 @@ describe("public site lock", () => {
     );
     assert.match(copy, /Asleep and shutdown do not/);
     assert.match(copy, /Unused hours are not cash-back/);
+    assert.doesNotMatch(copy, /Where does this Bot sit when the shared machine is full\?/);
+    assert.doesNotMatch(copy, /Operating layer for bot crews/);
     assert.doesNotMatch(copy, /Your Grok Bot gets its own computer\./);
     const surface = walk(join(WEB, "app"))
       .concat(walk(join(WEB, "components")))
+      .concat([join(WEB, "lib/copy.ts")])
       .filter((path) => path.endsWith(".tsx") || path.endsWith(".ts") || path.endsWith(".css"))
       .map((path) => readFileSync(path, "utf8"))
       .join("\n");
+    assert.doesNotMatch(surface, /Where does this Bot sit when the shared machine is full\?/);
+    assert.doesNotMatch(surface, /Operating layer for bot crews/);
     assert.doesNotMatch(surface, /Your Grok Bot gets its own computer\./);
     assert.doesNotMatch(surface, /Agent Computer\./);
     assert.doesNotMatch(surface, /Join Waitlist/i);
@@ -102,16 +110,14 @@ describe("public site lock", () => {
   it("uses Stitch product tokens on the live routes, not brown night-metal", () => {
     const css = read("app/globals.css");
     const layout = read("app/layout.tsx");
-    assert.match(css, /#0a0a0a/);
     assert.match(css, /#131313/);
-    assert.match(css, /#c3f400/);
-    assert.match(css, /#ccff00|#abd600/);
+    assert.match(css, /#d3fd64/);
     assert.match(css, /#e5e2e1/);
     assert.match(css, /rgba\(26,\s*26,\s*26,\s*0\.6\)/);
     assert.match(css, /--r-card:\s*8px/);
     assert.match(css, /--r-pill:\s*999px/);
     assert.doesNotMatch(css, /#18120d/);
-    assert.doesNotMatch(css, /#d3fd64/);
+    assert.doesNotMatch(css, /#c3f400/);
     assert.doesNotMatch(css, /#f4efe6/);
     assert.match(layout, /Geist/);
     assert.match(layout, /Space_Grotesk/);

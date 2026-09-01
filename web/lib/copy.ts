@@ -1,12 +1,14 @@
 /** Locked public copy. Tests grep this file. Do not reintroduce killed lines. */
 
-export const HOME_QUESTION =
-  "Where does this Bot sit when the shared machine is full?";
+export const HOME_KICKER = "First operational layer.";
 
-export const HOME_KICKER = "Operating layer for bot crews";
+export const HOME_HEADLINE = "An environment that outlives the request.";
 
 export const HOME_SUB =
-  "Work stays in Grok. This site is pay, connect, status, revoke.";
+  "Isolated runtime. Private files. Browser. Scoped tools. One Bot, one computer.";
+
+export const HOME_LINE =
+  "FLOKS is the persistent runtime in a Distributed Cognitive Architecture. Pick a desk.";
 
 export const JOIN_HEADLINE = "Pay for this seat.";
 
