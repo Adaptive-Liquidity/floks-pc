@@ -14,17 +14,17 @@ export const KIT_SHAPES = [
 export type KitShape = (typeof KIT_SHAPES)[number];
 
 export const KIT_COLORS = [
-  "#d3fd64",
-  "#f4efe6",
-  "#c4b8a8",
-  "#8f9a7a",
-  "#6e7f8a",
-  "#d8c07a",
-  "#9aa8b0",
-  "#e6d3b0",
-  "#7d8c6a",
-  "#b8c4c0",
-  "#5c6b58",
+  "#c3f400",
+  "#e5e2e1",
+  "#abd600",
+  "#9aa09a",
+  "#6b7068",
+  "#c8cbc4",
+  "#8a8f88",
+  "#b8bbb4",
+  "#5c6158",
+  "#d4d6d0",
+  "#7a8078",
 ] as const;
 
 export type KitColor = (typeof KIT_COLORS)[number];

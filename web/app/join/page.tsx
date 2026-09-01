@@ -1,4 +1,5 @@
 import { HonestyStrip } from "@/components/HonestyStrip";
+import { Door } from "@/components/Door";
 import { KitMark } from "@/components/KitMark";
 import { PayPills } from "@/components/PayPills";
 import { JOIN_HEADLINE, JOIN_SUB } from "@/lib/copy";
@@ -18,14 +19,14 @@ export default async function JoinPage({
   const handoff = typeof query.handoff === "string" ? query.handoff.trim() : "";
   return (
     <>
-      <section className="paper column" style={{ margin: "0 auto", position: "relative" }}>
-        <p className="kicker">Named buy URL</p>
-        <h1 className="question">{JOIN_HEADLINE}</h1>
-        <p className="lede">{JOIN_SUB}</p>
-        {handoff ? <p className="handoff">{handoff}</p> : null}
-        <PayPills />
+      <div style={{ position: "relative" }}>
+        <Door kicker="Named buy URL" title={JOIN_HEADLINE}>
+          <p className="lede">{JOIN_SUB}</p>
+          {handoff ? <p className="handoff">{handoff}</p> : null}
+          <PayPills />
+        </Door>
         <KitMark placement="join" />
-      </section>
+      </div>
       <HonestyStrip />
     </>
   );

@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import { Instrument_Serif, JetBrains_Mono, Space_Grotesk } from "next/font/google";
+import { Geist, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import { LegalFooter } from "@/components/LegalFooter";
 import { SiteHeader } from "@/components/SiteHeader";
 import { HOME_QUESTION, HOME_SUB } from "@/lib/copy";
 import "./globals.css";
 
-const sans = Space_Grotesk({
+const sans = Geist({
   subsets: ["latin"],
   variable: "--font-sans",
   display: "swap",
@@ -17,9 +17,8 @@ const mono = JetBrains_Mono({
   display: "swap",
 });
 
-const display = Instrument_Serif({
+const display = Space_Grotesk({
   subsets: ["latin"],
-  weight: "400",
   variable: "--font-display",
   display: "swap",
 });

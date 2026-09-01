@@ -12,10 +12,13 @@ export function Door({
   return (
     <section className="stage">
       <div className="door">
+        <div className="door-interior" aria-hidden="true" />
         <span className="door-lamp" aria-hidden="true" />
-        <p className="kicker">{kicker}</p>
-        <h1 className="question">{title}</h1>
-        {children}
+        <div className="door-copy">
+          <p className="kicker kicker-badge">{kicker}</p>
+          <h1 className="question">{title}</h1>
+          {children}
+        </div>
       </div>
     </section>
   );

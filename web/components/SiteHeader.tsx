@@ -11,7 +11,7 @@ export function SiteHeader() {
         FLOKS
       </Link>
       <Link
-        className="top-link"
+        className="top-cta"
         href="/setup"
         aria-current={path === "/setup" || path.startsWith("/setup/") ? "page" : undefined}
       >

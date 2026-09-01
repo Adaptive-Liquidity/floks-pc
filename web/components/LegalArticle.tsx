@@ -4,7 +4,7 @@ import { LEGAL_DOCS, LEGAL_NAV, type LegalSlug } from "@/lib/legal";
 export function LegalArticle({ slug }: { slug: LegalSlug }) {
   const doc = LEGAL_DOCS[slug];
   return (
-    <article className="paper">
+    <article className="paper legal-sheet">
       <h1>{doc.headline}</h1>
       {doc.sections.map((section, index) => (
         <section key={`${doc.slug}-${index}`}>

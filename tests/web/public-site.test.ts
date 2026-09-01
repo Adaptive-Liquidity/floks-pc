@@ -93,7 +93,32 @@ describe("public site lock", () => {
     assert.doesNotMatch(surface, /Your Grok Bot gets its own computer\./);
     assert.doesNotMatch(surface, /Agent Computer\./);
     assert.doesNotMatch(surface, /Join Waitlist/i);
+    assert.doesNotMatch(surface, /Watch a Crew Work/i);
     assert.doesNotMatch(surface, /font-family:\s*Inter/i);
+    assert.doesNotMatch(surface, /Instrument_Serif/);
+    assert.doesNotMatch(surface, /\bNodes\b.*\bMascots\b|\bMascots\b.*\bWorkspaces\b/);
+  });
+
+  it("uses Stitch product tokens on the live routes, not brown night-metal", () => {
+    const css = read("app/globals.css");
+    const layout = read("app/layout.tsx");
+    assert.match(css, /#0a0a0a/);
+    assert.match(css, /#131313/);
+    assert.match(css, /#c3f400/);
+    assert.match(css, /#ccff00|#abd600/);
+    assert.match(css, /#e5e2e1/);
+    assert.match(css, /rgba\(26,\s*26,\s*26,\s*0\.6\)/);
+    assert.match(css, /--r-card:\s*8px/);
+    assert.match(css, /--r-pill:\s*999px/);
+    assert.doesNotMatch(css, /#18120d/);
+    assert.doesNotMatch(css, /#d3fd64/);
+    assert.doesNotMatch(css, /#f4efe6/);
+    assert.match(layout, /Geist/);
+    assert.match(layout, /Space_Grotesk/);
+    assert.match(layout, /JetBrains_Mono/);
+    assert.doesNotMatch(layout, /Instrument_Serif/);
+    assert.equal(existsSync(join(WEB, "code.html")), false);
+    assert.equal(existsSync(join(WEB, "index.html")), false);
   });
 
   it("wires live Stripe Payment Links and connector fields", () => {
