@@ -8,6 +8,7 @@ export function CallbackFlash() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const plan = callbackFinishPlan(params);
+    // session_id-only is just-paid check-inbox, not a magic-link finish — do not POST.
     if (!plan.shouldPost) {
       window.location.replace(plan.nextHref);
       return;
