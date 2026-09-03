@@ -46,6 +46,27 @@
 
 **Out of scope:** Do not serve `designed-aistudio` or a Vite app as floks-pc.com. Do not add routes.
 
+### Step 1 complete — screen-to-route inventory
+
+Recorded from the local pack (not in this git tree). Do not add the unused screens as routes.
+
+| Designed screen | Locked route | Notes |
+|---|---|---|
+| Landing | `/` | Skin only. Pay stays the three live Stripe Payment Links. |
+| Join | `/join` | Same landing plus `JOIN_LINE`. |
+| Setup | `/setup` | Magic-link gate / desk. Never labeled Allow. |
+| Callback | `/callback` | Await `POST /setup/callback`. `session_id`-only does not POST. |
+| Authorize | `/oauth/authorize` | Fail-closed Allow. Live incomplete GET is 400 JSON. |
+| Legal | `/legal` + seven policy pages | Do not collapse into one combined legal document. |
+| Architecture, Systems, Evidence, Research, Thesis, Company, Responsibility/Security, Collaborate | unused | Do not route. |
+| React Router `NotFound` | unused | Keep Next `web/app/not-found.tsx` (“This page isn’t here.”). |
+
+Do not transplant from the pack: mock checkout, client-created cookies, simulated OAuth, fake setup state, combined legal copy, Vite/React Router handlers, pack-wide thesis navigation.
+
+Root `vite.config.ts` and `designed-aistudio` Vite config are byte-identical and reference-only. The root runtime has no Vite entry or Vite dependencies. Do not install or run either Vite app.
+
+**Branch lock for remaining steps:** `feat/c6-shell-files` has no `web/app`. Later steps must run on a branch that already has the Next door (current `origin/main` after PR #27, commit `08438f5`, or a feature branch created from that). Inspect `web/` on that ref; do not recreate `web/` on C6.
+
 ---
 
 ## Step 2 — Port visual tokens into the existing Next door
