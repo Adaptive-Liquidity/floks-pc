@@ -685,6 +685,32 @@ export class ComputerService {
     return { id: record.id, code: material.code, expiresAt: material.expiresAt };
   }
 
+  /** Digest-only pair rows for a computer. Never includes the raw code. */
+  listPairCodes(computerId: string): ComputerPairCode[] {
+    return [...this.pairCodes.values()]
+      .filter((rec) => rec.computerId === computerId)
+      .map((rec) => ({ ...rec }));
+  }
+
+  /**
+   * Owner/control-plane: burn unused pair codes for a computer.
+   * Lost key → revoke and mint another. Does not revoke already-redeemed capabilities.
+   */
+  async revokeUnusedPairCodes(computerId: string): Promise<number> {
+    await this.get(computerId);
+    this.sweepPairState();
+    const now = new Date();
+    let burned = 0;
+    for (const [id, rec] of this.pairCodes) {
+      if (rec.computerId === computerId && rec.usedAt === null) {
+        this.pairCodes.set(id, { ...rec, usedAt: now });
+        burned += 1;
+      }
+    }
+    if (burned > 0) await this.persist();
+    return burned;
+  }
+
   /**
    * Redeem a pair code. Shared MCP auth may be attached (C5 will have it) but
    * does not authorize issuance and is not a C4 rate-limit key — the one-time
@@ -1443,6 +1469,10 @@ export class ComputerService {
     if (this.operatorEvents.length > OPERATOR_EVENT_CAP) {
       this.operatorEvents.splice(0, this.operatorEvents.length - OPERATOR_EVENT_CAP);
     }
+  }
+
+  pairStatus(computerId: string): OperatorPairStatus {
+    return this.pairStatusFor(computerId);
   }
 
   private pairStatusFor(computerId: string): OperatorPairStatus {
