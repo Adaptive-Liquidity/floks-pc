@@ -1,15 +1,7 @@
 import { HonestyStrip } from "@/components/HonestyStrip";
-import { Door } from "@/components/Door";
 import { KitMark } from "@/components/KitMark";
 import { PayPills } from "@/components/PayPills";
-import {
-  HOME_HEADLINE,
-  HOME_KICKER,
-  HOME_LINE,
-  HOME_SUB,
-  HOME_TOOLS,
-  JOIN_LINE,
-} from "@/lib/copy";
+import { JOIN_HOURS, JOIN_LINE, JOIN_SUB, JOIN_TITLE } from "@/lib/copy";
 
 export const metadata = {
   title: "Join",
@@ -27,14 +19,18 @@ export default async function JoinPage({
   return (
     <>
       <div style={{ position: "relative" }}>
-        <Door kicker={HOME_KICKER} title={HOME_HEADLINE}>
-          <p className="lede">{HOME_SUB}</p>
-          <p className="lede">{HOME_LINE}</p>
+        <section className="marketing">
+          <p className="kicker">Pay first</p>
+          <h1>{JOIN_TITLE}</h1>
+          <p className="lede">{JOIN_SUB}</p>
+          <p className="lede">{JOIN_HOURS}</p>
           <p className="mono-line">{JOIN_LINE}</p>
           {handoff ? <p className="handoff">{handoff}</p> : null}
           <PayPills />
-          <p className="lede">{HOME_TOOLS}</p>
-        </Door>
+          <p className="lede">
+            Already paid? <a href="/login">Sign in</a>.
+          </p>
+        </section>
         <KitMark placement="join" />
       </div>
       <HonestyStrip />

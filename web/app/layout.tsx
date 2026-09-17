@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, JetBrains_Mono, Space_Grotesk } from "next/font/google";
+import { Hanken_Grotesk, JetBrains_Mono, Manrope } from "next/font/google";
 import { ChromeProvider } from "@/components/Chrome";
 import { LegalFooter } from "@/components/LegalFooter";
 import { SiteHeader } from "@/components/SiteHeader";
 import { HOME_HEADLINE, HOME_LINE, HOME_SUB } from "@/lib/copy";
 import "./globals.css";
 
-const sans = Geist({
+const sans = Manrope({
   subsets: ["latin"],
   variable: "--font-sans",
   display: "swap",
@@ -18,7 +18,7 @@ const mono = JetBrains_Mono({
   display: "swap",
 });
 
-const display = Space_Grotesk({
+const display = Hanken_Grotesk({
   subsets: ["latin"],
   variable: "--font-display",
   display: "swap",

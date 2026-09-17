@@ -15,6 +15,11 @@ export function LegalFooter() {
         {SELLER} · {SUPPORT_EMAIL}
       </p>
       <nav className="foot-nav" aria-label="Policies">
+        <a href="/product">Product</a>
+        <a href="/how">How</a>
+        <a href="/now">Now</a>
+        <a href="/faq">FAQ</a>
+        <a href="/join">Buy</a>
         {FOOTER_NAV.map((item) => (
           <a key={item.href} href={item.href}>
             {item.label}

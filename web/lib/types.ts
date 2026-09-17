@@ -25,6 +25,17 @@ export type OauthUiState = (typeof OAUTH_STATES)[number];
 
 export type PlanId = "spark" | "desk" | "shift";
 
+export type DeskRecord = {
+  id: string;
+  state: DeskState;
+  userCode: string | null;
+  pendingRequest: boolean;
+  pairKeyId: string | null;
+  hoursUsed: number | null;
+  hoursIncluded: number | null;
+  computerId: string | null;
+};
+
 export type SeatSession = {
   authenticated: true;
   billingEmail: string;
@@ -34,14 +45,12 @@ export type SeatSession = {
   seats: number;
   pluginAllowed: boolean;
   webhookPending: boolean;
-  desk: {
-    state: DeskState;
-    userCode: string | null;
-    pendingRequest: boolean;
-  } | null;
+  desk: DeskRecord | null;
+  desks: DeskRecord[];
   hoursUsed: number | null;
   hoursIncluded: number | null;
   portalReady: boolean;
+  revealedPairCode: string | null;
 };
 
 export type SetupView =

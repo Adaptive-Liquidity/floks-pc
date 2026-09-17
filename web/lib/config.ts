@@ -25,21 +25,28 @@ export const CONNECTOR = {
 export const SUPPORT_EMAIL = "support@floks-pc.com";
 export const SELLER = "Adaptive Liquidity, Inc.";
 
-/** Existing live action routes. UI posts here. Protocol stays on GCP. */
+/** Same-origin setup actions. Do not POST to a foreign live host. */
 export const SETUP_ACTIONS = {
-  approve: "/setup/approve",
-  deny: "/setup/deny",
-  pair: "/setup/pair",
-  portal: "/setup/portal",
-  billing: "/setup/billing",
-  logout: "/setup/logout",
-  resend: "/setup/resend",
-  connector: "/setup/connector",
-  callback: "/setup/callback",
+  approve: "/api/setup/approve",
+  deny: "/api/setup/deny",
+  pair: "/api/setup/pair",
+  revoke: "/api/setup/revoke",
+  portal: "/api/setup/portal",
+  billing: "/api/setup/portal",
+  logout: "/logout",
+  resend: "/login",
+  connector: "/setup",
+  callback: "/callback",
 } as const;
 
 export function actionHref(path: string): string {
-  if (typeof window === "undefined") return `${SITE_ORIGIN}${path}`;
-  if (window.location.origin === SITE_ORIGIN) return path;
-  return `${SITE_ORIGIN}${path}`;
+  return path;
 }
+
+export const COOKIE_NAME = "wos-session";
+
+export const PLAN_HOURS = {
+  spark: 8,
+  desk: 25,
+  shift: 60,
+} as const;
