@@ -69,7 +69,7 @@ export default function HomePage() {
             <a className="btn" href="/join">
               Pick a desk
             </a>
-            <a className="ghost" href="/login">
+            <a className="ghost wide" href="/login">
               Sign in
             </a>
           </div>

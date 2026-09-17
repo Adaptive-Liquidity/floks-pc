@@ -322,8 +322,8 @@ input {
   border: 0;
   border-radius: var(--r-key);
   background: transparent;
-  box-shadow: inset 0 0 0 1px var(--line);
-  color: var(--paper);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--ice);
   text-decoration: none;
   cursor: pointer;
 }
@@ -719,6 +719,10 @@ input.code {
   line-height: 1.05;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.hero-copy .ghost {
+  border-radius: var(--r-pill);
 }
 
 .hero-accent {
