@@ -10,6 +10,7 @@ Next.js App Router for the public FLOKS site: marketing, pay, AuthKit sign-in, /
 - Auth: WorkOS AuthKit Magic Auth. Sealed httpOnly `wos-session`. Never invent a cookie from `session_id`.
 - Seats: Stripe webhook or verified checkout email, bound to the signed-in WorkOS email. No seat → `/join`.
 - Desks: `ComputerService` + FakeProvider by default. Runloop only when documented env is set. See `LIVE.md`.
+- Vercel Root Directory is `web`. Domain deps (`zod`, `@runloop/api-client`) live in this package so `../src` resolves without a root `npm install`.
 - `/setup?preview=` is ignored in production. `FLOK_WEB_PREVIEW=1` is dev-only.
 
 ## Run

@@ -14,14 +14,20 @@ const nextConfig: NextConfig = {
     externalDir: true,
   },
   webpack: (config) => {
+    const webModules = path.join(here, "node_modules");
+    const rootModules = path.join(repoRoot, "node_modules");
     config.resolve.extensionAlias = {
       ...(config.resolve.extensionAlias ?? {}),
       ".js": [".ts", ".tsx", ".js", ".jsx"],
     };
-    config.resolve.modules = [
-      ...(config.resolve.modules ?? ["node_modules"]),
-      path.join(repoRoot, "node_modules"),
-    ];
+    // Vercel Root Directory = web: only web/node_modules exists. Local
+    // web:verify can still see the repo-root install.
+    config.resolve.modules = [webModules, rootModules, ...(config.resolve.modules ?? ["node_modules"])];
+    config.resolve.alias = {
+      ...(config.resolve.alias ?? {}),
+      zod: path.join(webModules, "zod"),
+      "@runloop/api-client": path.join(webModules, "@runloop/api-client"),
+    };
     return config;
   },
 };

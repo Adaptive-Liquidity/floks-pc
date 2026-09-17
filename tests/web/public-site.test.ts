@@ -220,6 +220,10 @@ describe("public site lock", () => {
     assert.match(read(".env.example"), /STRIPE_SECRET_KEY=/);
     assert.match(read(".env.example"), /RUNLOOP_API_KEY=/);
     assert.doesNotMatch(read(".env.example"), /sk_live|sk_test|password_[A-Za-z0-9]{8,}/);
+    const pkg = JSON.parse(read("package.json")) as { dependencies?: Record<string, string> };
+    assert.equal(pkg.dependencies?.zod, "^4.4.0");
+    assert.equal(pkg.dependencies?.["@runloop/api-client"], "1.28.0");
+    assert.match(read("next.config.ts"), /path\.join\(webModules, "zod"\)/);
   });
 
   it("keeps AUP at /legal/aup and legal substance", () => {

@@ -14,12 +14,14 @@
     "verify": "npm run typecheck && npm run build"
   },
   "dependencies": {
+    "@runloop/api-client": "1.28.0",
     "@workos-inc/node": "^7.71.0",
     "next": "^15.5.2",
     "pg": "^8.16.3",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "stripe": "^18.5.0"
+    "stripe": "^18.5.0",
+    "zod": "^4.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.16.5",

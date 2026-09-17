@@ -2,6 +2,8 @@
 
 This Next app can run as a look-only preview with env stubs. Real login → desk needs secrets that this PR does not set.
 
+Vercel project Root Directory is `web`. `web/package.json` therefore lists `zod` and `@runloop/api-client` (same versions as the repo root) so `../src/lib/computers` compiles when only the web install exists.
+
 ## What the code does
 
 1. `/login` redirects to WorkOS AuthKit Magic Auth (6-digit email code).
