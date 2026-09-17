@@ -3,24 +3,25 @@ import { Hanken_Grotesk, JetBrains_Mono, Manrope } from "next/font/google";
 import { ChromeProvider } from "@/components/Chrome";
 import { LegalFooter } from "@/components/LegalFooter";
 import { SiteHeader } from "@/components/SiteHeader";
+import { Starfield } from "@/components/studio/Starfield";
 import { HOME_HEADLINE, HOME_LINE, HOME_SUB } from "@/lib/copy";
 import "./globals.css";
 
 const sans = Manrope({
   subsets: ["latin"],
-  variable: "--font-sans",
+  variable: "--font-manrope",
   display: "swap",
 });
 
 const mono = JetBrains_Mono({
   subsets: ["latin"],
-  variable: "--font-mono",
+  variable: "--font-jetbrains",
   display: "swap",
 });
 
 const display = Hanken_Grotesk({
   subsets: ["latin"],
-  variable: "--font-display",
+  variable: "--font-hanken",
   display: "swap",
 });
 
@@ -46,6 +47,7 @@ export default function RootLayout({
         </a>
         <ChromeProvider>
           <div className="shell">
+            <Starfield />
             <SiteHeader />
             <main id="content" className="main">
               {children}

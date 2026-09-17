@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   outputFileTracingRoot: repoRoot,
   serverExternalPackages: ["@runloop/api-client", "pg", "@workos-inc/node", "stripe"],
+  transpilePackages: ["three", "@react-three/fiber", "@react-three/drei", "@react-three/postprocessing"],
   experimental: {
     externalDir: true,
   },

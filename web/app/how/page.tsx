@@ -6,10 +6,10 @@ export const metadata = { title: "How" };
 export default function HowPage() {
   return (
     <MarketingPage eyebrow={HOW_EYEBROW} title={HOW_TITLE}>
-      <div className="cap-grid" style={{ gridTemplateColumns: "1fr" }}>
+      <div className="space-y-8">
         {HOW_STEPS.map((step) => (
-          <section key={step.n} className="step-card">
-            <p className="kicker">
+          <section key={step.n} className="glass-card p-6 rounded-2xl border border-white/5 space-y-2">
+            <p className="font-label-mono text-[11px] text-secondary uppercase tracking-widest">
               {step.n} · {step.title}
             </p>
             <p>{step.body}</p>

@@ -7,9 +7,9 @@ export default function NowPage() {
   return (
     <MarketingPage eyebrow={NOW_EYEBROW} title={NOW_TITLE}>
       <p>This is what you can buy and run today. No roadmap theater.</p>
-      <section>
-        <h2>Available now</h2>
-        <ul>
+      <section className="space-y-3">
+        <h2 className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase">Available now</h2>
+        <ul className="list-disc pl-5 space-y-2">
           <li>Spark · $19/mo · 8h · Desk · $39/mo · 25h · Shift · $69/mo · 60h</li>
           <li>One Bot, one isolated Linux VM</li>
           <li>Live Chrome observe (screenshots + accessibility tree)</li>
@@ -21,9 +21,9 @@ export default function NowPage() {
           <li>Cancel and billing portal from /setup</li>
         </ul>
       </section>
-      <section>
-        <h2>Not for sale / not live yet</h2>
-        <ul>
+      <section className="space-y-3">
+        <h2 className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase">Not for sale / not live yet</h2>
+        <ul className="list-disc pl-5 space-y-2">
           <li>Crew and Always plans (hidden)</li>
           <li>Safer click (stays fail-closed)</li>
           <li>Backup or snapshot product (copy files while it’s up; disk not kept after cancel)</li>
