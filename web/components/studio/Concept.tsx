@@ -42,16 +42,13 @@ export function Concept() {
           viewport={{ once: true, margin: "-100px" }}
           transition={{ duration: 1, ease: [0.16, 1, 0.3, 1], delay: 0.4 }}
         >
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(227,242,253,0.12)_0%,transparent_70%)] opacity-80 group-hover:opacity-100 transition-opacity duration-700" />
-          <motion.div
+          <motion.img
+            src="/concept-boundary.png"
+            alt="One Bot. One computer. One clear boundary."
             animate={{ y: [-10, 10, -10] }}
             transition={{ repeat: Infinity, duration: 8, ease: "easeInOut" }}
-            className="relative z-10 w-48 h-48 rounded-3xl border border-white/20 bg-white/5 shadow-[0_0_80px_rgba(227,242,253,0.18)]"
-          >
-            <div className="absolute inset-6 rounded-2xl border border-secondary/40 bg-[#050505]/70" />
-            <div className="absolute inset-x-10 top-1/2 h-px bg-gradient-to-r from-transparent via-secondary to-transparent" />
-            <div className="absolute inset-y-10 left-1/2 w-px bg-gradient-to-b from-transparent via-white/40 to-transparent" />
-          </motion.div>
+            className="relative z-10 w-[92%] h-auto max-h-[360px] object-contain"
+          />
         </motion.div>
       </div>
     </section>

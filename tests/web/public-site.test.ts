@@ -160,6 +160,10 @@ describe("public site lock", () => {
     assert.match(read("app/page.tsx"), /HeroHardwareNode|studio\/Hero/);
     assert.match(read("app/layout.tsx"), /Starfield/);
     assert.match(read("components/studio/HeroHardwareNode.tsx"), /DESK_01/);
+    assert.equal(existsSync(join(WEB, "public/concept-boundary.png")), true);
+    assert.match(read("components/studio/Concept.tsx"), /src="\/concept-boundary\.png"/);
+    assert.match(read("components/studio/Concept.tsx"), /motion\.img/);
+    assert.doesNotMatch(read("components/studio/Concept.tsx"), /inset-x-10 top-1\/2/);
     assert.match(read("components/studio/HeroHardwareNode.tsx"), /GROK MCP SUBSYSTEM/);
     assert.match(read("app/join/page.tsx"), /PlanGrid/);
     assert.match(read("components/studio/PlanGrid.tsx"), /Most Popular/);
