@@ -1,4 +1,5 @@
-import type { DeskState, GateState, SeatSession, SetupView } from "./types";
+import { previewEnabled } from "./preview";
+import type { DeskRecord, DeskState, GateState, SeatSession, SetupView } from "./types";
 import { DESK_STATES } from "./types";
 
 function firstQuery(
@@ -44,9 +45,24 @@ const PREVIEW_ALIASES: Record<string, DeskState | "past_due" | "zero_seats" | "w
   webhook: "webhook",
 };
 
+function deskRecord(state: DeskState, pending: boolean): DeskRecord {
+  return {
+    id: "preview-desk",
+    state,
+    userCode: pending ? "ABCD-EFGH" : null,
+    pendingRequest: pending,
+    pairKeyId: pending ? "preview-pair" : null,
+    hoursUsed: 4,
+    hoursIncluded: 25,
+    computerId: "preview-computer",
+  };
+}
+
+/** Dev-only fixture. Public UI must call this only when previewEnabled(). */
 export function previewSession(name: string): SeatSession | null {
   const key = PREVIEW_ALIASES[name];
   if (!key) return null;
+  const desk = deskRecord("unused", true);
   const base: SeatSession = {
     authenticated: true,
     billingEmail: "billing@example.test",
@@ -56,14 +72,12 @@ export function previewSession(name: string): SeatSession | null {
     seats: 1,
     pluginAllowed: true,
     webhookPending: false,
-    desk: {
-      state: "unused",
-      userCode: "ABCD-EFGH",
-      pendingRequest: true,
-    },
+    desk,
+    desks: [desk],
     hoursUsed: 4,
     hoursIncluded: 25,
     portalReady: true,
+    revealedPairCode: null,
   };
   if (key === "past_due") {
     return { ...base, flockStatus: "past_due" };
@@ -73,6 +87,7 @@ export function previewSession(name: string): SeatSession | null {
       ...base,
       seats: 0,
       desk: null,
+      desks: [],
       plan: null,
       periodLabel: null,
       hoursUsed: null,
@@ -84,19 +99,14 @@ export function previewSession(name: string): SeatSession | null {
       ...base,
       seats: 0,
       desk: null,
+      desks: [],
       webhookPending: true,
     };
   }
   if (isDeskState(key)) {
     const pending = key === "unused" || key === "pairing";
-    return {
-      ...base,
-      desk: {
-        state: key,
-        userCode: pending ? "ABCD-EFGH" : null,
-        pendingRequest: pending,
-      },
-    };
+    const next = deskRecord(key, pending);
+    return { ...base, desk: next, desks: [next] };
   }
   return base;
 }
@@ -118,7 +128,24 @@ function asBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
-/** Parse a live /setup JSON body if the host ever returns one. Never invent a cookie. */
+function parseDesk(raw: unknown): DeskRecord | null {
+  const deskRaw = asRecord(raw);
+  if (!deskRaw) return null;
+  const stateRaw = asString(deskRaw.state) ?? asString(deskRaw.status);
+  if (!stateRaw || !isDeskState(stateRaw)) return null;
+  return {
+    id: asString(deskRaw.id) ?? "desk",
+    state: stateRaw,
+    userCode: asString(deskRaw.userCode) ?? asString(deskRaw.user_code),
+    pendingRequest: asBoolean(deskRaw.pendingRequest) ?? asBoolean(deskRaw.pending) ?? false,
+    pairKeyId: asString(deskRaw.pairKeyId) ?? asString(deskRaw.pair_key_id),
+    hoursUsed: asNumber(deskRaw.hoursUsed) ?? asNumber(deskRaw.hours_used),
+    hoursIncluded: asNumber(deskRaw.hoursIncluded) ?? asNumber(deskRaw.hours_included),
+    computerId: asString(deskRaw.computerId) ?? asString(deskRaw.computer_id),
+  };
+}
+
+/** Parse a live /setup JSON body. Never invent a cookie. */
 export function parseSeatSession(raw: unknown): SeatSession | null {
   const obj = asRecord(raw);
   if (!obj) return null;
@@ -127,16 +154,16 @@ export function parseSeatSession(raw: unknown): SeatSession | null {
   const planRaw = asString(obj.plan);
   const plan =
     planRaw === "spark" || planRaw === "desk" || planRaw === "shift" ? planRaw : null;
-  const deskRaw = asRecord(obj.desk);
-  const stateRaw = deskRaw ? asString(deskRaw.state) ?? asString(deskRaw.status) : null;
-  const desk =
-    deskRaw && stateRaw && isDeskState(stateRaw)
-      ? {
-          state: stateRaw,
-          userCode: asString(deskRaw.userCode) ?? asString(deskRaw.user_code),
-          pendingRequest: asBoolean(deskRaw.pendingRequest) ?? asBoolean(deskRaw.pending) ?? false,
-        }
-      : null;
+  const desksRaw = obj.desks;
+  const desks: DeskRecord[] = [];
+  if (Array.isArray(desksRaw)) {
+    for (const item of desksRaw) {
+      const parsed = parseDesk(item);
+      if (parsed) desks.push(parsed);
+    }
+  }
+  const desk = parseDesk(obj.desk) ?? desks[0] ?? null;
+  if (desk && desks.length === 0) desks.push(desk);
   return {
     authenticated: true,
     billingEmail: email,
@@ -149,9 +176,11 @@ export function parseSeatSession(raw: unknown): SeatSession | null {
     pluginAllowed: asBoolean(obj.pluginAllowed) ?? asBoolean(obj.plugin_allowed) ?? false,
     webhookPending: asBoolean(obj.webhookPending) ?? asBoolean(obj.webhook_pending) ?? false,
     desk,
+    desks,
     hoursUsed: asNumber(obj.hoursUsed) ?? asNumber(obj.hours_used),
     hoursIncluded: asNumber(obj.hoursIncluded) ?? asNumber(obj.hours_included),
     portalReady: asBoolean(obj.portalReady) ?? true,
+    revealedPairCode: asString(obj.revealedPairCode) ?? asString(obj.revealed_pair_code),
   };
 }
 
@@ -162,30 +191,15 @@ export async function loadSetupView(search: {
   preview?: string | string[] | undefined;
 }): Promise<SetupView> {
   const previewName = firstQuery(search.preview);
-  if (previewName) {
+  if (previewName && previewEnabled()) {
     const session = previewSession(previewName);
     if (session) return { kind: "desk", session, preview: true };
   }
 
-  if (typeof window !== "undefined") {
-    try {
-      const res = await fetch("/setup", {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        credentials: "include",
-      });
-      if (res.ok) {
-        const contentType = res.headers.get("content-type") ?? "";
-        if (contentType.includes("application/json")) {
-          const session = parseSeatSession(await res.json());
-          if (session) return { kind: "desk", session, preview: false };
-        }
-      }
-    } catch {
-      /* same-origin session only; never mint from session_id */
-    }
-  }
-
   const { gate, sessionId } = gateFromSearch(search);
   return { kind: "gate", gate, sessionId };
+}
+
+export function queryFirst(value: string | string[] | undefined): string | null {
+  return firstQuery(value);
 }

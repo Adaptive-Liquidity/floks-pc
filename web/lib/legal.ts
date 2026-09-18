@@ -58,13 +58,13 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
       {
         paragraphs: [
           LEGAL_DISCLAIMER,
-          `Seller: ${SELLER} (the name Stripe Checkout already shows). Product: FLOKS on floks-pc.com. You buy a paid seat for one Grok Bot to use one isolated FLOKS Computer. Work stays in Grok. This site is pay, connect, status, and revoke — not a second workspace.`,
+          `Seller: ${SELLER} (the name Stripe Checkout already shows). Product: FLOKS on floks-pc.com. You buy a paid seat for one Grok Bot to use one isolated FLOKS Computer. Work stays in Grok. This site is create account, pay, setup, and status — not a second workspace.`,
         ],
       },
       {
         heading: "What you buy",
         paragraphs: [
-          "One paid seat = one Grok Bot = one isolated FLOKS Computer. Day-one plans we will sell when buy buttons are on:",
+          "One paid seat = one Grok Bot = one isolated FLOKS Computer. Day-one plans we sell:",
         ],
         bullets: [
           "Spark — $19 / month — 8 included hours — 1 computer",
@@ -92,7 +92,7 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
       {
         heading: "Pair",
         paragraphs: [
-          "A one-time pair code binds this Bot to that Computer. OAuth on the site proves the paying customer. It does not prove which Bot is calling.",
+          "A one-time pair key binds this Bot to that Computer. OAuth on the site proves the paying customer. It does not prove which Bot is calling.",
         ],
       },
       {
@@ -125,18 +125,18 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
         heading: "What we handle",
         bullets: [
           "Stripe — payment, customer, subscription, billing email. Stripe keeps its own copies.",
-          "Seat email — the Stripe billing email, used to send a magic link after pay. Typing an email on this site is not login.",
-          "Magic link — a short-lived hashed token, then an HttpOnly setup cookie. The raw token is not stored.",
-          "Mail — From FLOKS <support@floks-pc.com>. SMTP via Gmail. Envelope is support@floks-pc.com.",
-          "Runloop — the Computer runtime (disk, screenshot, process) for the seat you paid.",
-          "GCP — the floks-pc.com host and our seat ledger.",
-          "Cloudflare — HTTPS / tunnel in front of the public site and MCP, and Cloudflare Web Analytics on the public pages (beacon). We do not run Google Analytics, Facebook pixels, or session replay.",
+          "Seat email — the Stripe billing email, bound to the signed-in WorkOS user (case-insensitive). A paid seat is required; signing in does not invent one.",
+          "WorkOS AuthKit — hosted sign-in with Magic Auth. WorkOS emails the 6-digit code until a custom email domain exists. We do not email a setup URL as the login secret.",
+          "Session — an HttpOnly sealed cookie named wos-session. Expired sessions refresh or require sign-in. We never mint a session from a Stripe session_id alone.",
+          "Mail we send — From FLOKS <support@floks-pc.com> when we still send operator mail. WorkOS sends AuthKit codes from its own mailer.",
+          "Runloop — the Computer runtime (disk, screenshot, process) for the seat you paid, when live provision is enabled.",
+          "Host — this public Next app is built for Vercel. floks-pc.com has historically used Cloudflare HTTPS / tunnel and Cloudflare Web Analytics (beacon). We do not run Google Analytics, Facebook pixels, or session replay. Do not treat GCP as the current public host.",
           "18+ — FLOKS is not directed at children under 13.",
         ],
       },
       {
         paragraphs: [
-          "Pair codes and capability tokens are not sent by email. The magic-link mail includes the setup URL. Do not forward it. Pair codes are shown once on /setup; we do not put them in logs or public HTML after that reveal.",
+          "Pair codes and capability tokens are not sent by email. Pair keys are shown once on /setup; we store a hash, not the code, after that reveal.",
           "OAuth proves the customer for MCP connect. It is not Bot identity. Bot identity is the pair.",
           "We do not sell, rent, or trade personal data. Processors above run the product. See Data retention for what stays after cancel.",
         ],
@@ -213,8 +213,8 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
         paragraphs: [
           LEGAL_DISCLAIMER,
           "After cancel, we keep Stripe ids (customer, subscription, checkout, event id), the webhook event log, and the seat ledger (revoked). We keep those to prove pay, grant, and revoke. We do not keep the live Computer disk after shutdown. Shutdown ends the Computer.",
-          "We do not claim we delete Stripe’s copies, Cloudflare logs, or GCP provider logs. Those operators keep what their own products keep.",
-          "Magic-link hashes expire. Setup cookies end on logout or expiry. Pair codes are one-time; we store a hash, not the code, after reveal.",
+          "We do not claim we delete Stripe’s copies, Cloudflare logs, or Vercel logs. Those operators keep what their own products keep.",
+          "AuthKit codes expire on WorkOS’s side. Setup cookies end on logout, refresh failure, or expiry. Pair codes are one-time; we store a hash, not the code, after reveal.",
         ],
       },
     ],
@@ -234,12 +234,12 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
         bullets: [
           "the Stripe billing email",
           "what you paid (Spark / Desk / Shift) and about when",
-          "what failed (pay, magic link, pair, sleep, cancel) in plain words",
+          "what failed (pay, sign-in code, pair, sleep, cancel) in plain words",
         ],
       },
       {
         paragraphs: [
-          "Do not paste pair codes, capability tokens, magic-link URLs, cookies, or API keys. If we need a last-4 of a Computer id, we will ask.",
+          "Do not paste pair codes, capability tokens, AuthKit codes, cookies, or API keys. If we need a last-4 of a Computer id, we will ask.",
           "Billing changes: Stripe Customer Portal from /setup, not this inbox.",
         ],
       },

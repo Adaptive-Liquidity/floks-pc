@@ -2,7 +2,7 @@
   "name": "floks-pc-web",
   "private": true,
   "version": "0.0.1",
-  "description": "floks-pc.com public frontend — pay, connect, status, revoke. UI only.",
+  "description": "floks-pc.com public frontend — marketing, AuthKit sign-in, Stripe seats, /setup desks.",
   "engines": {
     "node": ">=22.12.0 <23"
   },
@@ -14,14 +14,31 @@
     "verify": "npm run typecheck && npm run build"
   },
   "dependencies": {
+    "@react-three/drei": "^10.7.8",
+    "@react-three/fiber": "^9.7.0",
+    "@react-three/postprocessing": "^3.1.1",
+    "@runloop/api-client": "1.28.0",
+    "@workos-inc/node": "^7.71.0",
+    "lucide-react": "^1.47.0",
+    "motion": "^13.4.0",
     "next": "^15.5.2",
+    "pg": "^8.16.3",
+    "postprocessing": "^6.39.5",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "react-parallax-tilt": "^1.7.343",
+    "stripe": "^18.5.0",
+    "three": "^0.186.0",
+    "zod": "^4.4.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^22.16.5",
+    "@types/pg": "^8.15.5",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
+    "@types/three": "^0.186.0",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.7.0"
   }
 }

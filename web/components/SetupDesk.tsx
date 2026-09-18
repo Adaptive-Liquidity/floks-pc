@@ -5,17 +5,28 @@ import { useChrome } from "@/components/Chrome";
 import { PayPills } from "@/components/PayPills";
 import { CONNECTOR } from "@/lib/config";
 import {
+  ACCOUNT_EMPTY,
+  ACCOUNT_HOME_LINE,
   APPROVE_LABEL,
+  CREATE_PAIR,
   DENY_LABEL,
   DENY_NOTE,
   DESK_COPY,
+  PAIR_REVEAL_ONCE,
   PAST_DUE,
   PASTE_FALLBACK,
+  REVOKE_PAIR,
   USER_CODE_LABEL,
   WEBHOOK_LAG,
   ZERO_SEATS,
 } from "@/lib/copy";
-import { approvePair, denyPair, type ActionResult } from "@/lib/setup-client";
+import {
+  approvePair,
+  createPairKey,
+  denyPair,
+  revokePairKey,
+  type ActionResult,
+} from "@/lib/setup-client";
 import type { SeatSession } from "@/lib/types";
 
 export function SetupDesk({
@@ -26,16 +37,18 @@ export function SetupDesk({
   preview: boolean;
 }) {
   const { setAuthed } = useChrome();
-  const [code, setCode] = useState(session.desk?.userCode ?? "");
-  const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
+  const desks = session.desks.length ? session.desks : session.desk ? [session.desk] : [];
+  const first = desks[0];
+  const [code, setCode] = useState(session.revealedPairCode ?? first?.userCode ?? "");
+  const [busy, setBusy] = useState<"approve" | "deny" | "pair" | "revoke" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState(session.revealedPairCode);
 
   useEffect(() => {
     setAuthed(true);
-    return () => setAuthed(false);
   }, [setAuthed]);
 
-  async function run(kind: "approve" | "deny", fn: () => Promise<ActionResult>) {
+  async function run(kind: "approve" | "deny" | "pair" | "revoke", fn: () => Promise<ActionResult>) {
     if (busy) return;
     setBusy(kind);
     setMessage(null);
@@ -49,14 +62,17 @@ export function SetupDesk({
       );
       return;
     }
+    if (result.revealedPairCode) {
+      setRevealed(result.revealedPairCode);
+      setCode(result.revealedPairCode);
+      setMessage(PAIR_REVEAL_ONCE);
+      return;
+    }
     setMessage("Request sent.");
   }
 
-  const desk = session.desk;
-  const showPay = session.seats === 0 && session.pluginAllowed && !session.webhookPending;
-  const live = desk?.state === "running";
-  const failed = desk?.state === "failed";
-  const showPair = Boolean(desk && (desk.pendingRequest || desk.userCode));
+  const showPay = session.seats === 0 && !session.webhookPending;
+  const emptyAccount = session.seats === 0;
 
   return (
     <div className="paper rack">
@@ -64,7 +80,7 @@ export function SetupDesk({
         <p className="preview-flag">Preview — not a live seat. session_id did not mint this.</p>
       ) : null}
       <section className="bay">
-        <p className="kicker">Desk</p>
+        <p className="kicker">{emptyAccount ? "Account" : "Desk"}</p>
         <div className="row">
           <strong>{session.billingEmail}</strong>
           <span className="meta">
@@ -72,71 +88,96 @@ export function SetupDesk({
             {session.periodLabel ? ` · ${session.periodLabel}` : ""}
           </span>
         </div>
+        {emptyAccount ? <p>{ACCOUNT_HOME_LINE}</p> : null}
       </section>
 
-      {session.flockStatus === "past_due" ? (
-        <p className="banner danger">
-          {PAST_DUE}
-        </p>
-      ) : null}
+      {session.flockStatus === "past_due" ? <p className="banner danger">{PAST_DUE}</p> : null}
       {session.webhookPending ? <p className="banner">{WEBHOOK_LAG}</p> : null}
       {showPay ? (
         <>
           <p className="banner">{ZERO_SEATS}</p>
-          <PayPills />
+          <p className="note">{ACCOUNT_EMPTY}</p>
+          <PayPills email={session.billingEmail} />
         </>
       ) : null}
 
-      {desk ? (
-        <section className={`bay${live ? " live" : ""}${failed ? " fail" : ""}`}>
-          {live ? <span className="lamp" aria-hidden="true" /> : null}
-          <p className="kicker">{desk.state.replace("_", " ")}</p>
-          <p>{DESK_COPY[desk.state]}</p>
-          {session.hoursUsed !== null && session.hoursIncluded !== null ? (
-            <p className="meta">
-              Hours {session.hoursUsed} / {session.hoursIncluded}
-            </p>
-          ) : null}
-          {desk.userCode ? (
-            <div>
-              <p className="kicker">{USER_CODE_LABEL}</p>
-              <p className="user-code">{desk.userCode}</p>
-            </div>
-          ) : null}
-          {showPair ? (
+      {emptyAccount ? null : (
+
+      <>
+      {desks.map((desk) => {
+        const live = desk.state === "running";
+        const failed = desk.state === "failed";
+        const showPair = Boolean(desk.pendingRequest || desk.userCode || revealed);
+        return (
+          <section key={desk.id} className={`bay${live ? " live" : ""}${failed ? " fail" : ""}`}>
+            {live ? <span className="lamp" aria-hidden="true" /> : null}
+            <p className="kicker">{desk.state.replace("_", " ")}</p>
+            <p>{DESK_COPY[desk.state]}</p>
+            {desk.hoursUsed !== null && desk.hoursIncluded !== null ? (
+              <p className="meta">
+                Hours {desk.hoursUsed} / {desk.hoursIncluded}
+              </p>
+            ) : null}
+            {revealed ? (
+              <div>
+                <p className="kicker">{USER_CODE_LABEL}</p>
+                <p className="user-code">{revealed}</p>
+                <p className="note">{PAIR_REVEAL_ONCE}</p>
+              </div>
+            ) : null}
             <div className="actions">
               <button
                 className="key wide"
                 type="button"
-                disabled={busy !== null || !code}
-                onClick={() => void run("approve", () => approvePair(code))}
+                disabled={busy !== null}
+                onClick={() => void run("pair", () => createPairKey(desk.id))}
               >
-                {APPROVE_LABEL}
+                {CREATE_PAIR}
               </button>
               <button
-                className="ghost danger wide"
+                className="ghost wide"
                 type="button"
-                disabled={busy !== null || !code}
-                onClick={() => void run("deny", () => denyPair(code))}
+                disabled={busy !== null}
+                onClick={() => void run("revoke", () => revokePairKey(desk.id))}
               >
-                {DENY_LABEL}
+                {REVOKE_PAIR}
               </button>
-              <p className="note">{DENY_NOTE}</p>
             </div>
-          ) : null}
-          <details className="fallback">
-            <summary>{PASTE_FALLBACK}</summary>
-            <input
-              className="code"
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-              aria-label={USER_CODE_LABEL}
-            />
-          </details>
-        </section>
-      ) : null}
+            {showPair ? (
+              <div className="actions">
+                <button
+                  className="key wide"
+                  type="button"
+                  disabled={busy !== null || !code}
+                  onClick={() => void run("approve", () => approvePair(code))}
+                >
+                  {APPROVE_LABEL}
+                </button>
+                <button
+                  className="ghost danger wide"
+                  type="button"
+                  disabled={busy !== null || !code}
+                  onClick={() => void run("deny", () => denyPair(code))}
+                >
+                  {DENY_LABEL}
+                </button>
+                <p className="note">{DENY_NOTE}</p>
+              </div>
+            ) : null}
+            <details className="fallback">
+              <summary>{PASTE_FALLBACK}</summary>
+              <input
+                className="code"
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                aria-label={USER_CODE_LABEL}
+              />
+            </details>
+          </section>
+        );
+      })}
 
       <section className="bay connector">
         <p className="kicker">Grok plugin connector</p>
@@ -155,6 +196,8 @@ export function SetupDesk({
           <dd>{CONNECTOR.scope}</dd>
         </dl>
       </section>
+      </>
+      )}
       {message ? <p className="note">{message}</p> : null}
     </div>
   );

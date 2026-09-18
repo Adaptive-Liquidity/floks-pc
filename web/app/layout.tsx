@@ -1,26 +1,29 @@
 import type { Metadata } from "next";
-import { Geist, JetBrains_Mono, Space_Grotesk } from "next/font/google";
+import { cookies } from "next/headers";
+import { Hanken_Grotesk, JetBrains_Mono, Manrope } from "next/font/google";
 import { ChromeProvider } from "@/components/Chrome";
 import { LegalFooter } from "@/components/LegalFooter";
 import { SiteHeader } from "@/components/SiteHeader";
+import { Starfield } from "@/components/studio/Starfield";
+import { COOKIE_NAME } from "@/lib/config";
 import { HOME_HEADLINE, HOME_LINE, HOME_SUB } from "@/lib/copy";
 import "./globals.css";
 
-const sans = Geist({
+const sans = Manrope({
   subsets: ["latin"],
-  variable: "--font-sans",
+  variable: "--font-manrope",
   display: "swap",
 });
 
 const mono = JetBrains_Mono({
   subsets: ["latin"],
-  variable: "--font-mono",
+  variable: "--font-jetbrains",
   display: "swap",
 });
 
-const display = Space_Grotesk({
+const display = Hanken_Grotesk({
   subsets: ["latin"],
-  variable: "--font-display",
+  variable: "--font-hanken",
   display: "swap",
 });
 
@@ -33,19 +36,22 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const jar = await cookies();
+  const initialAuthed = Boolean(jar.get(COOKIE_NAME)?.value);
   return (
     <html lang="en">
       <body className={`${sans.variable} ${mono.variable} ${display.variable}`}>
         <a className="skip" href="#content">
           Skip to content
         </a>
-        <ChromeProvider>
+        <ChromeProvider initialAuthed={initialAuthed}>
           <div className="shell">
+            <Starfield />
             <SiteHeader />
             <main id="content" className="main">
               {children}

@@ -1,16 +1,14 @@
-"use client";
-
-import { useState } from "react";
 import { Door } from "@/components/Door";
 import {
-  RESEND_LINK,
+  ACCOUNT_HOME_LINE,
+  CREATE_ACCOUNT,
   SETUP_COLD,
   SETUP_EXPIRED,
   SETUP_INVALID,
   SETUP_JUST_PAID,
   SETUP_PAID_CHIP,
+  SETUP_SIGN_IN,
 } from "@/lib/copy";
-import { resendMagicLink } from "@/lib/setup-client";
 import type { GateState } from "@/lib/types";
 
 const COPY: Record<GateState, string> = {
@@ -20,38 +18,49 @@ const COPY: Record<GateState, string> = {
   invalid: SETUP_INVALID,
 };
 
+function withSession(path: string, sessionId?: string | null): string {
+  return sessionId ? `${path}?session_id=${encodeURIComponent(sessionId)}` : path;
+}
+
 export function SetupGate({
   gate,
+  sessionId,
 }: {
   gate: GateState;
   sessionId?: string | null;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-
-  async function resend() {
-    setBusy(true);
-    setNote(null);
-    const result = await resendMagicLink();
-    setBusy(false);
-    setNote(
-      result.ok
-        ? "If that billing email has a seat, another link is on the way."
-        : result.message,
-    );
-  }
-
+  const loginHref = withSession("/login", sessionId);
+  const signupHref = withSession("/signup", sessionId);
   return (
     <Door title={COPY[gate]}>
+      {gate === "cold" ? <p className="note">{ACCOUNT_HOME_LINE}</p> : null}
       {gate === "just_paid" ? <p className="chip">{SETUP_PAID_CHIP}</p> : null}
-      {gate === "expired" ? (
-        <div className="actions" style={{ marginTop: 22 }}>
-          <button className="key wide" type="button" disabled={busy} onClick={() => void resend()}>
-            {RESEND_LINK}
-          </button>
-        </div>
+      <div className="actions" style={{ marginTop: 22 }}>
+        {gate === "just_paid" ? (
+          <>
+            <a className="key wide" href={loginHref}>
+              {SETUP_SIGN_IN}
+            </a>
+            <a className="ghost wide" href={signupHref}>
+              {CREATE_ACCOUNT}
+            </a>
+          </>
+        ) : (
+          <>
+            <a className="key wide" href={signupHref}>
+              {CREATE_ACCOUNT}
+            </a>
+            <a className="ghost wide" href={loginHref}>
+              {SETUP_SIGN_IN}
+            </a>
+          </>
+        )}
+      </div>
+      {gate === "cold" ? (
+        <p className="note">
+          <a href="/join">Plans</a> — create an account first, then buy.
+        </p>
       ) : null}
-      {note ? <p className="note">{note}</p> : null}
     </Door>
   );
 }

@@ -1,15 +1,8 @@
 import { HonestyStrip } from "@/components/HonestyStrip";
-import { Door } from "@/components/Door";
 import { KitMark } from "@/components/KitMark";
-import { PayPills } from "@/components/PayPills";
-import {
-  HOME_HEADLINE,
-  HOME_KICKER,
-  HOME_LINE,
-  HOME_SUB,
-  HOME_TOOLS,
-  JOIN_LINE,
-} from "@/lib/copy";
+import { PlanGrid } from "@/components/studio/PlanGrid";
+import { readAuthFromCookies } from "@/lib/setup-server";
+import { CREATE_ACCOUNT, JOIN_HOURS, JOIN_LINE, JOIN_SUB, JOIN_TITLE, SETUP_SIGN_IN } from "@/lib/copy";
 
 export const metadata = {
   title: "Join",
@@ -24,19 +17,44 @@ export default async function JoinPage({
 }) {
   const query = await searchParams;
   const handoff = typeof query.handoff === "string" ? query.handoff.trim() : "";
+  const auth = await readAuthFromCookies();
+  const signedIn = Boolean(auth.email);
   return (
     <>
-      <div style={{ position: "relative" }}>
-        <Door kicker={HOME_KICKER} title={HOME_HEADLINE}>
-          <p className="lede">{HOME_SUB}</p>
-          <p className="lede">{HOME_LINE}</p>
-          <p className="mono-line">{JOIN_LINE}</p>
-          {handoff ? <p className="handoff">{handoff}</p> : null}
-          <PayPills />
-          <p className="lede">{HOME_TOOLS}</p>
-        </Door>
-        <KitMark placement="join" />
-      </div>
+      <section className="min-h-screen flex flex-col items-center justify-center pt-28 pb-16 px-margin-x">
+        <div className="text-center max-w-5xl w-full space-y-stack-lg relative">
+          <h1 className="font-display-lg text-display-lg text-tertiary-fixed uppercase">{JOIN_TITLE}</h1>
+          <p className="font-body-lg text-body-lg text-on-surface-variant max-w-2xl mx-auto">{JOIN_SUB}</p>
+          <p className="font-label-mono text-[12px] text-on-surface-variant/80 max-w-2xl mx-auto uppercase tracking-wider">
+            {JOIN_HOURS}
+          </p>
+          <p className="font-label-mono text-[12px] text-on-surface-variant/80 max-w-2xl mx-auto">{JOIN_LINE}</p>
+          {signedIn ? (
+            <p className="font-body-lg text-body-lg text-on-surface-variant max-w-2xl mx-auto">
+              Signed in as <strong>{auth.email}</strong>. Buy a computer — Stripe return lands on{" "}
+              <a className="text-secondary hover:text-white" href="/setup">
+                /setup
+              </a>
+              .
+            </p>
+          ) : (
+            <p className="font-body-lg text-body-lg text-on-surface-variant max-w-2xl mx-auto">
+              Create an account first, then buy.{" "}
+              <a className="text-secondary hover:text-white" href="/signup">
+                {CREATE_ACCOUNT}
+              </a>
+              {" · "}
+              <a className="text-secondary hover:text-white" href="/login">
+                {SETUP_SIGN_IN}
+              </a>
+              .
+            </p>
+          )}
+          {handoff ? <p className="handoff mx-auto max-w-xl">{handoff}</p> : null}
+          <PlanGrid email={auth.email} signedIn={signedIn} />
+          <KitMark placement="join" />
+        </div>
+      </section>
       <HonestyStrip />
     </>
   );
