@@ -124,9 +124,14 @@ export function logAuthKitFailure(scope: string, err: unknown): void {
   });
 }
 
+function isAuthNotConfigured(err: unknown): boolean {
+  if (err instanceof AuthNotConfigured) return true;
+  return err instanceof Error && err.name === "AuthNotConfigured";
+}
+
 /** Config mistakes are not an invalid invitation. Used-up codes look expired. */
 export function callbackFailurePath(err: unknown): "/setup" | "/setup?error=invalid" | "/setup?error=expired" {
-  if (err instanceof AuthNotConfigured) return "/setup";
+  if (isAuthNotConfigured(err)) return "/setup";
   const fields = authKitErrorFields(err);
   if (fields.error === "invalid_grant" || fields.error === "expired_token") return "/setup?error=expired";
   return "/setup?error=invalid";
