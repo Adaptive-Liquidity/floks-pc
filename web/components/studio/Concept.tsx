@@ -36,7 +36,7 @@ export function Concept() {
           </h3>
         </motion.div>
         <motion.div
-          className="relative h-[400px] glass-card rounded-2xl flex items-center justify-center glow-border overflow-hidden group"
+          className="relative flex items-center justify-center bg-transparent"
           initial={{ opacity: 0, scale: 0.95 }}
           whileInView={{ opacity: 1, scale: 1 }}
           viewport={{ once: true, margin: "-100px" }}
@@ -47,7 +47,7 @@ export function Concept() {
             alt="One Bot. One computer. One clear boundary."
             animate={{ y: [-10, 10, -10] }}
             transition={{ repeat: Infinity, duration: 8, ease: "easeInOut" }}
-            className="relative z-10 w-[92%] h-auto max-h-[360px] object-contain"
+            className="relative z-10 w-full h-auto max-h-[480px] object-contain bg-transparent"
           />
         </motion.div>
       </div>
