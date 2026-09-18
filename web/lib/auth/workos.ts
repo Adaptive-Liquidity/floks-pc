@@ -97,21 +97,40 @@ export function getAuthKitLoginUrl(options: {
   return getWorkOS().userManagement.getAuthorizationUrl(params);
 }
 
-export async function authenticateAuthKitCode(code: string): Promise<{
+export async function authenticateAuthKitCode(
+  code: string,
+  requestMeta?: { ipAddress?: string; userAgent?: string },
+): Promise<{
   user: AuthUser;
   sealedSession: string;
 }> {
-  const result = await getWorkOS().userManagement.authenticateWithCode({
+  const password = cookiePassword();
+  const payload: {
+    code: string;
+    clientId: string;
+    ipAddress?: string;
+    userAgent?: string;
+    session: { sealSession: true; cookiePassword: string };
+  } = {
     code,
     clientId: workosClientId(),
     session: {
       sealSession: true,
-      cookiePassword: cookiePassword(),
+      cookiePassword: password,
     },
-  });
+  };
+  if (requestMeta?.ipAddress) payload.ipAddress = requestMeta.ipAddress;
+  if (requestMeta?.userAgent) payload.userAgent = requestMeta.userAgent;
+  const result = await getWorkOS().userManagement.authenticateWithCode(payload);
   const email = result.user.email?.trim();
   const sealed = result.sealedSession?.trim();
-  if (!email || !sealed) {
+  if (!email) {
+    throw new Error("AuthKit did not return a user email");
+  }
+  if (!result.accessToken || !result.refreshToken) {
+    throw new Error("AuthKit authenticate returned no session tokens");
+  }
+  if (!sealed) {
     throw new Error("AuthKit did not return a sealed session");
   }
   return {
@@ -167,12 +186,16 @@ export async function logoutUrl(sealed: string | undefined | null, fallback: str
   }
 }
 
+/** Chrome's maximum cookie lifetime. Tokens inside the seal are the real TTL. */
+export const SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 400;
+
 export function sessionCookieOptions(secure: boolean): {
   name: string;
   httpOnly: true;
   sameSite: "lax";
   path: "/";
   secure: boolean;
+  maxAge: number;
 } {
   return {
     name: COOKIE_NAME,
@@ -180,6 +203,7 @@ export function sessionCookieOptions(secure: boolean): {
     sameSite: "lax",
     path: "/",
     secure,
+    maxAge: SESSION_COOKIE_MAX_AGE,
   };
 }
 

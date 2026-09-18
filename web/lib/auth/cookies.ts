@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
+import { cookieSecureFromRequest } from "./callback";
 import { COOKIE_NAME, sessionCookieOptions, shouldSetSessionCookie } from "./workos";
 
 export function applySessionCookie(
   response: NextResponse,
   sealedSession: string | null | undefined,
-  requestUrl: string,
+  requestOrUrl: Request | string,
 ): NextResponse {
   if (!shouldSetSessionCookie(sealedSession)) return response;
-  const secure = requestUrl.startsWith("https://");
+  const secure =
+    typeof requestOrUrl === "string"
+      ? requestOrUrl.startsWith("https://") || Boolean(process.env.VERCEL)
+      : cookieSecureFromRequest(requestOrUrl);
   const flags = sessionCookieOptions(secure);
   response.cookies.set({
     name: flags.name,
@@ -16,6 +20,7 @@ export function applySessionCookie(
     sameSite: flags.sameSite,
     path: flags.path,
     secure: flags.secure,
+    maxAge: flags.maxAge,
   });
   return response;
 }

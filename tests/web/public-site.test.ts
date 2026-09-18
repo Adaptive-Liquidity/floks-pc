@@ -312,6 +312,9 @@ describe("public site lock", () => {
     assert.match(callback, /session_id/);
     assert.match(callback, /\/setup/);
     assert.match(callback, /authenticateAuthKitCode/);
+    assert.match(callback, /export async function POST/);
+    assert.match(callback, /callbackAutoPostHtml/);
+    assert.match(callback, /logAuthKitFailure/);
     assert.doesNotMatch(callback, /document\.cookie/);
     assert.doesNotMatch(callback, /JSON\.stringify\(\{ id:/);
     assert.equal(callbackFinishPlan(new URLSearchParams("session_id=cs_test")).shouldPost, false);

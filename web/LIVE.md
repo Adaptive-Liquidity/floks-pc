@@ -9,7 +9,7 @@ Preview target is `floks-pc.vercel.app`. Do not change Cloudflare DNS or cut ove
 ## What the code does
 
 1. `/signup` redirects to WorkOS AuthKit Magic Auth with `screen_hint=sign-up`. `/login` uses `screen_hint=sign-in`. `/login?screen=sign-up` is the same hint as `/signup`.
-2. `/callback` exchanges `code` for a sealed `wos-session` cookie. It never mints a cookie from `session_id`. Return is always `/setup` (plus `session_id` when checkout state is present).
+2. `/callback` GET with a `code` returns an auto-POST (does not exchange on GET/prefetch). POST exchanges the one-use code for a sealed `wos-session` cookie. Failures are logged as `[authkit]` (no code/password). Missing `WORKOS_COOKIE_PASSWORD` is `/setup` (not “this sign-in is not valid”). Return is `/setup` (plus `session_id` when checkout state is present). It never mints a cookie from `session_id`.
 3. `/setup` is the signed-in account home. No cookie → Create account / Sign in (not an invalid-invitation door). Cookie + $0 seats → email, one-line FLOKS, empty desks, plan CTAs. Cookie + seat → pair / approve / desk.
 4. Pair keys call `issuePairCode` / `revokeUnusedPairCodes` on the real computer domain. FakeProvider is default. Runloop is opt-in.
 5. Stripe webhook `POST /api/webhooks/stripe` creates or updates seats. Signed-in users with no seat stay on `/setup` and buy from that account. Manage billing (`POST /api/setup/portal`) requires a session; no Stripe customer returns to `/setup`.
@@ -34,6 +34,9 @@ On Vercel project `floks-pc` (do not deploy to production from this PR):
 
 - Unsigned `/`: header and hero primary CTAs are **Create account** + **Sign in**. Plans / Buy is secondary and still nudges account first.
 - `/signup` lands on AuthKit with the sign-up screen. `/login` is sign-in. `/login?screen=sign-up` is sign-up.
+- **Auth handoff (Caelin retest):** Create account or Sign in as `cael.b@asentxia.com` → after the 6-digit code, land on **signed-in** `/setup` (empty seats OK). Header shows **Account**, not Create account. Must not show “This sign-in is not valid.”
+- Confirm Vercel Preview env has `WORKOS_COOKIE_PASSWORD` (32+ chars, same as the WorkOS seal), `WORKOS_API_KEY` + `WORKOS_CLIENT_ID` for Production, and `WORKOS_REDIRECT_URI=https://floks-pc.vercel.app/callback`. Production `floks-pc.com/callback` is wrong until DNS cutover.
+- If it still fails, Vercel function logs for `/callback` should show `[authkit] callback.authenticate` with `error` / `cookiePasswordConfigured` / `cookiePasswordLength` (never the password or code).
 - Unsigned `/setup` shows Create account + Sign in, not “invalid invitation” / “this sign-in is not valid”.
 - Signed in, $0 seats: `/setup` shows the email, a one-line FLOKS line, empty-desk copy, and Spark/Desk/Shift CTAs (Payment Links with `prefilled_email`).
 - Signed in, with a seat: existing pair / approve / desk / connector.
