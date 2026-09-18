@@ -50,3 +50,20 @@ export const PLAN_HOURS = {
   desk: 25,
   shift: 60,
 } as const;
+
+export function stripePaymentHref(base: string, email?: string | null): string {
+  const trimmed = email?.trim();
+  if (!trimmed) return base;
+  const url = new URL(base);
+  url.searchParams.set("prefilled_email", trimmed);
+  return url.toString();
+}
+
+/** Unsigned buyers go create an account first. Signed-in buyers get the Payment Link. */
+export function planCheckoutHref(
+  base: string,
+  options: { signedIn?: boolean; email?: string | null } = {},
+): string {
+  if (!options.signedIn) return "/signup";
+  return stripePaymentHref(base, options.email);
+}

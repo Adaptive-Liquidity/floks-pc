@@ -43,6 +43,7 @@ describe("public site lock", () => {
       "app/faq/page.tsx",
       "app/setup/page.tsx",
       "app/login/route.ts",
+      "app/signup/route.ts",
       "app/callback/route.ts",
       "app/logout/route.ts",
       "app/oauth/authorize/page.tsx",
@@ -68,7 +69,6 @@ describe("public site lock", () => {
 
   it("does not ship forbidden public routes", () => {
     const forbidden = [
-      "signup",
       "register",
       "account",
       "billing",
@@ -107,9 +107,11 @@ describe("public site lock", () => {
     assert.match(copy, /Desk — \$39\/mo — 25 hours — 1 computer/);
     assert.match(copy, /Shift — \$69\/mo — 60 hours — 1 computer/);
     assert.match(copy, /Same eight tools on every desk\. Renews monthly until you cancel\./);
-    assert.match(copy, /Pay here\. Then sign in on this site\. We email a 6-digit code\./);
-    assert.match(copy, /Sign in with the 6-digit code we email/);
+    assert.match(copy, /Create an account\. Then buy a computer\. We email a 6-digit code\./);
+    assert.match(copy, /Create an account or sign in\. We email a 6-digit AuthKit code/);
     assert.match(copy, /Paid\. Sign in with the 6-digit code we email to that Stripe inbox\./);
+    assert.match(copy, /Create an account, then buy/);
+    assert.doesNotMatch(copy, /Stripe Checkout is register/);
     assert.match(copy, /That sign-in expired/);
     assert.match(copy, /This sign-in is not valid\./);
     assert.match(copy, /Signing you in/);
@@ -154,6 +156,9 @@ describe("public site lock", () => {
     assert.match(header, /MANAGE_BILLING/);
     assert.match(header, /LOGOUT/);
     assert.match(header, /\/login/);
+    assert.match(header, /\/signup/);
+    assert.match(header, /CREATE_ACCOUNT/);
+    assert.match(header, /SETUP_SIGN_IN/);
     assert.match(header, /Home/);
     assert.match(header, /Legal/);
     assert.match(read("app/page.tsx"), /<Hero/);
@@ -167,7 +172,11 @@ describe("public site lock", () => {
     assert.doesNotMatch(read("components/studio/Concept.tsx"), /inset-x-10 top-1\/2/);
     assert.doesNotMatch(read("components/studio/Concept.tsx"), /glass-card|glow-border/);
     assert.match(read("components/studio/HeroHardwareNode.tsx"), /GROK MCP SUBSYSTEM/);
+    assert.match(read("components/studio/Hero.tsx"), /\/signup/);
+    assert.match(read("components/studio/Hero.tsx"), /\/login/);
     assert.match(read("app/join/page.tsx"), /PlanGrid/);
+    assert.match(read("app/join/page.tsx"), /readAuthFromCookies/);
+    assert.match(read("components/studio/PlanGrid.tsx"), /planCheckoutHref/);
     assert.match(read("components/studio/PlanGrid.tsx"), /Most Popular/);
     assert.match(read("components/studio/PlanGrid.tsx"), /md:grid-cols-3/);
     assert.doesNotMatch(read("app/page.tsx"), /hero-node/);
@@ -177,6 +186,20 @@ describe("public site lock", () => {
     assert.doesNotMatch(header, /Join Waitlist/i);
     assert.doesNotMatch(header, /Architecture|Research|Evidence|Company/);
     assert.doesNotMatch(read("components/SetupGate.tsx"), /\bAllow\b/);
+    assert.doesNotMatch(read("components/SetupGate.tsx"), /invalid invitation/i);
+    assert.match(read("components/SetupGate.tsx"), /CREATE_ACCOUNT/);
+    assert.match(read("components/SetupGate.tsx"), /SETUP_SIGN_IN/);
+    assert.match(read("components/SetupGate.tsx"), /\/signup/);
+    assert.match(read("components/SetupDesk.tsx"), /ACCOUNT_EMPTY/);
+    assert.match(read("components/SetupDesk.tsx"), /ACCOUNT_HOME_LINE/);
+    assert.match(read("app/login/route.ts"), /authKitScreenHint/);
+    assert.match(read("app/signup/route.ts"), /sign-up/);
+    assert.match(read("lib/auth/workos.ts"), /screenHint: options\.screenHint \?\? "sign-in"/);
+    assert.match(read("app/layout.tsx"), /initialAuthed/);
+    assert.match(read("app/api/setup/portal/route.ts"), /\/setup/);
+    assert.doesNotMatch(read("app/api/setup/portal/route.ts"), /\/join/);
+    assert.doesNotMatch(text, /Stripe Checkout is register/);
+    assert.doesNotMatch(text, /Get Started/);
     assert.doesNotMatch(read("app/setup/page.tsx"), /\bAllow\b/);
     const footer = `${read("components/LegalFooter.tsx")}\n${read("lib/legal.ts")}\n${read("lib/copy.ts")}`;
     assert.match(footer, /Asentxia Systems/);

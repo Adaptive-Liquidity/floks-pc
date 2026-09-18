@@ -1,7 +1,7 @@
-import { STRIPE_LINKS } from "@/lib/config";
+import { planCheckoutHref, STRIPE_LINKS } from "@/lib/config";
 import { PLANS } from "@/lib/copy";
 
-const HREF = {
+const BASE = {
   spark: STRIPE_LINKS.spark,
   desk: STRIPE_LINKS.desk,
   shift: STRIPE_LINKS.shift,
@@ -13,11 +13,19 @@ const PRICE = {
   shift: "$69 / 60h",
 } as const;
 
-export function PlanGrid() {
+export function PlanGrid({
+  email = null,
+  signedIn = false,
+}: {
+  email?: string | null;
+  signedIn?: boolean;
+}) {
   return (
     <div className="grid md:grid-cols-3 gap-6 pt-4">
       {PLANS.map((plan) => {
         const primary = plan.id === "desk";
+        const href = planCheckoutHref(BASE[plan.id], { signedIn, email });
+        const external = href.startsWith("https://");
         return (
           <article
             key={plan.id}
@@ -35,8 +43,8 @@ export function PlanGrid() {
             <h3 className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase mb-2">{plan.name}</h3>
             <p className="font-label-mono text-label-mono text-primary-fixed mb-6">{PRICE[plan.id]}</p>
             <a
-              href={HREF[plan.id]}
-              rel="noopener noreferrer"
+              href={href}
+              rel={external ? "noopener noreferrer" : undefined}
               className={`${primary ? "button-primary" : "button-secondary"} py-3 w-full rounded-full font-label-mono text-label-mono uppercase mt-auto text-center`}
             >
               {plan.short}

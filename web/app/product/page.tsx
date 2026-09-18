@@ -19,7 +19,7 @@ export default function ProductPage() {
       </section>
       <section className="space-y-3">
         <h2 className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase">Where work happens</h2>
-        <p>Work stays in Grok. This website is pay, sign-in, setup, and status.</p>
+        <p>Work stays in Grok. This website is create account, pay, setup, and status.</p>
       </section>
       <section className="space-y-3">
         <h2 className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase">The boundary</h2>

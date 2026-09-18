@@ -4,6 +4,7 @@ import { useRef } from "react";
 import Link from "next/link";
 import { motion, useScroll, useTransform } from "motion/react";
 import { ArrowRight, Cpu, ShieldCheck } from "lucide-react";
+import { CREATE_ACCOUNT, SETUP_SIGN_IN } from "@/lib/copy";
 import { HeroHardwareNode } from "./HeroHardwareNode";
 
 export function Hero() {
@@ -116,16 +117,22 @@ export function Hero() {
           >
             <Link
               className="button-primary px-8 py-4 rounded-full font-label-mono text-label-mono uppercase tracking-widest inline-flex items-center gap-2 group"
-              href="/join"
+              href="/signup"
             >
-              Get Started
+              {CREATE_ACCOUNT}
               <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
             </Link>
             <Link
               className="text-on-surface-variant hover:text-white transition-colors font-label-mono text-label-mono uppercase tracking-widest px-4 py-4"
-              href="/product"
+              href="/login"
             >
-              View Architecture →
+              {SETUP_SIGN_IN}
+            </Link>
+            <Link
+              className="text-on-surface-variant/70 hover:text-white transition-colors font-label-mono text-label-mono uppercase tracking-widest px-4 py-4"
+              href="/join"
+            >
+              Plans
             </Link>
           </motion.div>
         </div>

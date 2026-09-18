@@ -16,10 +16,18 @@ export const HOME_TOOLS =
 export const FOOTER_MARK = "FLOKS";
 export const FOOTER_ORG = "Asentxia Systems";
 
-export const JOIN_LINE = "Pay here. Then sign in on this site. We email a 6-digit code.";
+export const JOIN_LINE = "Create an account. Then buy a computer. We email a 6-digit code.";
+
+export const CREATE_ACCOUNT = "Create account";
+
+export const ACCOUNT_HOME_LINE =
+  "An isolated Agent Computer for one Grok Bot. Work stays in Grok.";
+
+export const ACCOUNT_EMPTY =
+  "No computer yet. Buy a plan to open a desk. Pairing starts after the seat exists.";
 
 export const SETUP_COLD =
-  "Sign in with the 6-digit code we email. Typing an email on this site is not enough.";
+  "Create an account or sign in. We email a 6-digit AuthKit code. Typing an email on this site is not enough.";
 
 export const SETUP_PAID_CHIP = "Paid";
 
@@ -80,7 +88,7 @@ export const WEBHOOK_LAG =
   "Payment received. The seat appears when Stripe confirms.";
 
 export const ZERO_SEATS =
-  "No seat yet. Pay for a plan. Allowing the plugin does not mint a computer.";
+  "No seat yet. Buy a computer from this account. Allowing the plugin does not mint a computer.";
 
 export const PAST_DUE = "Card failed. Update billing or the seat stays past due.";
 
@@ -122,20 +130,20 @@ export const FAQ_EYEBROW = "FAQ";
 export const FAQ_TITLE = "Questions";
 export const JOIN_TITLE = "Pick the hours";
 export const JOIN_SUB =
-  "One paid seat: one Grok Bot, one isolated computer. Stripe Checkout is register. Work stays in Grok.";
+  "One paid seat: one Grok Bot, one isolated computer. Create an account, then buy. Work stays in Grok.";
 export const JOIN_HOURS =
   "Boot and resume burn hours. Asleep and shutdown do not. No overage invoice.";
 
 export const HOW_STEPS = [
   {
     n: "01",
-    title: "Pay",
-    body: "Pay on / or /join. Stripe Checkout is register. Spark, Desk, or Shift. Payment creates the seat.",
+    title: "Create account",
+    body: "AuthKit Magic Auth emails a 6-digit code. No password form. Typing an email on the site is not enough.",
   },
   {
     n: "02",
-    title: "Sign in",
-    body: "We email a 6-digit AuthKit code to that billing address. No password form. Typing an email on the site is not enough.",
+    title: "Buy",
+    body: "Signed in, pay Spark, Desk, or Shift on /join. Payment creates the seat. Return lands on /setup.",
   },
   {
     n: "03",
@@ -165,7 +173,7 @@ export const FAQ_QA: ReadonlyArray<[string, string]> = [
   ],
   [
     "How do I start?",
-    "Pay on / or /join → sign in with the 6-digit code we email → Allow in Grok → Approve on /setup.",
+    "Create an account → buy Spark, Desk, or Shift → Allow in Grok → Approve on /setup.",
   ],
   [
     "Is there a password?",

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 type ChromeState = {
   authed: boolean;
@@ -12,8 +12,17 @@ const ChromeContext = createContext<ChromeState>({
   setAuthed: () => undefined,
 });
 
-export function ChromeProvider({ children }: { children: ReactNode }) {
-  const [authed, setAuthed] = useState(false);
+export function ChromeProvider({
+  children,
+  initialAuthed = false,
+}: {
+  children: ReactNode;
+  initialAuthed?: boolean;
+}) {
+  const [authed, setAuthed] = useState(initialAuthed);
+  useEffect(() => {
+    setAuthed(initialAuthed);
+  }, [initialAuthed]);
   const value = useMemo(() => ({ authed, setAuthed }), [authed]);
   return <ChromeContext.Provider value={value}>{children}</ChromeContext.Provider>;
 }

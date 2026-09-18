@@ -17,7 +17,7 @@ export default function NowPage() {
           <li>Bounded command execution</li>
           <li>Scoped permissions you grant</li>
           <li>Start / Sleep / Resume / Shut down</li>
-          <li>AuthKit 6-digit sign-in, Allow in Grok, Approve on /setup</li>
+          <li>Create account or sign in with a 6-digit AuthKit code, then buy, then Allow in Grok and Approve on /setup</li>
           <li>Cancel and billing portal from /setup</li>
         </ul>
       </section>

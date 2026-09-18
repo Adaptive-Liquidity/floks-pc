@@ -62,23 +62,35 @@ export function redirectUri(origin: string): string {
   return `${origin.replace(/\/+$/, "")}/callback`;
 }
 
+export type AuthKitScreenHint = "sign-in" | "sign-up";
+
+export function authKitScreenHint(input?: string | null): AuthKitScreenHint {
+  return input === "sign-up" ? "sign-up" : "sign-in";
+}
+
+/** Missing WorkOS must not look like an invalid invitation. Land on account home. */
+export function authStartFallbackPath(): "/setup" {
+  return "/setup";
+}
+
 export function getAuthKitLoginUrl(options: {
   origin: string;
   email?: string | null;
   state?: string | null;
+  screenHint?: AuthKitScreenHint;
 }): string {
   const params: {
     provider: "authkit";
     clientId: string;
     redirectUri: string;
-    screenHint: "sign-in";
+    screenHint: AuthKitScreenHint;
     loginHint?: string;
     state?: string;
   } = {
     provider: "authkit",
     clientId: workosClientId(),
     redirectUri: redirectUri(options.origin),
-    screenHint: "sign-in",
+    screenHint: options.screenHint ?? "sign-in",
   };
   if (options.email) params.loginHint = options.email;
   if (options.state) params.state = options.state;

@@ -1,4 +1,5 @@
 import { SETUP_ACTIONS } from "./config";
+import { SETUP_COLD } from "./copy";
 
 export type ActionResult =
   | { ok: true; replay: boolean; revealedPairCode?: string | null }
@@ -32,7 +33,7 @@ async function postForm(
     return {
       ok: false,
       conflict: false,
-      message: "Sign in with the 6-digit code we email. Typing an email on this site is not enough.",
+        message: SETUP_COLD,
     };
   }
   return { ok: false, conflict: false, message: "The request did not complete." };

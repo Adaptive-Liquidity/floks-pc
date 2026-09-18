@@ -5,6 +5,8 @@ import { useChrome } from "@/components/Chrome";
 import { PayPills } from "@/components/PayPills";
 import { CONNECTOR } from "@/lib/config";
 import {
+  ACCOUNT_EMPTY,
+  ACCOUNT_HOME_LINE,
   APPROVE_LABEL,
   CREATE_PAIR,
   DENY_LABEL,
@@ -44,7 +46,6 @@ export function SetupDesk({
 
   useEffect(() => {
     setAuthed(true);
-    return () => setAuthed(false);
   }, [setAuthed]);
 
   async function run(kind: "approve" | "deny" | "pair" | "revoke", fn: () => Promise<ActionResult>) {
@@ -71,6 +72,7 @@ export function SetupDesk({
   }
 
   const showPay = session.seats === 0 && !session.webhookPending;
+  const emptyAccount = session.seats === 0;
 
   return (
     <div className="paper rack">
@@ -78,7 +80,7 @@ export function SetupDesk({
         <p className="preview-flag">Preview — not a live seat. session_id did not mint this.</p>
       ) : null}
       <section className="bay">
-        <p className="kicker">Desk</p>
+        <p className="kicker">{emptyAccount ? "Account" : "Desk"}</p>
         <div className="row">
           <strong>{session.billingEmail}</strong>
           <span className="meta">
@@ -86,6 +88,7 @@ export function SetupDesk({
             {session.periodLabel ? ` · ${session.periodLabel}` : ""}
           </span>
         </div>
+        {emptyAccount ? <p>{ACCOUNT_HOME_LINE}</p> : null}
       </section>
 
       {session.flockStatus === "past_due" ? <p className="banner danger">{PAST_DUE}</p> : null}
@@ -93,10 +96,14 @@ export function SetupDesk({
       {showPay ? (
         <>
           <p className="banner">{ZERO_SEATS}</p>
-          <PayPills />
+          <p className="note">{ACCOUNT_EMPTY}</p>
+          <PayPills email={session.billingEmail} />
         </>
       ) : null}
 
+      {emptyAccount ? null : (
+
+      <>
       {desks.map((desk) => {
         const live = desk.state === "running";
         const failed = desk.state === "failed";
@@ -189,6 +196,8 @@ export function SetupDesk({
           <dd>{CONNECTOR.scope}</dd>
         </dl>
       </section>
+      </>
+      )}
       {message ? <p className="note">{message}</p> : null}
     </div>
   );

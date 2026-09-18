@@ -1,7 +1,8 @@
 import { HonestyStrip } from "@/components/HonestyStrip";
 import { KitMark } from "@/components/KitMark";
 import { PlanGrid } from "@/components/studio/PlanGrid";
-import { JOIN_HOURS, JOIN_LINE, JOIN_SUB, JOIN_TITLE } from "@/lib/copy";
+import { readAuthFromCookies } from "@/lib/setup-server";
+import { CREATE_ACCOUNT, JOIN_HOURS, JOIN_LINE, JOIN_SUB, JOIN_TITLE, SETUP_SIGN_IN } from "@/lib/copy";
 
 export const metadata = {
   title: "Join",
@@ -16,6 +17,8 @@ export default async function JoinPage({
 }) {
   const query = await searchParams;
   const handoff = typeof query.handoff === "string" ? query.handoff.trim() : "";
+  const auth = await readAuthFromCookies();
+  const signedIn = Boolean(auth.email);
   return (
     <>
       <section className="min-h-screen flex flex-col items-center justify-center pt-28 pb-16 px-margin-x">
@@ -26,15 +29,29 @@ export default async function JoinPage({
             {JOIN_HOURS}
           </p>
           <p className="font-label-mono text-[12px] text-on-surface-variant/80 max-w-2xl mx-auto">{JOIN_LINE}</p>
+          {signedIn ? (
+            <p className="font-body-lg text-body-lg text-on-surface-variant max-w-2xl mx-auto">
+              Signed in as <strong>{auth.email}</strong>. Buy a computer — Stripe return lands on{" "}
+              <a className="text-secondary hover:text-white" href="/setup">
+                /setup
+              </a>
+              .
+            </p>
+          ) : (
+            <p className="font-body-lg text-body-lg text-on-surface-variant max-w-2xl mx-auto">
+              Create an account first, then buy.{" "}
+              <a className="text-secondary hover:text-white" href="/signup">
+                {CREATE_ACCOUNT}
+              </a>
+              {" · "}
+              <a className="text-secondary hover:text-white" href="/login">
+                {SETUP_SIGN_IN}
+              </a>
+              .
+            </p>
+          )}
           {handoff ? <p className="handoff mx-auto max-w-xl">{handoff}</p> : null}
-          <PlanGrid />
-          <p className="font-body-lg text-body-lg text-on-surface-variant max-w-2xl mx-auto pt-4">
-            Already paid?{" "}
-            <a className="text-secondary hover:text-white" href="/login">
-              Sign in
-            </a>
-            .
-          </p>
+          <PlanGrid email={auth.email} signedIn={signedIn} />
           <KitMark placement="join" />
         </div>
       </section>

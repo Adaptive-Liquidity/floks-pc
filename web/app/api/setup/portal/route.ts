@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   const seats = await getSeatStore().listByEmail(user.email);
   const customerId = seats[0]?.stripeCustomerId ?? (await findStripeCustomerIdByEmail(user.email));
   if (!customerId) {
-    return NextResponse.redirect(new URL("/join", request.url), { status: 302 });
+    return NextResponse.redirect(new URL("/setup", request.url), { status: 302 });
   }
   const portal = await createCustomerPortalUrl(customerId, `${origin}/setup`);
   if (!portal) {

@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
 import { LayoutGrid } from "lucide-react";
 import { useChrome } from "@/components/Chrome";
-import { LOGOUT, MANAGE_BILLING } from "@/lib/copy";
+import { CREATE_ACCOUNT, LOGOUT, MANAGE_BILLING, SETUP_SIGN_IN } from "@/lib/copy";
 import { logoutSetup, openPortal } from "@/lib/setup-client";
 
 const LINKS = [
@@ -60,6 +60,12 @@ export function SiteHeader() {
         <div className="hidden md:flex items-center gap-4 shrink-0">
           {authed ? (
             <>
+              <Link
+                className="text-on-surface-variant/80 hover:text-white transition-colors duration-300 font-label-mono text-label-mono uppercase tracking-widest"
+                href="/setup"
+              >
+                Account
+              </Link>
               <button
                 className="text-on-surface-variant/80 hover:text-white transition-colors duration-300 font-label-mono text-label-mono uppercase tracking-widest"
                 type="button"
@@ -85,13 +91,19 @@ export function SiteHeader() {
                 className="text-on-surface-variant/80 hover:text-white transition-colors duration-300 font-label-mono text-label-mono uppercase tracking-widest"
                 href="/login"
               >
-                Sign In
+                {SETUP_SIGN_IN}
+              </Link>
+              <Link
+                className="text-on-surface-variant/80 hover:text-white transition-colors duration-300 font-label-mono text-label-mono uppercase tracking-widest"
+                href="/join"
+              >
+                Plans
               </Link>
               <Link
                 className="button-primary px-6 py-2 rounded-full font-label-mono text-label-mono uppercase tracking-widest"
-                href="/join"
+                href="/signup"
               >
-                Buy
+                {CREATE_ACCOUNT}
               </Link>
             </>
           )}
@@ -106,6 +118,9 @@ export function SiteHeader() {
             ))}
             {authed ? (
               <>
+                <Link className="top-link" href="/setup">
+                  Account
+                </Link>
                 <button
                   className="top-link"
                   type="button"
@@ -127,11 +142,14 @@ export function SiteHeader() {
               </>
             ) : (
               <>
+                <Link className="top-link" href="/signup">
+                  {CREATE_ACCOUNT}
+                </Link>
                 <Link className="top-link" href="/login">
-                  Sign In
+                  {SETUP_SIGN_IN}
                 </Link>
                 <Link className="top-link" href="/join">
-                  Buy
+                  Plans
                 </Link>
               </>
             )}

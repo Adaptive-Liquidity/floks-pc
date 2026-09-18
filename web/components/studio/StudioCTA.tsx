@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { motion } from "motion/react";
 import { ArrowRight } from "lucide-react";
-import { JOIN_LINE } from "@/lib/copy";
+import { CREATE_ACCOUNT, JOIN_LINE, SETUP_SIGN_IN } from "@/lib/copy";
 
 export function StudioCTA() {
   return (
@@ -18,13 +18,19 @@ export function StudioCTA() {
       >
         <h2 className="font-headline-lg text-headline-lg text-tertiary-fixed uppercase">FLOKS PRIVATE BETA</h2>
         <p className="font-body-lg text-body-lg text-on-surface-variant">{JOIN_LINE}</p>
-        <div className="pt-4">
+        <div className="pt-4 flex flex-wrap items-center justify-center gap-4">
           <Link
             className="inline-flex items-center gap-2 button-primary px-12 py-5 rounded-full font-label-mono text-label-mono uppercase tracking-wider"
-            href="/join"
+            href="/signup"
           >
-            Get Started
+            {CREATE_ACCOUNT}
             <ArrowRight className="w-4 h-4" />
+          </Link>
+          <Link
+            className="inline-flex items-center gap-2 text-on-surface-variant hover:text-white transition-colors font-label-mono text-label-mono uppercase tracking-wider px-4 py-5"
+            href="/login"
+          >
+            {SETUP_SIGN_IN}
           </Link>
         </div>
       </motion.div>

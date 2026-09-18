@@ -58,7 +58,7 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
       {
         paragraphs: [
           LEGAL_DISCLAIMER,
-          `Seller: ${SELLER} (the name Stripe Checkout already shows). Product: FLOKS on floks-pc.com. You buy a paid seat for one Grok Bot to use one isolated FLOKS Computer. Work stays in Grok. This site is pay, sign-in, setup, and status — not a second workspace.`,
+          `Seller: ${SELLER} (the name Stripe Checkout already shows). Product: FLOKS on floks-pc.com. You buy a paid seat for one Grok Bot to use one isolated FLOKS Computer. Work stays in Grok. This site is create account, pay, setup, and status — not a second workspace.`,
         ],
       },
       {

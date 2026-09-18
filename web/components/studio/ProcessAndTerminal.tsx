@@ -7,21 +7,21 @@ import { HOW_STEPS } from "@/lib/copy";
 type Line = { text: string; color: string };
 
 const SEQUENCES: Record<string, Array<{ text: string; delay: number; color?: string }>> = {
-  pay: [
+  account: [
+    { text: "> authkit --mode=magic_auth --screen=sign-up", delay: 80 },
+    { text: "> [RUNNING] Emailing a 6-digit code...", delay: 320 },
+    { text: "> [OK] Code sent. No password form.", delay: 240 },
+    { text: "> [RUNNING] Sealing httpOnly session...", delay: 280 },
+    { text: "> [OK] Account home on /setup. $0 seats is fine.", delay: 200 },
+    { text: "> ACCOUNT READY. BUY A COMPUTER NEXT.", delay: 160, color: "text-secondary-fixed" },
+  ],
+  buy: [
     { text: "> init seat --plan=spark|desk|shift", delay: 80 },
-    { text: "> [RUNNING] Stripe Checkout is register...", delay: 280 },
+    { text: "> [RUNNING] Opening Stripe Payment Link...", delay: 280 },
     { text: "> [OK] Payment confirmed. Seat open.", delay: 360 },
     { text: "> [RUNNING] Binding inbox to the paid seat...", delay: 280 },
     { text: "> [OK] Hours armed. Computer not launched yet.", delay: 240 },
-    { text: "> PAY COMPLETE. SIGN IN ON THIS SITE.", delay: 160, color: "text-secondary-fixed" },
-  ],
-  signin: [
-    { text: "> authkit --mode=magic_auth", delay: 80 },
-    { text: "> [RUNNING] Emailing a 6-digit code...", delay: 320 },
-    { text: "> [OK] Code sent to the Stripe inbox.", delay: 240 },
-    { text: "> [RUNNING] Sealing httpOnly session...", delay: 280 },
-    { text: "> [OK] Session bound. No password form.", delay: 200 },
-    { text: "> SIGN-IN READY. ALLOW IN GROK NEXT.", delay: 160, color: "text-secondary-fixed" },
+    { text: "> PAID. RETURN TO /SETUP.", delay: 160, color: "text-secondary-fixed" },
   ],
   allow: [
     { text: "> oauth allow --client=floks-pc --scope=mcp", delay: 80 },
@@ -41,7 +41,7 @@ const SEQUENCES: Record<string, Array<{ text: string; delay: number; color?: str
   ],
 };
 
-const STEP_KEYS = ["pay", "signin", "allow", "approve"] as const;
+const STEP_KEYS = ["account", "buy", "allow", "approve"] as const;
 
 const BOOT_LINES: Line[] = [
   { text: "> SYSTEM READY.", color: "" },
@@ -116,7 +116,7 @@ export function ProcessAndTerminal() {
           </h3>
           <div className="space-y-8 relative before:absolute before:inset-y-0 before:left-8 before:w-px before:bg-white/10">
             {HOW_STEPS.map((step, index) => {
-              const key = STEP_KEYS[index] ?? "pay";
+              const key = STEP_KEYS[index] ?? "account";
               return (
                 <div
                   key={step.n}

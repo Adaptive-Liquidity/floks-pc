@@ -23,7 +23,13 @@ export function MarketingPage({
       </div>
       <div className="max-w-5xl mt-12 space-y-6">
         <PlanGrid />
-        <p>
+        <p className="flex flex-wrap gap-4">
+          <a
+            className="font-label-mono text-label-mono uppercase tracking-widest text-white hover:text-secondary"
+            href="/signup"
+          >
+            Create account
+          </a>
           <a
             className="font-label-mono text-label-mono uppercase tracking-widest text-on-surface-variant hover:text-white"
             href="/login"
