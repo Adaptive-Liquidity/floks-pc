@@ -13,7 +13,7 @@ export const CONNECTOR = {
 } as const;
 
 export const SUPPORT_EMAIL =
-  process.env.SUPPORT_EMAIL?.trim() || process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim() || "support@staxions.com";
+  process.env.SUPPORT_EMAIL?.trim() || process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim() || "contact@asentxia.com";
 export const SELLER = process.env.NEXT_PUBLIC_SELLER?.trim() || "Adaptive Liquidity, Inc.";
 export const BRAND_NAME = BRAND.name;
 

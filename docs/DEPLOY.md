@@ -81,7 +81,7 @@ A config mismatch now renders a clear HTML error on `/callback` and `/setup?erro
 | `STRIPE_PRICE_PERSONAL` | yes to sell Personal | Test Price id `price_…` |
 | `STRIPE_PRICE_PRO` | yes to sell Pro | Test Price id |
 | `STRIPE_PRICE_TEAM` | yes to sell Team | Test Price id |
-| `SUPPORT_EMAIL` | optional | Default `support@staxions.com` |
+| `SUPPORT_EMAIL` | optional | Default `contact@asentxia.com` |
 | `CRON_SECRET` | yes if cron is used | Vercel cron bearer |
 | `STAXIONS_IDLE_MINUTES` | optional | Default `30` |
 | `FLOK_WEB_PROVIDER` | for a real computer | `runloop` |
