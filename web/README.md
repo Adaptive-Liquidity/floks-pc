@@ -1,18 +1,20 @@
-# floks-pc.com public frontend
+# Staxions public frontend
 
-Next.js App Router for the public FLOKS site: marketing, AuthKit account, Stripe pay, /setup desks.
+Next.js App Router for the public Staxions site: marketing, AuthKit account, Stripe Checkout, `/setup` desks.
 
 ## What this is
 
 - Look: AI Studio glass/dark luxury — ground `#050505`, ice `#e3f2fd`, Hanken Grotesk / Manrope / JetBrains Mono.
-- Routes: `/`, `/join`, `/product`, `/how`, `/now`, `/faq`, `/legal` + policies, `/setup`, `/signup`, `/login`, `/callback`, `/logout`, `/oauth/authorize`.
-- Journey: create account or sign in → buy a computer → manage on `/setup`.
-- Pay: existing Stripe Payment Links (Spark / Desk / Shift). Unsigned plan CTAs go to `/signup`. Signed-in links pass `prefilled_email`.
-- Auth: WorkOS AuthKit Magic Auth. `/login` uses `screen_hint=sign-in`. `/signup` and `/login?screen=sign-up` use `screen_hint=sign-up`. Sealed httpOnly `wos-session`. Never invent a cookie from `session_id`.
-- Seats: Stripe webhook or verified checkout email, bound to the signed-in WorkOS email. Signed-in with no seat stays on `/setup` (empty account + buy CTAs).
-- Desks: `ComputerService` + FakeProvider by default. Runloop only when documented env is set. See `LIVE.md`.
-- Vercel Root Directory is `web`. Domain deps (`zod`, `@runloop/api-client`) live in this package so `../src` resolves without a root `npm install`.
+- Routes: `/`, `/pricing`, `/join`, `/product`, `/how`, `/now`, `/faq`, `/legal` + policies, `/setup`, `/signup`, `/login`, `/callback`, `/logout`, `/oauth/authorize`.
+- Journey: create account or sign in → buy on `/pricing` → computer auto-provisions → manage on `/setup`.
+- Pay: server-created Stripe Checkout Sessions (`STRIPE_PRICE_PERSONAL` / `_PRO` / `_TEAM`). Unsigned plan CTAs go to `/signup`. Enterprise is “Talk to us”.
+- Auth: WorkOS AuthKit Magic Auth. `/login` uses `screen_hint=sign-in`. `/signup` uses `screen_hint=sign-up`. Sealed httpOnly `wos-session`. Never invent a cookie from `session_id`.
+- Seats: Stripe webhook (by Price id) or verified checkout email. `/setup` auto-provisions the computer for an active seat.
+- Desks: Runloop when configured. FakeProvider is local/dev only and is refused for paying seats on Vercel/production.
+- Vercel Root Directory is `web`. `web/vercel.json` also installs the repo root so `../src` can resolve `zod`.
 - `/setup?preview=` is ignored in production. `FLOK_WEB_PREVIEW=1` is dev-only.
+
+Env checklist, webhook events, and WorkOS pairing: **`docs/DEPLOY.md`**. Draft prices: **`web/lib/billing/catalog.ts`**.
 
 ## Run
 

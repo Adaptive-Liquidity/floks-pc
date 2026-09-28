@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getStripeCheckoutEmail } from "../billing/stripe";
-import { requestOrigin } from "./cookies";
+import { publicOriginFromRequest } from "./callback";
 import { authStartFallbackPath, getAuthKitLoginUrl, type AuthKitScreenHint } from "./workos";
 
 export async function redirectToAuthKit(
@@ -16,13 +16,14 @@ export async function redirectToAuthKit(
   }
   try {
     const authUrl = getAuthKitLoginUrl({
-      origin: requestOrigin(request.url),
+      origin: publicOriginFromRequest(request),
       email,
-      state: sessionId ? `checkout:${sessionId}` : null,
+      state: sessionId ? `checkout:${sessionId}` : "setup",
       screenHint,
     });
     return NextResponse.redirect(authUrl, { status: 302 });
-  } catch {
+  } catch (err) {
+    console.error("[authkit] start", err instanceof Error ? err.message : err);
     return NextResponse.redirect(new URL(authStartFallbackPath(), request.url), { status: 302 });
   }
 }

@@ -95,16 +95,16 @@ export function Hero() {
             transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1], delay: 0.65 }}
           >
             <div className="glass-card p-4 rounded-xl border border-white/5 flex flex-col justify-center">
-              <span className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase mb-0.5">Spark</span>
-              <span className="font-label-mono text-label-mono text-white/80">$19 / 8h</span>
+              <span className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase mb-0.5">Personal</span>
+              <span className="font-label-mono text-label-mono text-white/80">$29 / 10h</span>
             </div>
             <div className="glass-card p-4 rounded-xl secondary-border flex flex-col justify-center bg-surface-container/60 shadow-[0_0_20px_rgba(227,242,253,0.05)]">
-              <span className="font-headline-sm text-headline-sm text-white uppercase mb-0.5">Desk</span>
-              <span className="font-label-mono text-label-mono text-secondary font-semibold">$39 / 25h</span>
+              <span className="font-headline-sm text-headline-sm text-white uppercase mb-0.5">Pro</span>
+              <span className="font-label-mono text-label-mono text-secondary font-semibold">$99 / 40h</span>
             </div>
             <div className="glass-card p-4 rounded-xl border border-white/5 flex flex-col justify-center">
-              <span className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase mb-0.5">Shift</span>
-              <span className="font-label-mono text-label-mono text-white/80">$69 / 60h</span>
+              <span className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase mb-0.5">Team</span>
+              <span className="font-label-mono text-label-mono text-white/80">$79 / agent</span>
             </div>
           </motion.div>
 
@@ -130,7 +130,7 @@ export function Hero() {
             </Link>
             <Link
               className="text-on-surface-variant/70 hover:text-white transition-colors font-label-mono text-label-mono uppercase tracking-widest px-4 py-4"
-              href="/join"
+              href="/pricing"
             >
               Plans
             </Link>

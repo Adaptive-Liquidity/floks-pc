@@ -1,3 +1,4 @@
+import { configuredAppUrl, isRetiredPublicHost } from "../app-url";
 import { AuthNotConfigured } from "./workos";
 
 export function headerFirst(request: Request, name: string): string | null {
@@ -9,8 +10,10 @@ export function headerFirst(request: Request, name: string): string | null {
 
 /** Prefer the public host AuthKit redirected to, not a Vercel internal URL. */
 export function publicOriginFromRequest(request: Request): string {
+  const app = configuredAppUrl();
+  if (app) return app;
   const configured = process.env.WORKOS_REDIRECT_URI?.replace(/\/+$/, "") ?? "";
-  if (configured) {
+  if (configured && !isRetiredPublicHost(configured)) {
     try {
       return new URL(configured).origin;
     } catch {
@@ -100,6 +103,19 @@ export function authKitErrorFields(err: unknown): {
       errorDescription?: unknown;
       status?: unknown;
     };
+    const nested = extra as Error & {
+      raw?: { error?: unknown; error_description?: unknown };
+      error_description?: unknown;
+    };
+    const errorCode =
+      (typeof extra.error === "string" && extra.error) ||
+      (typeof nested.raw?.error === "string" && nested.raw.error) ||
+      (/\binvalid_client\b/.test(extra.message) ? "invalid_client" : null);
+    const errorDescription =
+      (typeof extra.errorDescription === "string" && extra.errorDescription) ||
+      (typeof nested.error_description === "string" && nested.error_description) ||
+      (typeof nested.raw?.error_description === "string" && nested.raw.error_description) ||
+      null;
     const fields: {
       name: string;
       message: string;
@@ -107,8 +123,8 @@ export function authKitErrorFields(err: unknown): {
       errorDescription?: string;
       status?: number;
     } = { name: extra.name, message: extra.message };
-    if (typeof extra.error === "string") fields.error = extra.error;
-    if (typeof extra.errorDescription === "string") fields.errorDescription = extra.errorDescription;
+    if (errorCode) fields.error = errorCode;
+    if (errorDescription) fields.errorDescription = errorDescription;
     if (typeof extra.status === "number") fields.status = extra.status;
     return fields;
   }
@@ -130,9 +146,34 @@ function isAuthNotConfigured(err: unknown): boolean {
 }
 
 /** Config mistakes are not an invalid invitation. Used-up codes look expired. */
-export function callbackFailurePath(err: unknown): "/setup" | "/setup?error=invalid" | "/setup?error=expired" {
+export function callbackFailurePath(
+  err: unknown,
+): "/setup" | "/setup?error=invalid" | "/setup?error=expired" | "/setup?error=workos_env" {
   if (isAuthNotConfigured(err)) return "/setup";
   const fields = authKitErrorFields(err);
+  if (fields.error === "invalid_client" || /\binvalid_client\b/.test(fields.message)) {
+    return "/setup?error=workos_env";
+  }
   if (fields.error === "invalid_grant" || fields.error === "expired_token") return "/setup?error=expired";
   return "/setup?error=invalid";
+}
+
+export function workosMismatchHtml(): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign-in failed — Staxions</title>
+<style>
+  body { background:#050505; color:#fff; font-family: Manrope, ui-sans-serif, sans-serif; padding:4rem 1.5rem; }
+  a { color:#e3f2fd; }
+</style>
+</head>
+<body>
+<h1>Sign-in failed</h1>
+<p>WorkOS rejected this app as <code>invalid_client</code>: the API key does not match the Client ID. That usually means Preview is using a Production client (or the reverse).</p>
+<p>Set <code>WORKOS_CLIENT_ID</code> and <code>WORKOS_API_KEY</code> from the <strong>same</strong> WorkOS environment (both Staging or both Production), then redeploy. See <code>docs/DEPLOY.md</code>.</p>
+<p><a href="/setup">Back to account</a></p>
+</body>
+</html>`;
 }

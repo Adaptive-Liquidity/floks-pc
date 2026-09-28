@@ -10,7 +10,7 @@ export default function NowPage() {
       <section className="space-y-3">
         <h2 className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase">Available now</h2>
         <ul className="list-disc pl-5 space-y-2">
-          <li>Spark · $19/mo · 8h · Desk · $39/mo · 25h · Shift · $69/mo · 60h</li>
+          <li>Personal · $29/mo · 10h · Pro · $99/mo · 40h · Team · $79/agent · 30h (min 3)</li>
           <li>One Bot, one isolated Linux VM</li>
           <li>Live Chrome observe (screenshots + accessibility tree)</li>
           <li>Private files on that computer</li>
@@ -24,7 +24,7 @@ export default function NowPage() {
       <section className="space-y-3">
         <h2 className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase">Not for sale / not live yet</h2>
         <ul className="list-disc pl-5 space-y-2">
-          <li>Crew and Always plans (hidden)</li>
+          <li>Always-on as a public plan (not sold)</li>
           <li>Safer click (stays fail-closed)</li>
           <li>Backup or snapshot product (copy files while it’s up; disk not kept after cancel)</li>
           <li>Public VNC, residential proxies, bot-detection bypass</li>

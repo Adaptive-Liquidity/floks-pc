@@ -8,6 +8,7 @@ import {
   SETUP_JUST_PAID,
   SETUP_PAID_CHIP,
   SETUP_SIGN_IN,
+  SETUP_WORKOS_ENV,
 } from "@/lib/copy";
 import type { GateState } from "@/lib/types";
 
@@ -16,6 +17,7 @@ const COPY: Record<GateState, string> = {
   just_paid: SETUP_JUST_PAID,
   expired: SETUP_EXPIRED,
   invalid: SETUP_INVALID,
+  workos_env: SETUP_WORKOS_ENV,
 };
 
 function withSession(path: string, sessionId?: string | null): string {

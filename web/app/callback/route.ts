@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  authKitErrorFields,
   callbackAutoPostHtml,
   callbackDestination,
   callbackFailurePath,
@@ -7,6 +8,7 @@ import {
   isAuthPrefetch,
   logAuthKitFailure,
   publicOriginFromRequest,
+  workosMismatchHtml,
 } from "@/lib/auth/callback";
 import { applySessionCookie, csrfOk } from "@/lib/auth/cookies";
 import { authenticateAuthKitCode } from "@/lib/auth/workos";
@@ -44,6 +46,13 @@ async function finishWithCode(
     return response;
   } catch (err) {
     logAuthKitFailure("callback.authenticate", err);
+    const fields = authKitErrorFields(err);
+    if (fields.error === "invalid_client") {
+      return new NextResponse(workosMismatchHtml(), {
+        status: 400,
+        headers: { ...NO_STORE, "content-type": "text/html; charset=utf-8" },
+      });
+    }
     return setupRedirect(origin, callbackFailurePath(err));
   }
 }

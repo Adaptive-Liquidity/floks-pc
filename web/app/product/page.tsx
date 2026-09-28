@@ -7,7 +7,7 @@ export default function ProductPage() {
   return (
     <MarketingPage eyebrow={PRODUCT_EYEBROW} title={PRODUCT_TITLE}>
       <p>
-        FLOKS is an isolated Agent Computer for one Grok Bot. Persistent workspace. Dedicated browser. Private
+        Staxions is an isolated Agent Computer for one Grok Bot. Persistent workspace. Dedicated browser. Private
         files. Controlled execution. Scoped permissions.
       </p>
       <section className="space-y-3">

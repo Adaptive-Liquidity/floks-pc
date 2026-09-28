@@ -16,7 +16,7 @@ export function StudioCTA() {
         viewport={{ once: true, margin: "-100px" }}
         transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
       >
-        <h2 className="font-headline-lg text-headline-lg text-tertiary-fixed uppercase">FLOKS PRIVATE BETA</h2>
+        <h2 className="font-headline-lg text-headline-lg text-tertiary-fixed uppercase">STAXIONS PRIVATE BETA</h2>
         <p className="font-body-lg text-body-lg text-on-surface-variant">{JOIN_LINE}</p>
         <div className="pt-4 flex flex-wrap items-center justify-center gap-4">
           <Link

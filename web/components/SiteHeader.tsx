@@ -14,6 +14,7 @@ const LINKS = [
   { href: "/how", label: "How" },
   { href: "/now", label: "Now" },
   { href: "/faq", label: "FAQ" },
+  { href: "/pricing", label: "Pricing" },
   { href: "/legal", label: "Legal" },
 ] as const;
 
@@ -43,7 +44,7 @@ export function SiteHeader() {
           href="/"
         >
           <LayoutGrid className="w-7 h-7" aria-hidden="true" />
-          FLOKS
+          Staxions
         </Link>
         <nav className="hidden lg:flex space-x-6" aria-label="Site">
           {LINKS.map((item) => (
@@ -95,7 +96,7 @@ export function SiteHeader() {
               </Link>
               <Link
                 className="text-on-surface-variant/80 hover:text-white transition-colors duration-300 font-label-mono text-label-mono uppercase tracking-widest"
-                href="/join"
+                href="/pricing"
               >
                 Plans
               </Link>
@@ -148,7 +149,7 @@ export function SiteHeader() {
                 <Link className="top-link" href="/login">
                   {SETUP_SIGN_IN}
                 </Link>
-                <Link className="top-link" href="/join">
+                <Link className="top-link" href="/pricing">
                   Plans
                 </Link>
               </>

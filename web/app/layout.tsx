@@ -29,8 +29,8 @@ const display = Hanken_Grotesk({
 
 export const metadata: Metadata = {
   title: {
-    default: "FLOKS",
-    template: "%s — FLOKS",
+    default: "Staxions",
+    template: "%s — Staxions",
   },
   description: `${HOME_HEADLINE} ${HOME_SUB} ${HOME_LINE}`,
   robots: { index: true, follow: true },
