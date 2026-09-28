@@ -13,8 +13,10 @@ export const RUNLOOP_PROVIDER_NAME = "runloop" as const;
 export const DEFAULT_RUNLOOP_BLUEPRINT =
   "runloop/universal-ubuntu-24.04-x86_64-dnd";
 export const DEFAULT_RUNLOOP_ARCH = "x86_64" as const;
-/** Live CI max lifetime. Do not combine with lifecycle.after_idle. */
+/** Default keep-alive. Cron must refresh this; do not treat 15 minutes as a plan cap. */
 export const LIVE_KEEP_ALIVE_SECONDS = 15 * 60;
+/** Highest keep-alive we will request unless FLOK_RUNLOOP_KEEP_ALIVE_SECONDS is set. */
+export const MAX_KEEP_ALIVE_SECONDS = 60 * 60;
 
 export const CONTROL_PLANE_SECRET_ENV_KEYS = [
   "RUNLOOP_API_KEY",
@@ -74,6 +76,8 @@ export interface RunloopDevboxSession {
   resume(): Promise<void>;
   /** Idempotent shutdown. */
   shutdown(): Promise<void>;
+  /** Reset vendor idle/keep-alive. Optional on memory fakes. */
+  keepAlive?(): Promise<void>;
 
   exec(req: {
     argv: string[];

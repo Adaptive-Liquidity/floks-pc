@@ -37,6 +37,7 @@ import {
   DEFAULT_RUNLOOP_ARCH,
   DEFAULT_RUNLOOP_BLUEPRINT,
   LIVE_KEEP_ALIVE_SECONDS,
+  MAX_KEEP_ALIVE_SECONDS,
   RUNLOOP_PROVIDER_NAME,
   RUNLOOP_WORKSPACE_ROOT,
   type RunloopControlPlane,
@@ -125,10 +126,13 @@ export class RunloopProvider implements ComputerProvider {
       throw new RunloopBlueprintRequired("FLOK_RUNLOOP_BLUEPRINT is required");
     }
     const keepRaw = Number(process.env.FLOK_RUNLOOP_KEEP_ALIVE_SECONDS?.trim());
+    const idleRaw = Number(process.env.STAXIONS_IDLE_MINUTES?.trim());
+    const idleSeconds =
+      Number.isInteger(idleRaw) && idleRaw >= 5 && idleRaw <= 24 * 60 ? idleRaw * 60 : LIVE_KEEP_ALIVE_SECONDS;
     const keepAliveSeconds =
-      Number.isInteger(keepRaw) && keepRaw >= 60 && keepRaw <= 3600
-        ? keepRaw
-        : LIVE_KEEP_ALIVE_SECONDS;
+      Number.isInteger(keepRaw) && keepRaw >= 60 && keepRaw <= 24 * 60 * 60
+        ? Math.min(keepRaw, 24 * 60 * 60)
+        : Math.min(Math.max(idleSeconds, LIVE_KEEP_ALIVE_SECONDS), MAX_KEEP_ALIVE_SECONDS);
     const { createSdkRunloopPlane } = await import("./runloop-sdk.js");
     const client = await createSdkRunloopPlane({
       apiKey,
@@ -223,6 +227,11 @@ export class RunloopProvider implements ComputerProvider {
   async pause(ref: string): Promise<void> {
     const s = await this.requireSession(ref);
     await s.suspend();
+  }
+
+  async keepAlive(ref: string): Promise<void> {
+    const s = await this.requireSession(ref);
+    if (s.keepAlive) await s.keepAlive();
   }
 
   async stop(ref: string): Promise<void> {

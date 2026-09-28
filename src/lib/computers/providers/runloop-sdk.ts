@@ -91,6 +91,7 @@ type SdkDevbox = {
   resume(): Promise<unknown>;
   awaitRunning(): Promise<unknown>;
   shutdown(): Promise<unknown>;
+  keepAlive(): Promise<unknown>;
   snapshotDisk(params?: { name?: string }): Promise<{ id: string }>;
 };
 
@@ -220,6 +221,10 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       if (isIdempotentShutdownError(err)) return;
       throw err;
     }
+  }
+
+  async keepAlive(): Promise<void> {
+    await this.box.keepAlive();
   }
 
   async exec(req: {

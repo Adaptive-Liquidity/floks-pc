@@ -187,6 +187,8 @@ export {
 export {
   JsonFileControlPlaneStore,
   MemoryControlPlaneStore,
+  ControlPlaneSnapshotSchema,
+  assertSnapshotHasNoRawSecrets,
   controlPlaneStoreFromEnv,
 } from "./control-plane-store.js";
 export type { ControlPlaneStore, ControlPlaneSnapshot } from "./control-plane-store.js";

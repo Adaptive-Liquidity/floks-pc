@@ -1048,6 +1048,24 @@ export class ComputerService {
     return this.enqueueDestroy(computerId, () => this.pauseThisComputerLocked(computerId));
   }
 
+  async stopThisComputer(computerId: string): Promise<Computer> {
+    return this.enqueueDestroy(computerId, async () => {
+      const current = await this.get(computerId);
+      if (current.state === "stopped" || current.state === "deleted" || current.state === "deleting") {
+        return current;
+      }
+      return this.transition(computerId, "stopped");
+    });
+  }
+
+  async refreshKeepAlive(computerId: string): Promise<void> {
+    const computer = await this.get(computerId);
+    if (!computer.providerRef) return;
+    if (this.provider.keepAlive) {
+      await this.provider.keepAlive(computer.providerRef);
+    }
+  }
+
   private async pauseThisComputerLocked(computerId: string): Promise<Computer> {
     const current = await this.get(computerId);
     if (current.state === "paused") return current;

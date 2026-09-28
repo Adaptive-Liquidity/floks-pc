@@ -136,6 +136,10 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     this.destroyed = true;
   }
 
+  async keepAlive(): Promise<void> {
+    return;
+  }
+
   async exec(req: {
     argv: string[];
     cwd: string;
