@@ -166,6 +166,12 @@ describe("public site lock", () => {
     assert.match(read("app/page.tsx"), /HeroHardwareNode|studio\/Hero/);
     assert.match(read("app/layout.tsx"), /Starfield/);
     assert.match(read("components/studio/HeroHardwareNode.tsx"), /DESK_01/);
+    assert.equal(existsSync(join(WEB, "public/favicon.ico")), true);
+    assert.equal(existsSync(join(WEB, "public/favicon.svg")), false);
+    assert.equal(existsSync(join(WEB, "public/staxions-icon-256.png")), true);
+    assert.equal(existsSync(join(WEB, "public/staxions-icon-dark.png")), true);
+    assert.match(read("app/layout.tsx"), /staxions-icon-256\.png/);
+    assert.match(read("app/layout.tsx"), /apple/);
     assert.equal(existsSync(join(WEB, "public/concept-boundary.png")), true);
     assert.match(read("components/studio/Concept.tsx"), /src="\/concept-boundary\.png"/);
     assert.match(read("components/studio/Concept.tsx"), /motion\.img/);
@@ -275,6 +281,7 @@ describe("public site lock", () => {
     const legal = read("lib/legal.ts");
     assert.match(legal, /path: "\/legal\/aup"/);
     assert.match(read("lib/config.ts"), /Adaptive Liquidity, Inc\./);
+    assert.match(read("lib/config.ts"), /contact@asentxia\.com/);
     assert.match(legal, /SUPPORT_EMAIL/);
     assert.match(legal, /initializing, running, suspending, or resuming/);
     assert.match(legal, /We do not sell personal data/);

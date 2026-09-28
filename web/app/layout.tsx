@@ -34,6 +34,18 @@ export const metadata: Metadata = {
   },
   description: `${HOME_HEADLINE} ${HOME_SUB} ${HOME_LINE}`,
   robots: { index: true, follow: true },
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "48x48" },
+      { url: "/staxions-icon-16.png", sizes: "16x16", type: "image/png" },
+      { url: "/staxions-icon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/staxions-icon-64.png", sizes: "64x64", type: "image/png" },
+      { url: "/staxions-icon-128.png", sizes: "128x128", type: "image/png" },
+      { url: "/staxions-icon-256.png", sizes: "256x256", type: "image/png" },
+      { url: "/staxions-icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/staxions-icon-256.png", sizes: "256x256", type: "image/png" }],
+  },
 };
 
 export default async function RootLayout({
