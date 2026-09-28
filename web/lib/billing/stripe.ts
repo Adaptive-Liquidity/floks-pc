@@ -1,7 +1,25 @@
 import Stripe from "stripe";
+import { checkoutReturnUrls } from "../app-url";
+import {
+  clampAgentQuantity,
+  computersForPurchase,
+  hoursForPurchase,
+  isCheckoutPlanId,
+  stripePriceIdForPlan,
+  type CheckoutPlanId,
+} from "./catalog";
+import { applyMeteredSeconds } from "./metering";
+import {
+  emailsMatch,
+  firstPriceIdFromUnknown,
+  normalizeEmail,
+  planFromAmount,
+  planFromPriceId,
+  planFromUnknown,
+} from "./plans";
 import { createSeat, getSeatStore, type SeatRecord, type SeatStatus } from "./seats";
-import { emailsMatch, hoursForPlan, normalizeEmail, planFromAmount, planFromUnknown } from "./plans";
-import type { PlanId } from "../types";
+
+export { planFromAmount, planFromPriceId };
 
 let stripe: Stripe | null | undefined;
 
@@ -63,17 +81,48 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function planFromCheckout(session: Stripe.Checkout.Session): PlanId | null {
-  const meta = session.metadata?.plan ?? session.metadata?.Plan;
-  const fromMeta = planFromUnknown(meta);
+export function priceIdFromCheckout(session: Stripe.Checkout.Session): string | null {
+  const metaPrice = asString(session.metadata?.price_id ?? session.metadata?.priceId);
+  if (metaPrice?.startsWith("price_")) return metaPrice;
+  const items = session.line_items?.data ?? [];
+  for (const item of items) {
+    const id = firstPriceIdFromUnknown(item.price);
+    if (id) return id;
+  }
+  return null;
+}
+
+export function quantityFromCheckout(session: Stripe.Checkout.Session, plan: CheckoutPlanId): number {
+  const metaQty = Number(session.metadata?.agent_quantity ?? session.metadata?.quantity ?? "");
+  const itemQty = session.line_items?.data[0]?.quantity ?? null;
+  const raw = Number.isFinite(metaQty) && metaQty > 0 ? metaQty : itemQty ?? 1;
+  return clampAgentQuantity(plan, raw);
+}
+
+export function planFromCheckout(
+  session: Stripe.Checkout.Session,
+  env: NodeJS.ProcessEnv = process.env,
+): CheckoutPlanId | null {
+  const fromMeta = planFromUnknown(session.metadata?.plan ?? session.metadata?.Plan);
   if (fromMeta) return fromMeta;
-  return planFromAmount(session.amount_total);
+  return planFromPriceId(priceIdFromCheckout(session), env);
+}
+
+export function planFromSubscription(
+  sub: Stripe.Subscription,
+  env: NodeJS.ProcessEnv = process.env,
+): CheckoutPlanId | null {
+  const fromMeta = planFromUnknown(sub.metadata?.plan);
+  if (fromMeta) return fromMeta;
+  const priceId = firstPriceIdFromUnknown(sub.items.data[0]?.price);
+  return planFromPriceId(priceId, env);
 }
 
 export async function applyCheckoutSession(session: Stripe.Checkout.Session): Promise<SeatRecord | null> {
   const email = session.customer_details?.email ?? session.customer_email;
   if (!email) return null;
-  const plan = planFromCheckout(session);
+  const expanded = await expandCheckoutIfNeeded(session);
+  const plan = planFromCheckout(expanded);
   if (!plan) return null;
   const store = getSeatStore();
   const existing = await store.getByCheckoutSession(session.id);
@@ -91,15 +140,31 @@ export async function applyCheckoutSession(session: Stripe.Checkout.Session): Pr
       : session.subscription && typeof session.subscription === "object"
         ? session.subscription.id
         : null;
+  const quantity = quantityFromCheckout(expanded, plan);
   const seat = createSeat({
     email,
     plan,
     stripeCustomerId: customerId,
     stripeSubscriptionId: subscriptionId,
     stripeCheckoutSessionId: session.id,
+    stripePriceId: priceIdFromCheckout(expanded),
+    agentQuantity: quantity,
+    maxComputers: computersForPurchase(plan, quantity),
     periodStart: session.created ? new Date(session.created * 1000).toISOString() : null,
   });
   return store.upsert(seat);
+}
+
+async function expandCheckoutIfNeeded(session: Stripe.Checkout.Session): Promise<Stripe.Checkout.Session> {
+  if (session.line_items?.data?.length) return session;
+  if (planFromUnknown(session.metadata?.plan)) return session;
+  const client = getStripe();
+  if (!client) return session;
+  try {
+    return await client.checkout.sessions.retrieve(session.id, { expand: ["line_items.data.price"] });
+  } catch {
+    return session;
+  }
 }
 
 /** Verified checkout, not a guessed seat. Emails must match the signed-in user. */
@@ -115,7 +180,9 @@ export async function ensureSeatFromCheckout(
   const client = getStripe();
   if (!client) return null;
   try {
-    const session = await client.checkout.sessions.retrieve(sessionId);
+    const session = await client.checkout.sessions.retrieve(sessionId, {
+      expand: ["line_items.data.price"],
+    });
     const checkoutEmail = session.customer_details?.email ?? session.customer_email;
     if (!checkoutEmail || !emailsMatch(checkoutEmail, email)) return null;
     return applyCheckoutSession(session);
@@ -139,15 +206,33 @@ function subscriptionPeriod(sub: Stripe.Subscription): { start: string | null; e
   };
 }
 
+function idFromUnknown(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  const obj = asObject(value);
+  return obj ? asString(obj.id) : null;
+}
+
 function invoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
   const raw = invoice as unknown as Record<string, unknown>;
-  const direct = raw.subscription;
-  if (typeof direct === "string") return direct;
-  const nested = asObject(direct);
-  if (nested && typeof nested.id === "string") return nested.id;
   const parent = asObject(raw.parent);
   const details = parent ? asObject(parent.subscription_details) : null;
-  return asString(details?.subscription);
+  const lines = asObject(raw.lines);
+  const lineRows = Array.isArray(lines?.data) ? lines.data : [];
+  const fromLines = lineRows
+    .map((row) => idFromUnknown(asObject(row)?.subscription))
+    .find((id) => id);
+  return (
+    idFromUnknown(raw.subscription) ??
+    asString(raw.subscription_id) ??
+    idFromUnknown(details?.subscription) ??
+    fromLines ??
+    null
+  );
+}
+
+function invoiceCustomerId(invoice: Stripe.Invoice): string | null {
+  const raw = invoice as unknown as Record<string, unknown>;
+  return idFromUnknown(raw.customer);
 }
 
 export async function applySubscription(sub: Stripe.Subscription): Promise<SeatRecord | null> {
@@ -163,31 +248,43 @@ export async function applySubscription(sub: Stripe.Subscription): Promise<SeatR
       : sub.status === "canceled"
         ? "canceled"
         : "active";
-  const plan =
-    planFromUnknown(sub.metadata?.plan) ??
-    existing?.plan ??
-    planFromAmount(sub.items.data[0]?.price.unit_amount ?? null);
+  const quantity = clampAgentQuantity(
+    planFromSubscription(sub) ?? existing?.plan ?? "personal",
+    Number(sub.items.data[0]?.quantity ?? existing?.agentQuantity ?? 1),
+  );
+  const plan = planFromSubscription(sub) ?? existing?.plan ?? null;
   if (!existing && (!emailRaw || !plan)) return null;
   const period = subscriptionPeriod(sub);
+  const priceId = firstPriceIdFromUnknown(sub.items.data[0]?.price) ?? existing?.stripePriceId ?? null;
   if (existing) {
-    const next: SeatRecord = {
+    const nextPlan = plan ?? existing.plan;
+    const periodChanged = Boolean(period.start && period.start !== existing.periodStart);
+    let next: SeatRecord = {
       ...existing,
       status,
-      plan: plan ?? existing.plan,
-      hoursIncluded: hoursForPlan(plan ?? existing.plan),
+      plan: nextPlan,
+      stripePriceId: priceId,
+      agentQuantity: quantity,
+      maxComputers: computersForPurchase(nextPlan, quantity),
+      hoursIncluded: hoursForPurchase(nextPlan, quantity),
       periodStart: period.start ?? existing.periodStart,
       periodEnd: period.end ?? existing.periodEnd,
     };
+    if (periodChanged) {
+      next = applyMeteredSeconds({ ...next, secondsUsed: 0, hoursUsed: 0 }, 0, new Date().toISOString());
+    }
     return store.upsert(next);
   }
   const customerId = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
   return store.upsert(
     createSeat({
       email: emailRaw ?? "",
-      plan: plan ?? "desk",
+      plan: plan ?? "personal",
       stripeCustomerId: customerId,
       stripeSubscriptionId: sub.id,
+      stripePriceId: priceId,
       status,
+      agentQuantity: quantity,
       periodStart: period.start,
       periodEnd: period.end,
     }),
@@ -207,10 +304,14 @@ export async function applyStripeEvent(event: Stripe.Event): Promise<SeatRecord 
   }
   if (event.type === "invoice.payment_failed") {
     const invoice = event.data.object as Stripe.Invoice;
-    const subId = invoiceSubscriptionId(invoice);
-    if (!subId) return null;
     const store = getSeatStore();
-    const existing = await store.getBySubscription(subId);
+    const subId = invoiceSubscriptionId(invoice);
+    const customerId = invoiceCustomerId(invoice);
+    const existing =
+      (subId ? await store.getBySubscription(subId) : null) ??
+      (customerId
+        ? (await store.listAll()).find((row) => row.stripeCustomerId === customerId) ?? null
+        : null);
     if (!existing) return null;
     return store.upsert({ ...existing, status: "past_due" });
   }
@@ -236,4 +337,64 @@ export function parseUnsignedStripeEvent(raw: unknown): Stripe.Event | null {
 
 export function asStripeNumber(value: unknown): number | null {
   return asNumber(value);
+}
+
+export class CheckoutNotConfigured extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CheckoutNotConfigured";
+  }
+}
+
+export async function createCheckoutSession(input: {
+  request: Request;
+  plan: string;
+  email: string;
+  quantity?: number;
+}): Promise<{ url: string }> {
+  if (!isCheckoutPlanId(input.plan)) {
+    throw new CheckoutNotConfigured("That plan is not available for self-serve checkout.");
+  }
+  const priceId = stripePriceIdForPlan(input.plan);
+  if (!priceId) {
+    throw new CheckoutNotConfigured(
+      `${stripePriceEnvNameSafe(input.plan)} is not set on this environment. Create a Stripe Price and set the env var (test Price ID on Preview, live Price ID on Production).`,
+    );
+  }
+  const client = getStripe();
+  if (!client) {
+    throw new CheckoutNotConfigured("STRIPE_SECRET_KEY is required to start checkout.");
+  }
+  const quantity = clampAgentQuantity(input.plan, input.quantity ?? 1);
+  const { successUrl, cancelUrl } = checkoutReturnUrls(input.request);
+  const session = await client.checkout.sessions.create({
+    mode: "subscription",
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    customer_email: normalizeEmail(input.email),
+    client_reference_id: normalizeEmail(input.email),
+    line_items: [{ price: priceId, quantity }],
+    metadata: {
+      plan: input.plan,
+      price_id: priceId,
+      agent_quantity: String(quantity),
+    },
+    subscription_data: {
+      metadata: {
+        plan: input.plan,
+        price_id: priceId,
+        agent_quantity: String(quantity),
+      },
+    },
+  });
+  if (!session.url) {
+    throw new CheckoutNotConfigured("Stripe did not return a checkout URL.");
+  }
+  return { url: session.url };
+}
+
+function stripePriceEnvNameSafe(plan: CheckoutPlanId): string {
+  if (plan === "personal") return "STRIPE_PRICE_PERSONAL";
+  if (plan === "pro") return "STRIPE_PRICE_PRO";
+  return "STRIPE_PRICE_TEAM";
 }

@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME, loadAuthSession } from "./auth/workos";
 import { getSeatStore } from "./billing/seats";
 import { ensureSeatFromCheckout, getStripeCheckoutEmail } from "./billing/stripe";
+import { provisionSeatComputers } from "./billing/lifecycle";
 import { desksForSeats } from "./desks/runtime";
 import { sessionFromSeats } from "./setup-payload";
 import { gateFromSearch, previewSession } from "./session";
@@ -25,7 +26,17 @@ export async function readAuthFromCookies(): Promise<{
 }
 
 export async function liveSeatSession(email: string, webhookPending = false): Promise<SeatSession> {
-  const seats = await getSeatStore().listByEmail(email);
+  const store = getSeatStore();
+  let seats = await store.listByEmail(email);
+  for (const seat of seats) {
+    if (seat.status !== "active") continue;
+    try {
+      await provisionSeatComputers(seat);
+    } catch (err) {
+      console.error("[setup.provision]", seat.id, err instanceof Error ? err.message : err);
+    }
+  }
+  seats = await store.listByEmail(email);
   const desks = await desksForSeats(seats);
   return sessionFromSeats({ email, seats, desks, webhookPending });
 }

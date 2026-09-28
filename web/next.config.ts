@@ -28,6 +28,7 @@ const nextConfig: NextConfig = {
       ...(config.resolve.alias ?? {}),
       zod: path.join(webModules, "zod"),
       "@runloop/api-client": path.join(webModules, "@runloop/api-client"),
+      pg: path.join(webModules, "pg"),
     };
     return config;
   },

@@ -1,38 +1,75 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
+import {
+  computersForPurchase,
+  hoursForPurchase,
+  normalizePlanId,
+  type CheckoutPlanId,
+  type PlanId,
+} from "./catalog";
 import { hoursForPlan, normalizeEmail } from "./plans";
-import type { PlanId } from "../types";
+
+function hoursFromSeconds(seconds: number): number {
+  return seconds / 3600;
+}
 
 export type SeatStatus = "active" | "past_due" | "canceled";
 
 export type SeatRecord = {
   id: string;
   email: string;
-  plan: PlanId;
+  plan: CheckoutPlanId;
   status: SeatStatus;
   stripeCustomerId: string;
   stripeSubscriptionId: string | null;
   stripeCheckoutSessionId: string | null;
+  stripePriceId: string | null;
   hoursIncluded: number;
   hoursUsed: number;
+  secondsUsed: number;
+  overageEnabled: boolean;
+  maxComputers: number;
+  agentQuantity: number;
   periodStart: string | null;
   periodEnd: string | null;
   computerId: string | null;
+  computerIds: string[];
+  lastMeteredAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
 export interface SeatStore {
   listByEmail(email: string): Promise<SeatRecord[]>;
+  listAll(): Promise<SeatRecord[]>;
   getById(id: string): Promise<SeatRecord | null>;
   getByCheckoutSession(id: string): Promise<SeatRecord | null>;
   getBySubscription(id: string): Promise<SeatRecord | null>;
   upsert(seat: SeatRecord): Promise<SeatRecord>;
 }
 
+export class DurableStoreRequired extends Error {
+  constructor(
+    message = "DATABASE_URL is required on Vercel and in production. Local development may use memory or FLOK_SEAT_STORE_PATH under .flok.",
+  ) {
+    super(message);
+    this.name = "DurableStoreRequired";
+  }
+}
+
 export function newSeatId(): string {
   return randomBytes(16).toString("hex");
+}
+
+export function requiresDurableStore(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.NODE_ENV === "test") return false;
+  if (env.VERCEL_ENV === "production" || env.NODE_ENV === "production") return true;
+  return env.VERCEL === "1";
+}
+
+function asCheckoutPlan(plan: PlanId | CheckoutPlanId): CheckoutPlanId {
+  return normalizePlanId(plan) ?? "personal";
 }
 
 export function createSeat(input: {
@@ -41,28 +78,73 @@ export function createSeat(input: {
   stripeCustomerId: string;
   stripeSubscriptionId?: string | null;
   stripeCheckoutSessionId?: string | null;
+  stripePriceId?: string | null;
   status?: SeatStatus;
   hoursUsed?: number;
+  secondsUsed?: number;
+  overageEnabled?: boolean;
+  maxComputers?: number;
+  agentQuantity?: number;
   periodStart?: string | null;
   periodEnd?: string | null;
   computerId?: string | null;
+  computerIds?: string[];
+  lastMeteredAt?: string | null;
 }): SeatRecord {
   const now = new Date().toISOString();
+  const plan = asCheckoutPlan(input.plan);
+  const agentQuantity = Math.max(1, input.agentQuantity ?? 1);
+  const secondsUsed =
+    input.secondsUsed ??
+    (typeof input.hoursUsed === "number" ? Math.round(input.hoursUsed * 3600) : 0);
+  const computerIds = input.computerIds?.filter(Boolean) ?? [];
+  if (input.computerId && !computerIds.includes(input.computerId)) {
+    computerIds.unshift(input.computerId);
+  }
   return {
     id: newSeatId(),
     email: normalizeEmail(input.email),
-    plan: input.plan,
+    plan,
     status: input.status ?? "active",
     stripeCustomerId: input.stripeCustomerId,
     stripeSubscriptionId: input.stripeSubscriptionId ?? null,
     stripeCheckoutSessionId: input.stripeCheckoutSessionId ?? null,
-    hoursIncluded: hoursForPlan(input.plan),
-    hoursUsed: input.hoursUsed ?? 0,
+    stripePriceId: input.stripePriceId ?? null,
+    hoursIncluded: hoursForPurchase(plan, agentQuantity),
+    hoursUsed: hoursFromSeconds(secondsUsed),
+    secondsUsed,
+    overageEnabled: input.overageEnabled ?? false,
+    maxComputers: input.maxComputers ?? computersForPurchase(plan, agentQuantity),
+    agentQuantity,
     periodStart: input.periodStart ?? null,
     periodEnd: input.periodEnd ?? null,
-    computerId: input.computerId ?? null,
+    computerId: computerIds[0] ?? input.computerId ?? null,
+    computerIds,
+    lastMeteredAt: input.lastMeteredAt ?? now,
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+function normalizeSeat(seat: SeatRecord): SeatRecord {
+  const computerIds = [...seat.computerIds];
+  if (seat.computerId && !computerIds.includes(seat.computerId)) computerIds.unshift(seat.computerId);
+  const secondsUsed = Number.isFinite(seat.secondsUsed)
+    ? seat.secondsUsed
+    : Math.round((seat.hoursUsed ?? 0) * 3600);
+  return {
+    ...seat,
+    email: normalizeEmail(seat.email),
+    plan: asCheckoutPlan(seat.plan),
+    hoursIncluded: hoursForPlan(seat.plan, seat.agentQuantity || 1),
+    secondsUsed,
+    hoursUsed: hoursFromSeconds(secondsUsed),
+    computerIds,
+    computerId: computerIds[0] ?? seat.computerId ?? null,
+    overageEnabled: Boolean(seat.overageEnabled),
+    maxComputers: seat.maxComputers || 1,
+    agentQuantity: seat.agentQuantity || 1,
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -72,6 +154,10 @@ export class MemorySeatStore implements SeatStore {
   async listByEmail(email: string): Promise<SeatRecord[]> {
     const key = normalizeEmail(email);
     return [...this.rows.values()].filter((row) => row.email === key);
+  }
+
+  async listAll(): Promise<SeatRecord[]> {
+    return [...this.rows.values()];
   }
 
   async getById(id: string): Promise<SeatRecord | null> {
@@ -87,7 +173,7 @@ export class MemorySeatStore implements SeatStore {
   }
 
   async upsert(seat: SeatRecord): Promise<SeatRecord> {
-    const next = { ...seat, email: normalizeEmail(seat.email), updatedAt: new Date().toISOString() };
+    const next = normalizeSeat(seat);
     this.rows.set(next.id, next);
     return next;
   }
@@ -106,7 +192,7 @@ export class JsonSeatStore implements SeatStore {
       if (!raw.trim()) return [];
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return [];
-      return parsed.filter(isSeatRecord);
+      return parsed.filter(isSeatRecord).map((row) => hydrateSeat(row));
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "ENOENT") return [];
@@ -126,6 +212,10 @@ export class JsonSeatStore implements SeatStore {
     return (await this.load()).filter((row) => row.email === key);
   }
 
+  async listAll(): Promise<SeatRecord[]> {
+    return this.load();
+  }
+
   async getById(id: string): Promise<SeatRecord | null> {
     return (await this.load()).find((row) => row.id === id) ?? null;
   }
@@ -139,7 +229,7 @@ export class JsonSeatStore implements SeatStore {
   }
 
   async upsert(seat: SeatRecord): Promise<SeatRecord> {
-    const next = { ...seat, email: normalizeEmail(seat.email), updatedAt: new Date().toISOString() };
+    const next = normalizeSeat(seat);
     const rows = await this.load();
     const idx = rows.findIndex((row) => row.id === next.id);
     if (idx >= 0) rows[idx] = next;
@@ -155,10 +245,53 @@ function isSeatRecord(value: unknown): value is SeatRecord {
   return (
     typeof row.id === "string" &&
     typeof row.email === "string" &&
-    (row.plan === "spark" || row.plan === "desk" || row.plan === "shift") &&
+    Boolean(normalizePlanId(row.plan)) &&
     (row.status === "active" || row.status === "past_due" || row.status === "canceled")
   );
 }
+
+function hydrateSeat(row: SeatRecord): SeatRecord {
+  const computerIds = Array.isArray(row.computerIds) ? row.computerIds.filter(Boolean) : [];
+  if (row.computerId && !computerIds.includes(row.computerId)) computerIds.unshift(row.computerId);
+  const secondsUsed =
+    typeof row.secondsUsed === "number" ? row.secondsUsed : Math.round((row.hoursUsed ?? 0) * 3600);
+  const plan = asCheckoutPlan(row.plan);
+  const agentQuantity = row.agentQuantity || 1;
+  return {
+    ...row,
+    plan,
+    secondsUsed,
+    hoursUsed: hoursFromSeconds(secondsUsed),
+    hoursIncluded: row.hoursIncluded || hoursForPurchase(plan, agentQuantity),
+    overageEnabled: Boolean(row.overageEnabled),
+    maxComputers: row.maxComputers || computersForPurchase(plan, agentQuantity),
+    agentQuantity,
+    stripePriceId: row.stripePriceId ?? null,
+    computerIds,
+    computerId: computerIds[0] ?? row.computerId ?? null,
+    lastMeteredAt: row.lastMeteredAt ?? row.updatedAt ?? null,
+  };
+}
+
+const SEAT_SELECT = `SELECT id, email, plan, status,
+              stripe_customer_id AS "stripeCustomerId",
+              stripe_subscription_id AS "stripeSubscriptionId",
+              stripe_checkout_session_id AS "stripeCheckoutSessionId",
+              stripe_price_id AS "stripePriceId",
+              hours_included AS "hoursIncluded",
+              hours_used AS "hoursUsed",
+              seconds_used AS "secondsUsed",
+              overage_enabled AS "overageEnabled",
+              max_computers AS "maxComputers",
+              agent_quantity AS "agentQuantity",
+              period_start AS "periodStart",
+              period_end AS "periodEnd",
+              computer_id AS "computerId",
+              computer_ids AS "computerIds",
+              last_metered_at AS "lastMeteredAt",
+              created_at AS "createdAt",
+              updated_at AS "updatedAt"
+         FROM billing_seats`;
 
 export class PostgresSeatStore implements SeatStore {
   constructor(private readonly databaseUrl: string) {}
@@ -175,89 +308,53 @@ export class PostgresSeatStore implements SeatStore {
     }
   }
 
+  private map(row: SeatRecord): SeatRecord {
+    const computerIds = Array.isArray(row.computerIds)
+      ? row.computerIds
+      : typeof row.computerIds === "string"
+        ? (JSON.parse(row.computerIds) as string[])
+        : [];
+    return hydrateSeat({ ...row, computerIds });
+  }
+
   async listByEmail(email: string): Promise<SeatRecord[]> {
-    return this.query<SeatRecord>(
-      `SELECT id, email, plan, status,
-              stripe_customer_id AS "stripeCustomerId",
-              stripe_subscription_id AS "stripeSubscriptionId",
-              stripe_checkout_session_id AS "stripeCheckoutSessionId",
-              hours_included AS "hoursIncluded",
-              hours_used AS "hoursUsed",
-              period_start AS "periodStart",
-              period_end AS "periodEnd",
-              computer_id AS "computerId",
-              created_at AS "createdAt",
-              updated_at AS "updatedAt"
-         FROM billing_seats WHERE email = $1`,
-      [normalizeEmail(email)],
-    );
+    const rows = await this.query<SeatRecord>(`${SEAT_SELECT} WHERE email = $1`, [
+      normalizeEmail(email),
+    ]);
+    return rows.map((row) => this.map(row));
+  }
+
+  async listAll(): Promise<SeatRecord[]> {
+    const rows = await this.query<SeatRecord>(SEAT_SELECT, []);
+    return rows.map((row) => this.map(row));
   }
 
   async getById(id: string): Promise<SeatRecord | null> {
-    const rows = await this.query<SeatRecord>(
-      `SELECT id, email, plan, status,
-              stripe_customer_id AS "stripeCustomerId",
-              stripe_subscription_id AS "stripeSubscriptionId",
-              stripe_checkout_session_id AS "stripeCheckoutSessionId",
-              hours_included AS "hoursIncluded",
-              hours_used AS "hoursUsed",
-              period_start AS "periodStart",
-              period_end AS "periodEnd",
-              computer_id AS "computerId",
-              created_at AS "createdAt",
-              updated_at AS "updatedAt"
-         FROM billing_seats WHERE id = $1`,
-      [id],
-    );
-    return rows[0] ?? null;
+    const rows = await this.query<SeatRecord>(`${SEAT_SELECT} WHERE id = $1`, [id]);
+    return rows[0] ? this.map(rows[0]) : null;
   }
 
   async getByCheckoutSession(id: string): Promise<SeatRecord | null> {
-    const rows = await this.query<SeatRecord>(
-      `SELECT id, email, plan, status,
-              stripe_customer_id AS "stripeCustomerId",
-              stripe_subscription_id AS "stripeSubscriptionId",
-              stripe_checkout_session_id AS "stripeCheckoutSessionId",
-              hours_included AS "hoursIncluded",
-              hours_used AS "hoursUsed",
-              period_start AS "periodStart",
-              period_end AS "periodEnd",
-              computer_id AS "computerId",
-              created_at AS "createdAt",
-              updated_at AS "updatedAt"
-         FROM billing_seats WHERE stripe_checkout_session_id = $1`,
-      [id],
-    );
-    return rows[0] ?? null;
+    const rows = await this.query<SeatRecord>(`${SEAT_SELECT} WHERE stripe_checkout_session_id = $1`, [
+      id,
+    ]);
+    return rows[0] ? this.map(rows[0]) : null;
   }
 
   async getBySubscription(id: string): Promise<SeatRecord | null> {
-    const rows = await this.query<SeatRecord>(
-      `SELECT id, email, plan, status,
-              stripe_customer_id AS "stripeCustomerId",
-              stripe_subscription_id AS "stripeSubscriptionId",
-              stripe_checkout_session_id AS "stripeCheckoutSessionId",
-              hours_included AS "hoursIncluded",
-              hours_used AS "hoursUsed",
-              period_start AS "periodStart",
-              period_end AS "periodEnd",
-              computer_id AS "computerId",
-              created_at AS "createdAt",
-              updated_at AS "updatedAt"
-         FROM billing_seats WHERE stripe_subscription_id = $1`,
-      [id],
-    );
-    return rows[0] ?? null;
+    const rows = await this.query<SeatRecord>(`${SEAT_SELECT} WHERE stripe_subscription_id = $1`, [id]);
+    return rows[0] ? this.map(rows[0]) : null;
   }
 
   async upsert(seat: SeatRecord): Promise<SeatRecord> {
-    const next = { ...seat, email: normalizeEmail(seat.email), updatedAt: new Date().toISOString() };
+    const next = normalizeSeat(seat);
     await this.query(
       `INSERT INTO billing_seats (
           id, email, plan, status, stripe_customer_id, stripe_subscription_id,
-          stripe_checkout_session_id, hours_included, hours_used, period_start,
-          period_end, computer_id, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+          stripe_checkout_session_id, stripe_price_id, hours_included, hours_used,
+          seconds_used, overage_enabled, max_computers, agent_quantity, period_start,
+          period_end, computer_id, computer_ids, last_metered_at, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
         ON CONFLICT (id) DO UPDATE SET
           email = EXCLUDED.email,
           plan = EXCLUDED.plan,
@@ -265,11 +362,18 @@ export class PostgresSeatStore implements SeatStore {
           stripe_customer_id = EXCLUDED.stripe_customer_id,
           stripe_subscription_id = EXCLUDED.stripe_subscription_id,
           stripe_checkout_session_id = EXCLUDED.stripe_checkout_session_id,
+          stripe_price_id = EXCLUDED.stripe_price_id,
           hours_included = EXCLUDED.hours_included,
           hours_used = EXCLUDED.hours_used,
+          seconds_used = EXCLUDED.seconds_used,
+          overage_enabled = EXCLUDED.overage_enabled,
+          max_computers = EXCLUDED.max_computers,
+          agent_quantity = EXCLUDED.agent_quantity,
           period_start = EXCLUDED.period_start,
           period_end = EXCLUDED.period_end,
           computer_id = EXCLUDED.computer_id,
+          computer_ids = EXCLUDED.computer_ids,
+          last_metered_at = EXCLUDED.last_metered_at,
           updated_at = EXCLUDED.updated_at`,
       [
         next.id,
@@ -279,11 +383,18 @@ export class PostgresSeatStore implements SeatStore {
         next.stripeCustomerId,
         next.stripeSubscriptionId,
         next.stripeCheckoutSessionId,
+        next.stripePriceId,
         next.hoursIncluded,
         next.hoursUsed,
+        next.secondsUsed,
+        next.overageEnabled,
+        next.maxComputers,
+        next.agentQuantity,
         next.periodStart,
         next.periodEnd,
         next.computerId,
+        next.computerIds,
+        next.lastMeteredAt,
         next.createdAt,
         next.updatedAt,
       ],
@@ -306,11 +417,14 @@ function jailedSeatPath(userPath: string, cwd = process.cwd()): string {
 }
 
 export function seatStoreFromEnv(env: NodeJS.ProcessEnv = process.env): SeatStore {
+  const databaseUrl = env.DATABASE_URL?.trim();
+  if (databaseUrl) return new PostgresSeatStore(databaseUrl);
+  if (requiresDurableStore(env)) {
+    throw new DurableStoreRequired();
+  }
   if (env.NODE_ENV === "test" || env.FLOK_WEB_SEAT_STORE === "memory") {
     return memory;
   }
-  const databaseUrl = env.DATABASE_URL?.trim();
-  if (databaseUrl) return new PostgresSeatStore(databaseUrl);
   const filePath = env.FLOK_SEAT_STORE_PATH?.trim();
   if (filePath) return new JsonSeatStore(jailedSeatPath(filePath));
   return memory;
@@ -328,10 +442,10 @@ export function resetSeatStoreForTests(): void {
 
 export function periodLabel(seat: SeatRecord): string | null {
   if (seat.periodStart && seat.periodEnd) {
-    const start = seat.periodStart.slice(0, 10);
-    const end = seat.periodEnd.slice(0, 10);
+    const start = String(seat.periodStart).slice(0, 10);
+    const end = String(seat.periodEnd).slice(0, 10);
     return `${start} – ${end}`;
   }
-  if (seat.periodEnd) return `Renews ${seat.periodEnd.slice(0, 10)}`;
+  if (seat.periodEnd) return `Renews ${String(seat.periodEnd).slice(0, 10)}`;
   return null;
 }

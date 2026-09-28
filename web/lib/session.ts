@@ -20,6 +20,7 @@ export function gateFromSearch(search: {
   const sessionId = firstQuery(search.session_id);
   const error = (firstQuery(search.error) ?? firstQuery(search.link) ?? "").toLowerCase();
   if (error === "expired") return { gate: "expired", sessionId };
+  if (error === "workos_env" || error === "invalid_client") return { gate: "workos_env", sessionId };
   if (error === "invalid") return { gate: "invalid", sessionId };
   if (sessionId) return { gate: "just_paid", sessionId };
   return { gate: "cold", sessionId: null };
@@ -66,7 +67,7 @@ export function previewSession(name: string): SeatSession | null {
   const base: SeatSession = {
     authenticated: true,
     billingEmail: "billing@example.test",
-    plan: "desk",
+    plan: "pro",
     periodLabel: "Sep 1 – Oct 1",
     flockStatus: "ok",
     seats: 1,
@@ -153,7 +154,15 @@ export function parseSeatSession(raw: unknown): SeatSession | null {
   if (!email) return null;
   const planRaw = asString(obj.plan);
   const plan =
-    planRaw === "spark" || planRaw === "desk" || planRaw === "shift" ? planRaw : null;
+    planRaw === "personal" || planRaw === "pro" || planRaw === "team"
+      ? planRaw
+      : planRaw === "spark" || planRaw === "desk" || planRaw === "shift"
+        ? planRaw === "spark"
+          ? "personal"
+          : planRaw === "desk"
+            ? "pro"
+            : "team"
+        : null;
   const desksRaw = obj.desks;
   const desks: DeskRecord[] = [];
   if (Array.isArray(desksRaw)) {

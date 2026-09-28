@@ -7,16 +7,25 @@ import {
 } from "../../../src/lib/computers/index";
 import type { Computer, ComputerPairCode, ComputerProvider } from "../../../src/lib/computers/index";
 import { getSeatStore, type SeatRecord } from "../billing/seats";
+import { webControlPlaneStore } from "../store/control-plane-pg";
 import { mapComputerState } from "./map-state";
 import type { DeskRecord } from "../types";
+
+export function paidProviderForbiddenMessage(): string {
+  return "Paid Staxions computers require FLOK_WEB_PROVIDER=runloop, RUNLOOP_API_KEY, and FLOK_RUNLOOP_BLUEPRINT. The demo provider cannot be served to a paying customer in production.";
+}
 
 let servicePromise: Promise<ComputerService> | null = null;
 let lastRevealed = new Map<string, { code: string; seatId: string }>();
 
-function useRunloop(): boolean {
-  if (process.env.FLOK_WEB_PROVIDER !== "runloop") return false;
-  if (process.env.CI === "true" || process.env.NODE_ENV === "test") return false;
-  return Boolean(process.env.RUNLOOP_API_KEY?.trim() && process.env.FLOK_RUNLOOP_BLUEPRINT?.trim());
+export function useRunloop(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.FLOK_WEB_PROVIDER !== "runloop") return false;
+  if (env.CI === "true" || env.NODE_ENV === "test") return false;
+  return Boolean(env.RUNLOOP_API_KEY?.trim() && env.FLOK_RUNLOOP_BLUEPRINT?.trim());
+}
+
+export function isProductionRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.NODE_ENV === "production" || env.VERCEL_ENV === "production";
 }
 
 async function createProvider(): Promise<ComputerProvider> {
@@ -31,7 +40,9 @@ export async function getComputerService(): Promise<ComputerService> {
   if (!servicePromise) {
     servicePromise = (async () => {
       const provider = await createProvider();
-      const store = controlPlaneStoreFromEnv(process.env, provider.name);
+      const store =
+        webControlPlaneStore(process.env, provider.name) ??
+        controlPlaneStoreFromEnv(process.env, provider.name);
       const service = new ComputerService(provider, store ? { store } : undefined);
       await service.hydrate();
       return service;
@@ -45,8 +56,8 @@ export function resetDeskRuntimeForTests(): void {
   lastRevealed = new Map();
 }
 
-export function birdIdForSeat(seat: SeatRecord): string {
-  return `seat:${seat.id}`;
+export function birdIdForSeat(seat: SeatRecord, index = 0): string {
+  return index === 0 ? `seat:${seat.id}` : `seat:${seat.id}:${index}`;
 }
 
 export function flockIdForEmail(email: string): string {
@@ -59,6 +70,7 @@ function toDesk(
   computer: Computer | null,
   codes: ComputerPairCode[],
   pairStatus: "unpaired" | "pairing" | "paired",
+  deskId: string,
 ): DeskRecord {
   const unusedOpen = codes.find((rec) => rec.usedAt === null && rec.expiresAt.getTime() > Date.now());
   const state = mapComputerState({
@@ -70,7 +82,7 @@ function toDesk(
   });
   const revealed = lastRevealed.get(seat.id);
   return {
-    id: seat.id,
+    id: deskId,
     state,
     userCode: revealed?.code ?? null,
     pendingRequest: pairStatus === "pairing",
@@ -85,16 +97,20 @@ export async function desksForSeats(seats: SeatRecord[]): Promise<DeskRecord[]> 
   const service = await getComputerService();
   const out: DeskRecord[] = [];
   for (const seat of seats) {
-    if (seat.status === "canceled" && !seat.computerId) {
-      out.push(toDesk(seat, null, [], "unpaired"));
+    const slots = Math.max(1, seat.maxComputers || 1);
+    if (seat.status === "canceled" && !seat.computerId && seat.computerIds.length === 0) {
+      out.push(toDesk(seat, null, [], "unpaired", seat.id));
       continue;
     }
-    const computer =
-      (seat.computerId ? await safeGet(service, seat.computerId) : null) ??
-      (await service.getByBird(birdIdForSeat(seat)));
-    const codes = computer ? service.listPairCodes(computer.id) : [];
-    const pairStatus = computer ? service.pairStatus(computer.id) : "unpaired";
-    out.push(toDesk(seat, computer, codes, pairStatus));
+    for (let i = 0; i < slots; i++) {
+      const knownId = seat.computerIds[i] ?? (i === 0 ? seat.computerId : null);
+      const computer =
+        (knownId ? await safeGet(service, knownId) : null) ??
+        (await service.getByBird(birdIdForSeat(seat, i)));
+      const codes = computer ? service.listPairCodes(computer.id) : [];
+      const pairStatus = computer ? service.pairStatus(computer.id) : "unpaired";
+      out.push(toDesk(seat, computer, codes, pairStatus, i === 0 ? seat.id : `${seat.id}:${i}`));
+    }
   }
   return out;
 }
@@ -107,19 +123,47 @@ async function safeGet(service: ComputerService, id: string): Promise<Computer |
   }
 }
 
-export async function ensureComputer(seat: SeatRecord): Promise<Computer> {
+export async function ensureComputersForSeat(seat: SeatRecord): Promise<Computer[]> {
+  if (isProductionRuntime() && seat.status === "active" && !useRunloop()) {
+    throw new Error(paidProviderForbiddenMessage());
+  }
   const service = await getComputerService();
-  const existing =
-    (seat.computerId ? await safeGet(service, seat.computerId) : null) ??
-    (await service.getByBird(birdIdForSeat(seat)));
-  if (existing) return existing;
-  const created = await service.requestComputer({
-    birdId: birdIdForSeat(seat),
-    flockId: flockIdForEmail(seat.email),
-  });
-  const store = getSeatStore();
-  await store.upsert({ ...seat, computerId: created.id });
-  return created;
+  const wanted = Math.max(1, seat.maxComputers || 1);
+  const computers: Computer[] = [];
+  for (let i = 0; i < wanted; i++) {
+    const knownId = seat.computerIds[i] ?? (i === 0 ? seat.computerId : null);
+    const existing =
+      (knownId ? await safeGet(service, knownId) : null) ??
+      (await service.getByBird(birdIdForSeat(seat, i))) ??
+      (i === 0 ? await service.getByBird(birdIdForSeat(seat)) : null);
+    if (existing) {
+      computers.push(existing);
+      continue;
+    }
+    const created = await service.requestComputer({
+      birdId: birdIdForSeat(seat, i),
+      flockId: flockIdForEmail(seat.email),
+    });
+    computers.push(created);
+  }
+  const nextIds = computers.map((row) => row.id);
+  const changed =
+    nextIds.join("\0") !== seat.computerIds.join("\0") || seat.computerId !== (nextIds[0] ?? null);
+  if (changed) {
+    const store = getSeatStore();
+    await store.upsert({
+      ...seat,
+      computerId: nextIds[0] ?? null,
+      computerIds: nextIds,
+    });
+  }
+  return computers;
+}
+
+export async function ensureComputer(seat: SeatRecord): Promise<Computer> {
+  const [first] = await ensureComputersForSeat(seat);
+  if (!first) throw new Error("Could not provision a computer for this seat.");
+  return first;
 }
 
 export async function issuePairKey(seat: SeatRecord): Promise<{ code: string; expiresAt: Date; computerId: string }> {
@@ -159,4 +203,42 @@ export function consumeRevealedCode(seatId: string): string | null {
 
 export function webProviderName(): "fake" | "runloop" {
   return useRunloop() ? "runloop" : "fake";
+}
+
+export async function pauseComputer(computerId: string): Promise<void> {
+  const service = await getComputerService();
+  await service.pauseThisComputer(computerId);
+}
+
+export async function shutdownComputer(
+  computerId: string,
+  mode: "stop" | "destroy" = "stop",
+): Promise<void> {
+  const service = await getComputerService();
+  if (mode === "destroy") {
+    const computer = await safeGet(service, computerId);
+    if (computer?.providerRef) {
+      await service.destroyThisComputer(computer.id, {
+        confirm: true,
+        providerRef: computer.providerRef,
+      });
+      return;
+    }
+  }
+  try {
+    await service.stopThisComputer(computerId);
+  } catch {
+    const computer = await safeGet(service, computerId);
+    if (computer?.providerRef) {
+      await service.destroyThisComputer(computer.id, {
+        confirm: true,
+        providerRef: computer.providerRef,
+      });
+    }
+  }
+}
+
+export async function pingKeepAlive(computerId: string): Promise<void> {
+  const service = await getComputerService();
+  await service.refreshKeepAlive(computerId);
 }

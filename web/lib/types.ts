@@ -11,7 +11,7 @@ export const DESK_STATES = [
 
 export type DeskState = (typeof DESK_STATES)[number];
 
-export const GATE_STATES = ["cold", "just_paid", "expired", "invalid"] as const;
+export const GATE_STATES = ["cold", "just_paid", "expired", "invalid", "workos_env"] as const;
 export type GateState = (typeof GATE_STATES)[number];
 
 export const OAUTH_STATES = [
@@ -23,7 +23,7 @@ export const OAUTH_STATES = [
 ] as const;
 export type OauthUiState = (typeof OAUTH_STATES)[number];
 
-export type PlanId = "spark" | "desk" | "shift";
+export type PlanId = "personal" | "pro" | "team";
 
 export type DeskRecord = {
   id: string;

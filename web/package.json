@@ -2,7 +2,7 @@
   "name": "floks-pc-web",
   "private": true,
   "version": "0.0.1",
-  "description": "floks-pc.com public frontend — marketing, AuthKit sign-in, Stripe seats, /setup desks.",
+  "description": "Staxions public frontend — marketing, AuthKit sign-in, Stripe seats, /setup computers.",
   "engines": {
     "node": ">=22.12.0 <23"
   },

@@ -1,26 +1,33 @@
-import { PLAN_HOURS } from "../config";
-import type { PlanId } from "../types";
+import {
+  hoursForPurchase,
+  normalizePlanId,
+  planFromStripePriceId,
+  type CheckoutPlanId,
+  type PlanId,
+} from "./catalog";
 
-export { PLAN_HOURS };
+export type { CheckoutPlanId, PlanId };
 
-export function planFromAmount(amountTotal: number | null | undefined): PlanId | null {
-  if (amountTotal === 1900) return "spark";
-  if (amountTotal === 3900) return "desk";
-  if (amountTotal === 6900) return "shift";
+export function planFromUnknown(raw: unknown): CheckoutPlanId | null {
+  return normalizePlanId(raw);
+}
+
+/** Entitlement is by Stripe Price ID (or checkout metadata), never by amount. */
+export function planFromAmount(_amountTotal: number | null | undefined): CheckoutPlanId | null {
   return null;
 }
 
-export function planFromUnknown(raw: unknown): PlanId | null {
-  if (raw === "spark" || raw === "desk" || raw === "shift") return raw;
-  if (typeof raw === "string") {
-    const lower = raw.trim().toLowerCase();
-    if (lower === "spark" || lower === "desk" || lower === "shift") return lower;
-  }
-  return null;
+export function planFromPriceId(
+  priceId: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): CheckoutPlanId | null {
+  return planFromStripePriceId(priceId, env);
 }
 
-export function hoursForPlan(plan: PlanId): number {
-  return PLAN_HOURS[plan];
+export function hoursForPlan(plan: PlanId, quantity = 1): number {
+  const current = normalizePlanId(plan);
+  if (!current) return 0;
+  return hoursForPurchase(current, quantity);
 }
 
 export function normalizeEmail(email: string): string {
@@ -29,4 +36,12 @@ export function normalizeEmail(email: string): string {
 
 export function emailsMatch(a: string, b: string): boolean {
   return normalizeEmail(a) === normalizeEmail(b);
+}
+
+export function firstPriceIdFromUnknown(raw: unknown): string | null {
+  if (typeof raw === "string" && raw.startsWith("price_")) return raw;
+  if (typeof raw !== "object" || raw === null) return null;
+  const obj = raw as { id?: unknown; price?: unknown };
+  if (typeof obj.id === "string" && obj.id.startsWith("price_")) return obj.id;
+  return firstPriceIdFromUnknown(obj.price);
 }
