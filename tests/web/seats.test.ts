@@ -31,13 +31,13 @@ describe("seat ledger", () => {
     const seat = await store.upsert(
       createSeat({
         email: "Owner@Example.COM",
-        plan: "desk",
+        plan: "pro",
         stripeCustomerId: "cus_1",
         stripeCheckoutSessionId: "cs_1",
       }),
     );
     assert.equal(seat.email, "owner@example.com");
-    assert.equal(seat.hoursIncluded, 25);
+    assert.equal(seat.hoursIncluded, 40);
     const found = await store.listByEmail("OWNER@example.com");
     assert.equal(found.length, 1);
     assert.equal(periodLabel({ ...seat, periodStart: "2026-09-01T00:00:00Z", periodEnd: "2026-10-01T00:00:00Z" }), "2026-09-01 – 2026-10-01");
@@ -55,13 +55,15 @@ describe("seat ledger", () => {
           customer_details: { email: "Pay@Example.com" },
           subscription: "sub_live_1",
           created: 1_700_000_000,
+          metadata: { plan: "pro", price_id: "price_pro_test" },
+          line_items: { data: [{ price: { id: "price_pro_test" }, quantity: 1 }] },
         },
       },
     } as Stripe.Event;
     const first = await applyStripeEvent(event);
     const second = await applyStripeEvent(event);
     assert.ok(first);
-    assert.equal(first.plan, "desk");
+    assert.equal(first.plan, "pro");
     assert.equal(first.email, "pay@example.com");
     assert.equal(second?.id, first.id);
   });
@@ -71,7 +73,7 @@ describe("seat ledger", () => {
     await store.upsert(
       createSeat({
         email: "other@example.com",
-        plan: "spark",
+        plan: "personal",
         stripeCustomerId: "cus_other",
         stripeCheckoutSessionId: "cs_other",
       }),

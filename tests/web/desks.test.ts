@@ -119,7 +119,7 @@ describe("pair keys on FakeProvider", () => {
     const seat = await store.upsert(
       createSeat({
         email: "desk@example.com",
-        plan: "spark",
+        plan: "personal",
         stripeCustomerId: "cus_desk",
       }),
     );
@@ -139,7 +139,7 @@ describe("pair keys on FakeProvider", () => {
     const seat = await store.upsert(
       createSeat({
         email: "pair@example.com",
-        plan: "desk",
+        plan: "pro",
         stripeCustomerId: "cus_pair",
       }),
     );

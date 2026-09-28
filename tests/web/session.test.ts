@@ -4,6 +4,7 @@ import { gateFromSearch, parseSeatSession, previewSession } from "../../web/lib/
 import { previewEnabled } from "../../web/lib/preview.ts";
 import { callbackFinishPlan } from "../../web/lib/setup-client.ts";
 import { shouldSetSessionCookie } from "../../web/lib/auth/workos.ts";
+import { hoursForPurchase, planFromStripePriceId } from "../../web/lib/billing/catalog.ts";
 import { emailsMatch, hoursForPlan, planFromAmount } from "../../web/lib/billing/plans.ts";
 
 describe("setup gates + session parse", () => {
@@ -20,13 +21,13 @@ describe("setup gates + session parse", () => {
   it("parses a live seat JSON body and never requires a cookie field", () => {
     const session = parseSeatSession({
       billingEmail: "Owner@Example.com",
-      plan: "shift",
+      plan: "team",
       seats: 1,
       desk: { state: "pairing", user_code: "ABCD-EFGH", pending: true },
     });
     assert.ok(session);
     assert.equal(session.billingEmail, "Owner@Example.com");
-    assert.equal(session.plan, "shift");
+    assert.equal(session.plan, "team");
     assert.equal(session.desk?.state, "pairing");
     assert.equal(session.desk?.userCode, "ABCD-EFGH");
   });
@@ -57,12 +58,17 @@ describe("setup gates + session parse", () => {
     assert.match(authkit.nextHref, /^\/callback\?/);
   });
 
-  it("locks Spark/Desk/Shift hour caps and case-insensitive email bind", () => {
-    assert.equal(hoursForPlan("spark"), 8);
-    assert.equal(hoursForPlan("desk"), 25);
-    assert.equal(hoursForPlan("shift"), 60);
-    assert.equal(planFromAmount(1900), "spark");
+  it("locks Personal/Pro/Team hour caps by catalog and never by amount", () => {
+    assert.equal(hoursForPlan("personal"), 10);
+    assert.equal(hoursForPlan("pro"), 40);
+    assert.equal(hoursForPlan("team", 3), 90);
+    assert.equal(hoursForPurchase("team", 3), 90);
+    assert.equal(planFromAmount(1900), null);
     assert.equal(planFromAmount(12), null);
+    assert.equal(
+      planFromStripePriceId("price_x", { STRIPE_PRICE_PERSONAL: "price_x" }),
+      "personal",
+    );
     assert.equal(emailsMatch("Caelin@Example.com", "caelin@example.com"), true);
     assert.equal(emailsMatch("a@b.c", "other@b.c"), false);
   });

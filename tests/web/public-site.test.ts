@@ -37,6 +37,7 @@ describe("public site lock", () => {
     const pages = [
       "app/page.tsx",
       "app/join/page.tsx",
+      "app/pricing/page.tsx",
       "app/product/page.tsx",
       "app/how/page.tsx",
       "app/now/page.tsx",
@@ -76,11 +77,7 @@ describe("public site lock", () => {
       "pair",
       "docs",
       "help",
-      "pricing",
       "buy",
-      "spark",
-      "desk",
-      "shift",
       "architecture",
       "systems",
       "research",
@@ -103,9 +100,9 @@ describe("public site lock", () => {
     assert.match(copy, /Your agent has a mind\./);
     assert.match(copy, /isolated Agent Computer/);
     assert.match(copy, /Work stays in Grok/);
-    assert.match(copy, /Spark — \$19\/mo — 8 hours — 1 computer/);
-    assert.match(copy, /Desk — \$39\/mo — 25 hours — 1 computer/);
-    assert.match(copy, /Shift — \$69\/mo — 60 hours — 1 computer/);
+    assert.match(copy, /Personal — \$29\/mo — 10 hours — 1 computer/);
+    assert.match(copy, /Pro — \$99\/mo — 40 shared hours — 2 computers/);
+    assert.match(copy, /Team — \$79 per agent\/mo — 30 hours per agent — minimum 3 agents/);
     assert.match(copy, /Same eight tools on every desk\. Renews monthly until you cancel\./);
     assert.match(copy, /Create an account\. Then buy a computer\. We email a 6-digit code\./);
     assert.match(copy, /Create an account or sign in\. We email a 6-digit AuthKit code/);
@@ -115,7 +112,9 @@ describe("public site lock", () => {
     assert.match(copy, /That sign-in expired/);
     assert.match(copy, /This sign-in is not valid\./);
     assert.match(copy, /Signing you in/);
-    assert.match(copy, /Allow FLOKS to connect this Grok Bot as this paying customer/);
+    assert.doesNotMatch(copy, /\bFLOKS\b/);
+    assert.doesNotMatch(copy, /Spark|Desk|Shift/);
+    assert.match(copy, /Allow Staxions to connect this Grok Bot as this paying customer/);
     assert.match(copy, /Pairing is on \/setup/);
     assert.match(copy, /Hours bill while the computer is initializing, running, suspending, or resuming/);
     assert.match(copy, /Asleep and shutdown do not/);
@@ -131,6 +130,8 @@ describe("public site lock", () => {
     assert.doesNotMatch(copy, /The Missing Operating Layer/);
     assert.doesNotMatch(copy, /Your Grok Bot gets its own computer\./);
     const text = surface();
+    assert.doesNotMatch(text, /\bFLOKS\b/);
+    assert.doesNotMatch(text, /floks-pc\.com/);
     assert.doesNotMatch(text, /Where does this Bot sit when the shared machine is full\?/);
     assert.doesNotMatch(text, /Your Bots are capable of more/);
     assert.doesNotMatch(text, /Operating Layer for Bot Crews/i);
@@ -152,7 +153,7 @@ describe("public site lock", () => {
     assert.doesNotMatch(text, /href=["']\/evidence/);
     assert.doesNotMatch(text, /href=["']\/company/);
     const header = read("components/SiteHeader.tsx");
-    assert.match(header, /FLOKS/);
+    assert.match(header, /Staxions/);
     assert.match(header, /MANAGE_BILLING/);
     assert.match(header, /LOGOUT/);
     assert.match(header, /\/login/);
@@ -215,7 +216,7 @@ describe("public site lock", () => {
     assert.doesNotMatch(read("lib/legal.ts"), /label: "Security"/);
     assert.doesNotMatch(read("lib/legal.ts"), /label: "Status"/);
     assert.doesNotMatch(read("components/LegalFooter.tsx"), /href="\/legal"/);
-    assert.match(read("app/layout.tsx"), /default: "FLOKS"/);
+    assert.match(read("app/layout.tsx"), /default: "Staxions"/);
     assert.match(read("app/not-found.tsx"), /href="\/"/);
     assert.match(read("app/not-found.tsx"), /href="\/legal"/);
     assert.match(read("components/AuthorizeCard.tsx"), /Allow/);
@@ -245,12 +246,13 @@ describe("public site lock", () => {
     assert.equal(existsSync(join(WEB, "index.html")), false);
   });
 
-  it("wires live Stripe Payment Links and same-origin setup actions", () => {
+  it("wires server Checkout Sessions and same-origin setup actions", () => {
     const config = read("lib/config.ts");
-    assert.match(config, /buy\.stripe\.com\/dRm5kv54s8FO5NR0ES6wE00/);
-    assert.match(config, /buy\.stripe\.com\/dRm00b9kI2hqfor3R46wE01/);
-    assert.match(config, /buy\.stripe\.com\/eVq28j7cA5tCccf1IW6wE02/);
-    assert.match(config, /clientId: "floks-pc"/);
+    assert.doesNotMatch(config, /buy\.stripe\.com/);
+    assert.match(config, /clientId: "staxions"/);
+    assert.match(read("lib/billing/catalog.ts"), /STRIPE_PRICE_PERSONAL/);
+    assert.match(read("app/api/checkout/route.ts"), /createCheckoutSession/);
+    assert.match(read("app/api/cron/computers/route.ts"), /runComputerMaintenance/);
     assert.match(config, /scope: "mcp"/);
     assert.match(config, /\/oauth\/authorize/);
     assert.match(config, /\/oauth\/token/);
@@ -273,7 +275,7 @@ describe("public site lock", () => {
     const legal = read("lib/legal.ts");
     assert.match(legal, /path: "\/legal\/aup"/);
     assert.match(read("lib/config.ts"), /Adaptive Liquidity, Inc\./);
-    assert.match(legal, /support@floks-pc.com/);
+    assert.match(legal, /SUPPORT_EMAIL/);
     assert.match(legal, /initializing, running, suspending, or resuming/);
     assert.match(legal, /We do not sell personal data/);
   });

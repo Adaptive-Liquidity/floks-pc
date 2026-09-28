@@ -10,7 +10,7 @@ import {
   publicOriginFromRequest,
 } from "../../web/lib/auth/callback.ts";
 import { AuthNotConfigured, authKitScreenHint, authStartFallbackPath } from "../../web/lib/auth/workos.ts";
-import { planCheckoutHref, stripePaymentHref, STRIPE_LINKS } from "../../web/lib/config.ts";
+import { planCheckoutHref } from "../../web/lib/config.ts";
 
 describe("AuthKit account-first helpers", () => {
   it("maps screen=sign-up to the AuthKit sign-up hint and everything else to sign-in", () => {
@@ -67,15 +67,21 @@ describe("AuthKit account-first helpers", () => {
     assert.doesNotMatch(JSON.stringify(fields), /password_[A-Za-z0-9]{8,}/);
   });
 
-  it("sends unsigned plan clicks to /signup and signed-in clicks to Payment Links with email", () => {
-    assert.equal(planCheckoutHref(STRIPE_LINKS.desk), "/signup");
-    assert.equal(planCheckoutHref(STRIPE_LINKS.desk, { signedIn: false }), "/signup");
-    const paid = planCheckoutHref(STRIPE_LINKS.spark, {
-      signedIn: true,
-      email: "Owner@Example.com",
-    });
-    assert.match(paid, /^https:\/\/buy\.stripe\.com\//);
-    assert.match(paid, /prefilled_email=Owner%40Example\.com/);
-    assert.equal(stripePaymentHref(STRIPE_LINKS.shift, null), STRIPE_LINKS.shift);
+  it("sends unsigned plan clicks to /signup and signed-in clicks to server checkout", () => {
+    assert.equal(planCheckoutHref("pro"), "/signup");
+    assert.equal(planCheckoutHref("pro", { signedIn: false }), "/signup");
+    assert.equal(planCheckoutHref("personal", { signedIn: true }), "/api/checkout?plan=personal");
+    assert.equal(
+      callbackFailurePath(Object.assign(new Error("bad"), { error: "invalid_client" })),
+      "/setup?error=workos_env",
+    );
+    assert.equal(
+      callbackFailurePath(new Error("invalid_client: client secret from a different environment")),
+      "/setup?error=workos_env",
+    );
+    assert.equal(
+      authKitErrorFields(new Error("invalid_client: client secret from a different environment")).error,
+      "invalid_client",
+    );
   });
 });
