@@ -11,8 +11,16 @@ import {
   OAUTH_TITLE,
 } from "@/lib/copy";
 import { CONNECTOR } from "@/lib/config";
-import { oauthUiFromPreflight, parseAuthorizePreflightBody } from "@/lib/oauth";
+import { oauthUiFromPreflight, parseAuthorizePreflightBody } from "@/lib/oauth-ui";
 import type { OauthUiState } from "@/lib/types";
+
+function redirectHost(uri: string): string {
+  try {
+    return new URL(uri).host;
+  } catch {
+    return "invalid";
+  }
+}
 
 export function AuthorizeCard() {
   const search = useSearchParams();
@@ -55,6 +63,9 @@ export function AuthorizeCard() {
       <div className="card">
         <h1 className="question">{OAUTH_TITLE}</h1>
         <p className="lede">{OAUTH_BODY}</p>
+        {params.get("redirect_uri") ? (
+          <p className="note">Redirect host: {redirectHost(params.get("redirect_uri") ?? "")}</p>
+        ) : null}
         {state === "loading" ? <p className="note">{OAUTH_LOADING}</p> : null}
         {state === "invalid_client" ? <p className="fail">{OAUTH_INVALID}</p> : null}
         {state === "already_allowed" ? <p className="note">{OAUTH_ALREADY}</p> : null}
