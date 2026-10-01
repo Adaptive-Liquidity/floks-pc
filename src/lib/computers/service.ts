@@ -111,7 +111,7 @@ import {
   canonicalizeWorkspacePath,
   workspaceRootForProvider,
 } from "./path.js";
-import type { ControlPlaneStore, ControlPlaneSnapshot } from "./control-plane-store.js";
+import { StaleControlPlane, type ControlPlaneStore, type ControlPlaneSnapshot } from "./control-plane-store.js";
 import {
   capabilitiesFromSnapshot,
   computersFromSnapshot,
@@ -154,6 +154,7 @@ export class ComputerService {
   private readonly ownerId: string | null;
   private readonly workspaceId: string | null;
   private persistChain: Promise<void> = Promise.resolve();
+  private revision = 0;
   private operatorEvents: OperatorEvent[] = [];
   private destroyChains = new Map<string, Promise<unknown>>();
   private axByComputer = new Map<string, AxClickCache>();
@@ -182,6 +183,7 @@ export class ComputerService {
 
   async hydrate(): Promise<void> {
     if (!this.store) return;
+    if (this.store.currentRevision) this.revision = await this.store.currentRevision();
     const snap = await this.store.load();
     if (!snap) return;
     this.applySnapshot(snap);
@@ -233,12 +235,42 @@ export class ComputerService {
     }
   }
 
+  private overlay(mine: ControlPlaneSnapshot): void {
+    for (const computer of computersFromSnapshot(mine)) {
+      this.computers.set(computer.id, computer);
+      if (computer.state !== "deleted") this.byBird.set(computer.birdId, computer.id);
+    }
+    for (const pair of pairCodesFromSnapshot(mine)) {
+      this.pairCodes.set(pair.id, pair);
+      this.pairCodesByDigest.set(pair.codeDigest, pair.id);
+    }
+    for (const cap of capabilitiesFromSnapshot(mine)) {
+      this.capabilities.set(cap.id, cap);
+      this.capabilitiesByDigest.set(cap.tokenDigest, cap.id);
+    }
+  }
+
   private async persist(): Promise<void> {
     const store = this.store;
     if (!store) return;
-    this.persistChain = this.persistChain
-      .catch(() => undefined)
-      .then(() => store.save(this.toSnapshot()));
+    const write = async (): Promise<void> => {
+      if (!store.compareAndSave) {
+        await store.save(this.toSnapshot());
+        return;
+      }
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const mine = this.toSnapshot();
+        try {
+          this.revision = await store.compareAndSave(mine, this.revision);
+          return;
+        } catch (err) {
+          if (!(err instanceof StaleControlPlane) || attempt === 7) throw err;
+          await this.hydrate();
+          this.overlay(mine);
+        }
+      }
+    };
+    this.persistChain = this.persistChain.catch(() => undefined).then(write);
     await this.persistChain;
   }
 
@@ -264,6 +296,7 @@ export class ComputerService {
    * Control-plane: does not issue a Bot capability. Pairing does that.
    */
   async requestComputer(spec: ComputerSpec): Promise<Computer> {
+    await this.hydrate();
     await this.sweepIdle();
     this.assertBetaMayProvision();
     if (this.byBird.has(spec.birdId)) {
