@@ -41,6 +41,11 @@ export default async function PricingPage({
               Checkout was canceled. No charge was made.
             </p>
           ) : null}
+          {query.checkout === "error" ? (
+            <p className="font-body-lg text-body-lg text-on-surface-variant max-w-2xl mx-auto">
+              Checkout did not start. No charge was made. Try again, or write to contact@asentxia.com.
+            </p>
+          ) : null}
           {signedIn ? (
             <p className="font-body-lg text-body-lg text-on-surface-variant max-w-2xl mx-auto">
               Signed in as <strong>{auth.email}</strong>. Buy a computer — Stripe return lands on{" "}

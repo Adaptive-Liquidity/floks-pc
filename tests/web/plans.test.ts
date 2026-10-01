@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   computersForPurchase,
+  checkoutBlocked,
   hoursForPurchase,
   planFromStripePriceId,
   stripePriceIdForPlan,
@@ -26,6 +27,8 @@ describe("plan catalog and price-id mapping", () => {
     assert.equal(computersForPurchase("team", 2), 3);
     assert.equal(hoursForPurchase("team", 5), 150);
     assert.equal(computersForPurchase("team", 5), 5);
+    assert.equal(checkoutBlocked("team", 2), "team_minimum");
+    assert.equal(checkoutBlocked("team", 3), null);
     assert.equal(normalizePlanId("spark"), "personal");
     assert.equal(normalizePlanId("DESK"), "pro");
   });

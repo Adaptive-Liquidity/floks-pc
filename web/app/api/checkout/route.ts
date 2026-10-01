@@ -2,14 +2,20 @@ import { NextResponse } from "next/server";
 import { csrfOk, requestOrigin } from "@/lib/auth/cookies";
 import { userFromRequest } from "@/lib/auth/request-session";
 import { CheckoutNotConfigured, createCheckoutSession } from "@/lib/billing/stripe";
-import { isCheckoutPlanId } from "@/lib/billing/catalog";
+import { checkoutBlocked, isCheckoutPlanId } from "@/lib/billing/catalog";
 import { clientKey, rateLimitedBody, takeRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
 async function startCheckout(request: Request, plan: string, quantity: number): Promise<NextResponse> {
+  if (process.env.CHECKOUT_DISABLED === "1") {
+    return NextResponse.json({ error: "checkout_disabled" }, { status: 503 });
+  }
   if (!takeRateLimit(clientKey(request, "checkout"))) {
     return NextResponse.json(rateLimitedBody(), { status: 429 });
+  }
+  if (checkoutBlocked(plan, quantity)) {
+    return NextResponse.json({ error: "team_minimum" }, { status: 400 });
   }
   const { user } = await userFromRequest(request);
   if (!user) {
@@ -35,11 +41,8 @@ async function startCheckout(request: Request, plan: string, quantity: number): 
   }
 }
 
-export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const plan = url.searchParams.get("plan") ?? "";
-  const quantity = Number(url.searchParams.get("quantity") ?? "1");
-  return startCheckout(request, plan, quantity);
+export async function GET(): Promise<NextResponse> {
+  return NextResponse.json({ error: "method_not_allowed" }, { status: 405 });
 }
 
 export async function POST(request: Request) {
