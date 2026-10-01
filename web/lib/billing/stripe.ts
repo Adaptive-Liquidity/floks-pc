@@ -5,6 +5,8 @@ import {
   computersForPurchase,
   hoursForPurchase,
   isCheckoutPlanId,
+  PLAN_CATALOG,
+  recordedAgentQuantity,
   stripePriceIdForPlan,
   type CheckoutPlanId,
 } from "./catalog";
@@ -248,16 +250,17 @@ export async function applySubscription(sub: Stripe.Subscription): Promise<SeatR
       : sub.status === "canceled"
         ? "canceled"
         : "active";
-  const quantity = clampAgentQuantity(
-    planFromSubscription(sub) ?? existing?.plan ?? "personal",
-    Number(sub.items.data[0]?.quantity ?? existing?.agentQuantity ?? 1),
-  );
   const plan = planFromSubscription(sub) ?? existing?.plan ?? null;
+  const quantity = recordedAgentQuantity(Number(sub.items.data[0]?.quantity ?? existing?.agentQuantity ?? 1));
   if (!existing && (!emailRaw || !plan)) return null;
   const period = subscriptionPeriod(sub);
   const priceId = firstPriceIdFromUnknown(sub.items.data[0]?.price) ?? existing?.stripePriceId ?? null;
   if (existing) {
     const nextPlan = plan ?? existing.plan;
+    const entry = PLAN_CATALOG[nextPlan];
+    const maxComputers = nextPlan === "team" ? quantity : entry.computers;
+    const hoursIncluded =
+      nextPlan === "team" ? (entry.hoursPerAgent ?? entry.includedHours) * quantity : entry.includedHours;
     const periodChanged = Boolean(period.start && period.start !== existing.periodStart);
     let next: SeatRecord = {
       ...existing,
@@ -265,8 +268,8 @@ export async function applySubscription(sub: Stripe.Subscription): Promise<SeatR
       plan: nextPlan,
       stripePriceId: priceId,
       agentQuantity: quantity,
-      maxComputers: computersForPurchase(nextPlan, quantity),
-      hoursIncluded: hoursForPurchase(nextPlan, quantity),
+      maxComputers,
+      hoursIncluded,
       periodStart: period.start ?? existing.periodStart,
       periodEnd: period.end ?? existing.periodEnd,
     };
@@ -276,19 +279,25 @@ export async function applySubscription(sub: Stripe.Subscription): Promise<SeatR
     return store.upsert(next);
   }
   const customerId = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
-  return store.upsert(
-    createSeat({
-      email: emailRaw ?? "",
-      plan: plan ?? "personal",
-      stripeCustomerId: customerId,
-      stripeSubscriptionId: sub.id,
-      stripePriceId: priceId,
-      status,
-      agentQuantity: quantity,
-      periodStart: period.start,
-      periodEnd: period.end,
-    }),
-  );
+  const created = createSeat({
+    email: emailRaw ?? "",
+    plan: plan ?? "personal",
+    stripeCustomerId: customerId,
+    stripeSubscriptionId: sub.id,
+    stripePriceId: priceId,
+    status,
+    agentQuantity: quantity,
+    periodStart: period.start,
+    periodEnd: period.end,
+  });
+  const entry = PLAN_CATALOG[created.plan];
+  return store.upsert({
+    ...created,
+    agentQuantity: quantity,
+    maxComputers: created.plan === "team" ? quantity : entry.computers,
+    hoursIncluded:
+      created.plan === "team" ? (entry.hoursPerAgent ?? entry.includedHours) * quantity : entry.includedHours,
+  });
 }
 
 export async function applyStripeEvent(event: Stripe.Event): Promise<SeatRecord | null> {
@@ -302,7 +311,7 @@ export async function applyStripeEvent(event: Stripe.Event): Promise<SeatRecord 
   ) {
     return applySubscription(event.data.object as Stripe.Subscription);
   }
-  if (event.type === "invoice.payment_failed") {
+  if (event.type === "invoice.paid" || event.type === "invoice.payment_failed") {
     const invoice = event.data.object as Stripe.Invoice;
     const store = getSeatStore();
     const subId = invoiceSubscriptionId(invoice);
@@ -313,7 +322,22 @@ export async function applyStripeEvent(event: Stripe.Event): Promise<SeatRecord 
         ? (await store.listAll()).find((row) => row.stripeCustomerId === customerId) ?? null
         : null);
     if (!existing) return null;
-    return store.upsert({ ...existing, status: "past_due" });
+    if (event.type === "invoice.payment_failed") {
+      return store.upsert({ ...existing, status: "past_due" });
+    }
+    const line = invoice.lines?.data?.[0];
+    const quantity = recordedAgentQuantity(Number(line?.quantity ?? existing.agentQuantity));
+    const entry = PLAN_CATALOG[existing.plan];
+    const maxComputers = existing.plan === "team" ? quantity : entry.computers;
+    const hoursIncluded =
+      existing.plan === "team" ? (entry.hoursPerAgent ?? entry.includedHours) * quantity : entry.includedHours;
+    return store.upsert({
+      ...existing,
+      status: "active",
+      agentQuantity: quantity,
+      maxComputers,
+      hoursIncluded,
+    });
   }
   return null;
 }

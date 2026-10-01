@@ -111,6 +111,36 @@ describe("stripe webhook entitlements", () => {
     assert.equal(canceled?.status, "canceled");
   });
 
+  it("keeps a Team quantity below 3 when the portal lowers it and activates on invoice.paid", async () => {
+    const created = await applyStripeEvent({
+      type: "customer.subscription.created",
+      data: {
+        object: {
+          id: "sub_team",
+          status: "active",
+          customer: { id: "cus_team", email: "team@example.com" },
+          customer_email: "team@example.com",
+          metadata: { plan: "team" },
+          items: { data: [{ price: { id: "price_team_test" }, quantity: 2 }] },
+        },
+      },
+    } as unknown as Stripe.Event);
+    assert.equal(created?.agentQuantity, 2);
+    assert.equal(created?.maxComputers, 2);
+    const paid = await applyStripeEvent({
+      type: "invoice.paid",
+      data: {
+        object: {
+          customer: "cus_team",
+          parent: { subscription_details: { subscription: "sub_team" } },
+          lines: { data: [{ quantity: 2 }] },
+        },
+      },
+    } as unknown as Stripe.Event);
+    assert.equal(paid?.status, "active");
+    assert.equal(paid?.agentQuantity, 2);
+  });
+
   it("refuses a silent memory fallback when production has no DATABASE_URL", () => {
     assert.throws(
       () => seatStoreFromEnv({ NODE_ENV: "production" }),

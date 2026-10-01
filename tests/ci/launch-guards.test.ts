@@ -82,6 +82,7 @@ describe("launch guards", () => {
       "0005_pair_reveals.sql",
       "0006_rate_limits.sql",
       "0007_oauth.sql",
+      "0008_stripe_events.sql",
     ]);
   });
 
