@@ -20,6 +20,8 @@ export const OAUTH_STATES = [
   "invalid_client",
   "already_allowed",
   "error",
+  "signed_out",
+  "no_plan",
 ] as const;
 export type OauthUiState = (typeof OAUTH_STATES)[number];
 

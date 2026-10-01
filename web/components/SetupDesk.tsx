@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useChrome } from "@/components/Chrome";
 import { PayPills } from "@/components/PayPills";
-import { CONNECTOR } from "@/lib/config";
+import { publicConnector } from "@/lib/config";
 import {
   ACCOUNT_EMPTY,
   ACCOUNT_HOME_LINE,
@@ -32,9 +32,11 @@ import type { SeatSession } from "@/lib/types";
 export function SetupDesk({
   session,
   preview,
+  connector = publicConnector(),
 }: {
   session: SeatSession;
   preview: boolean;
+  connector?: ReturnType<typeof publicConnector>;
 }) {
   const { setAuthed } = useChrome();
   const desks = session.desks.length ? session.desks : session.desk ? [session.desk] : [];
@@ -183,17 +185,17 @@ export function SetupDesk({
         <p className="kicker">Grok plugin connector</p>
         <dl>
           <dt>MCP URL</dt>
-          <dd>{CONNECTOR.mcpUrl}</dd>
+          <dd>{connector.mcpUrl}</dd>
           <dt>client_id</dt>
-          <dd>{CONNECTOR.clientId}</dd>
+          <dd>{connector.clientId}</dd>
           <dt>client secret</dt>
           <dd>(empty)</dd>
           <dt>authorize</dt>
-          <dd>{CONNECTOR.authorizeUrl}</dd>
+          <dd>{connector.authorizeUrl}</dd>
           <dt>token</dt>
-          <dd>{CONNECTOR.tokenUrl}</dd>
+          <dd>{connector.tokenUrl}</dd>
           <dt>scope</dt>
-          <dd>{CONNECTOR.scope}</dd>
+          <dd>{connector.scope}</dd>
         </dl>
       </section>
       </>

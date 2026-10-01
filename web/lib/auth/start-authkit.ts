@@ -3,6 +3,14 @@ import { getStripeCheckoutEmail } from "../billing/stripe";
 import { publicOriginFromRequest } from "./callback";
 import { authStartFallbackPath, getAuthKitLoginUrl, type AuthKitScreenHint } from "./workos";
 
+function authReturnState(url: URL, sessionId: string | null): string {
+  const ret = url.searchParams.get("return");
+  if (ret && ret.startsWith("/oauth/authorize") && !ret.includes("://") && !ret.includes("\\")) {
+    return `return:${ret}`;
+  }
+  return sessionId ? `checkout:${sessionId}` : "setup";
+}
+
 export async function redirectToAuthKit(
   request: Request,
   screenHint: AuthKitScreenHint,
@@ -18,7 +26,7 @@ export async function redirectToAuthKit(
     const authUrl = getAuthKitLoginUrl({
       origin: publicOriginFromRequest(request),
       email,
-      state: sessionId ? `checkout:${sessionId}` : "setup",
+      state: authReturnState(url, sessionId),
       screenHint,
     });
     return NextResponse.redirect(authUrl, { status: 302 });

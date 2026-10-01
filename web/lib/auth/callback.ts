@@ -52,6 +52,10 @@ export function callbackDestination(state: string | null | undefined): string {
     const checkout = raw.slice("checkout:".length).trim();
     if (checkout) return `/setup?session_id=${encodeURIComponent(checkout)}`;
   }
+  if (raw.startsWith("return:")) {
+    const path = raw.slice("return:".length);
+    if (path.startsWith("/oauth/authorize") && !path.includes("://") && !path.includes("\\")) return path;
+  }
   return "/setup";
 }
 

@@ -1,0 +1,57 @@
+import { NextResponse } from "next/server";
+import { csrfOk, requestOrigin } from "../../../lib/auth/cookies";
+import { userFromRequest } from "../../../lib/auth/request-session";
+import { getOauthStore, issueCode, redirectAllowed } from "../../../lib/oauth";
+import { clientKey, rateLimitedBody, takeRateLimit } from "../../../lib/rate-limit";
+
+export async function GET(request: Request): Promise<NextResponse> {
+  if (!takeRateLimit(clientKey(request, "oauth-authorize"))) {
+    return NextResponse.json(rateLimitedBody(), { status: 429 });
+  }
+  const url = new URL(request.url);
+  const accept = request.headers.get("accept") ?? "";
+  if (!accept.includes("application/json")) {
+    return NextResponse.redirect(new URL(`/oauth/consent?${url.searchParams.toString()}`, url.origin), { status: 303 });
+  }
+  const clientId = url.searchParams.get("client_id") ?? "";
+  const client = await getOauthStore().getClient(clientId);
+  if (!client) return NextResponse.json({ error: "invalid_client" });
+  const redirectUri = url.searchParams.get("redirect_uri") ?? "";
+  if (!redirectAllowed(client, redirectUri)) return NextResponse.json({ error: "invalid_client" });
+  const { user } = await userFromRequest(request);
+  if (!user) return NextResponse.json({ status: "signed_out" });
+  return NextResponse.json({ status: "ready" });
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
+  if (!takeRateLimit(clientKey(request, "oauth-authorize"))) {
+    return NextResponse.json(rateLimitedBody(), { status: 429 });
+  }
+  const origin = requestOrigin(request.url);
+  if (!csrfOk(request, origin)) return NextResponse.json({ ok: false }, { status: 403 });
+  const form = await request.formData();
+  const clientId = String(form.get("client_id") ?? "");
+  const redirectUri = String(form.get("redirect_uri") ?? "");
+  const challenge = String(form.get("code_challenge") ?? "");
+  const client = await getOauthStore().getClient(clientId);
+  if (!client || !redirectAllowed(client, redirectUri) || !challenge) {
+    return NextResponse.redirect(new URL("/", origin), { status: 303 });
+  }
+  const { user } = await userFromRequest(request);
+  if (!user) {
+    const back = new URL("/login", origin);
+    back.searchParams.set("return", `${new URL(request.url).pathname}${new URL(request.url).search}`);
+    return NextResponse.redirect(back, { status: 303 });
+  }
+  const code = await issueCode({
+    clientId,
+    redirectUri,
+    challenge,
+    subject: user.id,
+  });
+  const dest = new URL(redirectUri);
+  dest.searchParams.set("code", code);
+  const state = String(form.get("state") ?? "");
+  if (state) dest.searchParams.set("state", state);
+  return NextResponse.redirect(dest, { status: 303 });
+}
