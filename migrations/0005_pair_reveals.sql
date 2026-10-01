@@ -8,3 +8,6 @@ CREATE TABLE IF NOT EXISTS pair_code_reveals (
   pair_code_id TEXT NOT NULL,
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE control_plane_snapshots
+  ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0;
