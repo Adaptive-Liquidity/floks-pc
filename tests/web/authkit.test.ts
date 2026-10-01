@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { GET, POST } from "../../web/app/callback/route.ts";
 import {
   authKitErrorFields,
   callbackAutoPostHtml,
@@ -11,6 +12,7 @@ import {
 } from "../../web/lib/auth/callback.ts";
 import { AuthNotConfigured, authKitScreenHint, authStartFallbackPath } from "../../web/lib/auth/workos.ts";
 import { planCheckoutHref } from "../../web/lib/config.ts";
+import { csrfOk } from "../../web/lib/auth/cookies.ts";
 
 describe("AuthKit account-first helpers", () => {
   it("maps screen=sign-up to the AuthKit sign-up hint and everything else to sign-in", () => {
@@ -56,6 +58,8 @@ describe("AuthKit account-first helpers", () => {
   it("auto-POSTs the AuthKit code and never treats config errors as invalid invitation", () => {
     const html = callbackAutoPostHtml("abc&1", "checkout:cs_test", "https://floks-pc.vercel.app/callback");
     assert.match(html, /method="post"/);
+    assert.match(html, /name="referrer" content="same-origin"/);
+    assert.doesNotMatch(html, /no-referrer/);
     assert.match(html, /abc&amp;1/);
     assert.doesNotMatch(html, /abc&1"/);
     assert.equal(callbackDestination("checkout:cs_test"), "/setup?session_id=cs_test");
@@ -83,5 +87,61 @@ describe("AuthKit account-first helpers", () => {
       authKitErrorFields(new Error("invalid_client: client secret from a different environment")).error,
       "invalid_client",
     );
+  });
+
+  it("accepts a same-site callback with Origin null and rejects a cross-site POST", async () => {
+    const origin = "https://staxions-preview.vercel.app";
+    const sameSite = new Request(`${origin}/callback`, {
+      method: "POST",
+      headers: {
+        origin: "null",
+        "sec-fetch-site": "same-origin",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: "code=test-code&state=",
+    });
+    assert.equal(csrfOk(sameSite, origin), true);
+    const crossSite = new Request(`${origin}/callback`, {
+      method: "POST",
+      headers: {
+        origin: "https://evil.example",
+        "sec-fetch-site": "cross-site",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: "code=test-code&state=",
+    });
+    assert.equal(csrfOk(crossSite, origin), false);
+
+    const previous = {
+      APP_URL: process.env.APP_URL,
+      NEXT_PUBLIC_SITE_ORIGIN: process.env.NEXT_PUBLIC_SITE_ORIGIN,
+      WORKOS_REDIRECT_URI: process.env.WORKOS_REDIRECT_URI,
+      WORKOS_API_KEY: process.env.WORKOS_API_KEY,
+      WORKOS_CLIENT_ID: process.env.WORKOS_CLIENT_ID,
+      WORKOS_COOKIE_PASSWORD: process.env.WORKOS_COOKIE_PASSWORD,
+    };
+    process.env.APP_URL = origin;
+    delete process.env.NEXT_PUBLIC_SITE_ORIGIN;
+    delete process.env.WORKOS_REDIRECT_URI;
+    delete process.env.WORKOS_API_KEY;
+    delete process.env.WORKOS_CLIENT_ID;
+    delete process.env.WORKOS_COOKIE_PASSWORD;
+    try {
+      const get = await GET(new Request(`${origin}/callback?code=test-code`));
+      assert.equal(get.headers.get("referrer-policy"), "same-origin");
+
+      const accepted = await POST(sameSite);
+      const acceptedUrl = new URL(accepted.headers.get("location") ?? "", origin);
+      assert.notEqual(`${acceptedUrl.pathname}${acceptedUrl.search}`, "/setup?error=invalid");
+
+      const rejected = await POST(crossSite);
+      const rejectedUrl = new URL(rejected.headers.get("location") ?? "", origin);
+      assert.equal(`${rejectedUrl.pathname}${rejectedUrl.search}`, "/setup?error=invalid");
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });

@@ -9,9 +9,9 @@ import {
   logAuthKitFailure,
   publicOriginFromRequest,
   workosMismatchHtml,
-} from "@/lib/auth/callback";
-import { applySessionCookie, csrfOk } from "@/lib/auth/cookies";
-import { authenticateAuthKitCode } from "@/lib/auth/workos";
+} from "../../lib/auth/callback";
+import { applySessionCookie, csrfOk } from "../../lib/auth/cookies";
+import { authenticateAuthKitCode } from "../../lib/auth/workos";
 
 const NO_STORE = { "cache-control": "no-store, no-cache, must-revalidate" } as const;
 
@@ -82,7 +82,7 @@ export async function GET(request: Request) {
     headers: {
       ...NO_STORE,
       "content-type": "text/html; charset=utf-8",
-      "referrer-policy": "no-referrer",
+      "referrer-policy": "same-origin",
     },
   });
 }

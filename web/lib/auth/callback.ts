@@ -73,7 +73,7 @@ export function callbackAutoPostHtml(code: string, state: string, action: string
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="same-origin">
 <title>Signing you in…</title>
 </head>
 <body>
