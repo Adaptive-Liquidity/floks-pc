@@ -6,7 +6,7 @@ import { motion } from "motion/react";
 import { LayoutGrid } from "lucide-react";
 import { useChrome } from "@/components/Chrome";
 import { CREATE_ACCOUNT, LOGOUT, MANAGE_BILLING, SETUP_SIGN_IN } from "@/lib/copy";
-import { logoutSetup, openPortal } from "@/lib/setup-client";
+import { openPortal } from "@/lib/setup-client";
 
 const LINKS = [
   { href: "/", label: "Home" },
@@ -24,11 +24,6 @@ export function SiteHeader() {
 
   function billing() {
     openPortal();
-  }
-
-  async function logout() {
-    await logoutSetup();
-    window.location.assign("/");
   }
 
   return (
@@ -76,15 +71,14 @@ export function SiteHeader() {
               >
                 {MANAGE_BILLING}
               </button>
-              <button
-                className="text-on-surface-variant/80 hover:text-white transition-colors duration-300 font-label-mono text-label-mono uppercase tracking-widest"
-                type="button"
-                onClick={() => {
-                  void logout();
-                }}
-              >
-                {LOGOUT}
-              </button>
+              <form method="post" action="/logout">
+                <button
+                  className="text-on-surface-variant/80 hover:text-white transition-colors duration-300 font-label-mono text-label-mono uppercase tracking-widest"
+                  type="submit"
+                >
+                  {LOGOUT}
+                </button>
+              </form>
             </>
           ) : (
             <>
@@ -131,15 +125,11 @@ export function SiteHeader() {
                 >
                   {MANAGE_BILLING}
                 </button>
-                <button
-                  className="top-link"
-                  type="button"
-                  onClick={() => {
-                    void logout();
-                  }}
-                >
-                  {LOGOUT}
-                </button>
+                <form method="post" action="/logout">
+                  <button className="top-link" type="submit">
+                    {LOGOUT}
+                  </button>
+                </form>
               </>
             ) : (
               <>

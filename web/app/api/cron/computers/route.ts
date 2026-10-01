@@ -8,7 +8,7 @@ function cronAuthorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET?.trim();
   const header = request.headers.get("authorization") ?? "";
   if (secret) return header === `Bearer ${secret}`;
-  if (process.env.NODE_ENV === "production" || process.env.VERCEL === "1") return false;
+  if (process.env.NODE_ENV === "production") return false;
   return true;
 }
 

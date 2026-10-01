@@ -33,7 +33,7 @@ export const metadata: Metadata = {
     template: "%s — Staxions",
   },
   description: `${HOME_HEADLINE} ${HOME_SUB} ${HOME_LINE}`,
-  robots: { index: true, follow: true },
+  robots: process.env.SITE_INDEXABLE === "1" ? { index: true, follow: true } : { index: false, follow: false },
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "48x48" },

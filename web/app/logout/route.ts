@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { clearSessionCookie, csrfOk, requestOrigin } from "@/lib/auth/cookies";
-import { COOKIE_NAME, logoutUrl } from "@/lib/auth/workos";
+import { clearSessionCookie, csrfOk, requestOrigin } from "../../lib/auth/cookies";
+import { COOKIE_NAME, logoutUrl } from "../../lib/auth/workos";
 
 async function endSession(request: Request): Promise<NextResponse> {
   const origin = requestOrigin(request.url);
@@ -15,8 +15,8 @@ async function endSession(request: Request): Promise<NextResponse> {
   return response;
 }
 
-export function GET(request: Request) {
-  return endSession(request);
+export function GET(): NextResponse {
+  return NextResponse.json({ ok: false, message: "method not allowed" }, { status: 405 });
 }
 
 export function POST(request: Request) {

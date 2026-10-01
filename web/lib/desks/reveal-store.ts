@@ -41,7 +41,7 @@ export class PostgresPairRevealStore implements PairRevealStore {
   private async withClient<T>(
     fn: (query: (text: string, values?: unknown[]) => Promise<{ rows: Array<{ code: string; pair_code_id: string }> }>) => Promise<T>,
   ): Promise<T> {
-    const pg = (await import("pg")) as PgModule;
+    const pg = (await import("pg")) as unknown as PgModule;
     const client = new pg.default.Client({ connectionString: this.databaseUrl });
     await client.connect();
     try {

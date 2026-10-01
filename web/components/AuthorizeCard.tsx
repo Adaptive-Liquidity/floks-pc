@@ -44,7 +44,7 @@ export function AuthorizeCard() {
       });
   }, [query]);
 
-  const cancelHref = params.get("redirect_uri") ?? "https://grok.com";
+  const cancelHref = "/";
 
   return (
     <section className="stage">
