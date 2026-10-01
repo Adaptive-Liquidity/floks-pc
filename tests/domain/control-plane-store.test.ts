@@ -57,6 +57,20 @@ describe("L1 control-plane durability", () => {
     assert.throws(() => jailedControlPlanePath("/etc/passwd", cwd));
   });
 
+  it("keeps concurrent creates from two services on one versioned store", async () => {
+    const store = new MemoryControlPlaneStore();
+    const left = new ComputerService(new FakeProvider(), { store });
+    const right = new ComputerService(new FakeProvider(), { store });
+    const [a, b] = await Promise.all([
+      left.requestComputer({ birdId: "bird-left", flockId: "flock" }),
+      right.requestComputer({ birdId: "bird-right", flockId: "flock" }),
+    ]);
+    const reader = new ComputerService(new FakeProvider(), { store });
+    await reader.hydrate();
+    assert.equal((await reader.getByBird("bird-left"))?.id, a.id);
+    assert.equal((await reader.getByBird("bird-right"))?.id, b.id);
+  });
+
   it("recovers the persist queue after a failed save", async () => {
     class FlakyStore implements ControlPlaneStore {
       snapshot: ControlPlaneSnapshot | null = null;
