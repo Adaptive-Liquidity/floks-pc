@@ -124,7 +124,7 @@ export const ERROR_ONE_LINE = "This page isn’t here.";
 export const SERVER_ERROR_ONE_LINE = "Staxions could not finish that request.";
 
 export const LEGAL_DISCLAIMER =
-  "Staxions product policy. These pages describe how Staxions works. They are not a statute, SLA, or law-firm letter. Last updated 2026-09-28.";
+  "Staxions product policy. These pages describe how Staxions works. They are not a statute, SLA, or law-firm letter. Last updated 2026-10-01.";
 
 export const PRODUCT_EYEBROW = "The Agent Computer";
 export const PRODUCT_TITLE = "What Staxions is";

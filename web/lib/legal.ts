@@ -132,6 +132,8 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
           `Mail we send — From Staxions <${SUPPORT_EMAIL}> when we still send operator mail. WorkOS sends AuthKit codes from its own mailer.`,
           "Runloop — the Computer runtime (disk, screenshot, process) for the seat you paid, when live provision is enabled.",
           "Host — this public Next app is built for Vercel. We do not run Google Analytics, Facebook pixels, or session replay.",
+          "Postgres — the seat, pair-reveal, and OAuth records live in the database host named by DATABASE_URL.",
+          `Subprocessors — Vercel (hosting), WorkOS (sign-in), Stripe (payments), Runloop (computers), the Postgres host, and the email sender for ${SUPPORT_EMAIL}.`,
           "18+ — Staxions is not directed at children under 13.",
         ],
       },
