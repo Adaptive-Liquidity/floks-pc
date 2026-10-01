@@ -114,7 +114,7 @@ export async function desksForSeats(seats: SeatRecord[]): Promise<DeskRecord[]> 
   for (const seat of seats) {
     const slots = Math.max(1, seat.maxComputers || 1);
     if (seat.status === "canceled" && !seat.computerId && seat.computerIds.length === 0) {
-      out.push(toDesk(seat, null, [], "unpaired", seat.id, await getRevealStore().get(seat.id)));
+      out.push(toDesk(seat, null, [], "unpaired", seat.id, await liveReveal(seat.id, [])));
       continue;
     }
     for (let i = 0; i < slots; i++) {
@@ -131,12 +131,26 @@ export async function desksForSeats(seats: SeatRecord[]): Promise<DeskRecord[]> 
           codes,
           pairStatus,
           i === 0 ? seat.id : `${seat.id}:${i}`,
-          i === 0 ? await getRevealStore().get(seat.id) : null,
+          i === 0 ? await liveReveal(seat.id, codes) : null,
         ),
       );
     }
   }
   return out;
+}
+
+async function liveReveal(
+  seatId: string,
+  codes: ComputerPairCode[],
+): Promise<{ code: string; pairCodeId: string } | null> {
+  const revealed = await getRevealStore().get(seatId);
+  if (!revealed) return null;
+  const match = codes.find((rec) => rec.id === revealed.pairCodeId);
+  if (match && match.expiresAt.getTime() <= Date.now()) {
+    await getRevealStore().delete(seatId);
+    return null;
+  }
+  return revealed;
 }
 
 async function safeGet(service: ComputerService, id: string): Promise<Computer | null> {
@@ -218,7 +232,9 @@ export async function approvePairCode(seat: SeatRecord, presented: string): Prom
   const open = service
     .listPairCodes(computer.id)
     .find((rec) => rec.usedAt === null && rec.expiresAt.getTime() > Date.now() && rec.codeDigest === digest);
-  return open ? "ok" : "mismatch";
+  if (!open) return "mismatch";
+  await getRevealStore().delete(seat.id);
+  return "ok";
 }
 
 export async function consumeRevealedCode(seatId: string): Promise<string | null> {
