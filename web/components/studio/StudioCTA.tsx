@@ -8,7 +8,7 @@ import { CREATE_ACCOUNT, JOIN_LINE, SETUP_SIGN_IN } from "@/lib/copy";
 export function StudioCTA() {
   return (
     <section className="py-section-gap px-margin-x text-center bg-gradient-to-t from-surface-container-lowest to-transparent relative">
-      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-primary-fixed/5 blur-[100px] rounded-full pointer-events-none" />
+      <div className="absolute bottom-0 left-0 right-0 mx-auto w-full max-w-3xl h-[240px] bg-primary-fixed/5 blur-[100px] rounded-full pointer-events-none" />
       <motion.div
         className="max-w-2xl mx-auto space-y-stack-lg relative z-10"
         initial={{ opacity: 0, y: 40 }}

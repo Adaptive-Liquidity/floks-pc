@@ -236,7 +236,6 @@ body {
   font-size: 16px;
   line-height: 1.6;
   background: transparent;
-  overflow-x: hidden;
 }
 
 a {
@@ -1039,10 +1038,6 @@ input.code {
     --spacing-margin-x: 16px;
   }
 
-  body {
-    overflow-x: hidden;
-  }
-
   .nav-wide {
     display: none;
   }
@@ -1071,7 +1066,6 @@ input.code {
     right: 16px;
     left: 16px;
     top: 56px;
-    max-width: calc(100vw - 32px);
     min-width: 0;
     padding: 12px;
     gap: 10px;
