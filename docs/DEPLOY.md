@@ -10,12 +10,14 @@ Do **not** promote a Preview to Vercel Production, change DNS, or edit live Stri
 - `web/vercel.json` installs `web` **and** the repo root so `../src` can resolve `zod`.
 - Cron: `GET /api/cron/computers` every 5 minutes (Pro plan). Set `CRON_SECRET`. Vercel sends `Authorization: Bearer $CRON_SECRET`.
 - Apply SQL in order: `migrations/0001_node_computers.sql` through `0008_stripe_events.sql`. Run `npm run migrate` only with `DATABASE_URL` set, and only after the owner approves that database change.
+- Apply `migrations/0005_pair_reveals.sql` to the preview database before pull request 33 or 34 deploys. Without that column, `/setup` returns 500 for a paying customer.
 
 ## Kill switch and rollback
 
 - Stop new purchases without a deploy: set `CHECKOUT_DISABLED=1` on the Vercel environment for this branch. `POST /api/checkout` returns 503.
-- Pause Stripe deliveries in the Stripe dashboard for the webhook endpoint. Already-recorded `stripe_events` ids are ignored.
+- Pause Stripe deliveries in the Stripe dashboard for the webhook endpoint. The handler inserts the event id into `stripe_events` before applying it. If apply throws, that row is deleted so Stripe can retry. A row that remains is a finished delivery and the next copy of that id is skipped. `invoice.paid` does not turn a canceled seat back on.
 - This launch URL is a Preview alias. Rollback is: in Vercel, point `staxions-preview.vercel.app` back at the previous deployment, or revert the commit on `cursor/aistudio-authkit-desks-a695`. Instant Rollback applies to Production deployments only.
+- If this stack is merged to `main`, tag the previous tip first: `git tag pre-staxions-main 08438f55`. After the merge commit, undo it with `git revert -m 1 <merge-commit>`. Do not force-push `main`.
 - Moving to `asentxia.com` later changes `APP_URL`, the WorkOS redirect, the Stripe webhook URL, and `SITE_INDEXABLE`. It does not require a code change if those four are the only host switches.
 - Do not merge this branch to `main` or promote it to Production until the owner approves the exact SHA. The HANDOFF section 7 gate (test mode, then one live run, on Runloop) has not been run.
 
@@ -53,6 +55,7 @@ Register these events (test endpoint on Preview, live endpoint on Production):
 - `customer.subscription.updated`
 - `customer.subscription.deleted`
 - `invoice.payment_failed`
+- `invoice.paid`
 
 Set `STRIPE_WEBHOOK_SECRET` to that endpoint’s signing secret (`whsec_…`). Preview and Production need different secrets if they use different Stripe modes.
 
@@ -101,7 +104,7 @@ A config mismatch now renders a clear HTML error on `/callback` and `/setup?erro
 
 Same names. Use `sk_live_…`, live Price ids, live webhook secret, Production WorkOS `client_…` + matching `sk_…`, and `APP_URL` for the real public host once DNS points at Vercel.
 
-`FLOK_WEB_PROVIDER=runloop` is required before taking paid traffic on Production. FakeProvider is refused for paying seats when `NODE_ENV=production` or `VERCEL_ENV=production`. Preview may use Fake only if Runloop is not configured; when Runloop is configured, that is what paying seats get.
+`FLOK_WEB_PROVIDER=runloop` is required before taking paid traffic. FakeProvider is refused for a paying seat when `NODE_ENV` is `production`, and only then. `VERCEL_ENV` is not that switch. Vercel Preview sets `NODE_ENV` to `production`, so a paying seat on Preview needs Runloop as well.
 
 ## After checkout
 
@@ -123,7 +126,7 @@ Same names. Use `sk_live_…`, live Price ids, live webhook secret, Production W
 
 1. Create Stripe **test** products/prices for Personal / Pro / Team. Copy the `price_…` ids into Preview env vars.
 2. Add a test webhook to `/api/webhooks/stripe` with the events above. Copy `whsec_…` to Preview.
-3. Provision Neon or Vercel Postgres. Set `DATABASE_URL`. Run `0003` and `0004`.
+3. Provision Neon or Vercel Postgres. Set `DATABASE_URL`. Apply `0001` through `0008`, and apply `0005` before pull request 33 or 34 deploys.
 4. Fix WorkOS: one Client ID + API key pair per Vercel environment. Add the Preview callback URL.
 5. Set `APP_URL` to the Preview origin (not floks-pc.com).
 6. For a real computer on Preview: `FLOK_WEB_PROVIDER=runloop`, `RUNLOOP_API_KEY`, `FLOK_RUNLOOP_BLUEPRINT`.
