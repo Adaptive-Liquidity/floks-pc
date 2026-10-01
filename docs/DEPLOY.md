@@ -9,7 +9,15 @@ Do **not** promote a Preview to Vercel Production, change DNS, or edit live Stri
 - Root Directory: `web`
 - `web/vercel.json` installs `web` **and** the repo root so `../src` can resolve `zod`.
 - Cron: `GET /api/cron/computers` every 5 minutes (Pro plan). Set `CRON_SECRET`. Vercel sends `Authorization: Bearer $CRON_SECRET`.
-- Apply SQL in order: `migrations/0001_node_computers.sql`, `0002_c4_capabilities.sql`, `0003_web_seats.sql`, `0004_launch_store.sql`.
+- Apply SQL in order: `migrations/0001_node_computers.sql` through `0008_stripe_events.sql`. Run `npm run migrate` only with `DATABASE_URL` set, and only after the owner approves that database change.
+
+## Kill switch and rollback
+
+- Stop new purchases without a deploy: set `CHECKOUT_DISABLED=1` on the Vercel environment for this branch. `POST /api/checkout` returns 503.
+- Pause Stripe deliveries in the Stripe dashboard for the webhook endpoint. Already-recorded `stripe_events` ids are ignored.
+- This launch URL is a Preview alias. Rollback is: in Vercel, point `staxions-preview.vercel.app` back at the previous deployment, or revert the commit on `cursor/aistudio-authkit-desks-a695`. Instant Rollback applies to Production deployments only.
+- Moving to `asentxia.com` later changes `APP_URL`, the WorkOS redirect, the Stripe webhook URL, and `SITE_INDEXABLE`. It does not require a code change if those four are the only host switches.
+- Do not merge this branch to `main` or promote it to Production until the owner approves the exact SHA. The HANDOFF section 7 gate (test mode, then one live run, on Runloop) has not been run.
 
 ## Postgres
 
