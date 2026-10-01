@@ -47,7 +47,8 @@ describe("public site lock", () => {
       "app/signup/route.ts",
       "app/callback/route.ts",
       "app/logout/route.ts",
-      "app/oauth/authorize/page.tsx",
+      "app/oauth/consent/page.tsx",
+      "app/oauth/authorize/route.ts",
       "app/legal/page.tsx",
       "app/legal/terms/page.tsx",
       "app/legal/privacy/page.tsx",
@@ -178,13 +179,15 @@ describe("public site lock", () => {
     assert.match(read("components/studio/Concept.tsx"), /object-contain/);
     assert.doesNotMatch(read("components/studio/Concept.tsx"), /inset-x-10 top-1\/2/);
     assert.doesNotMatch(read("components/studio/Concept.tsx"), /glass-card|glow-border/);
-    assert.match(read("components/studio/HeroHardwareNode.tsx"), /GROK MCP SUBSYSTEM/);
+    assert.match(read("components/studio/HeroHardwareNode.tsx"), /EXAMPLE/);
+    assert.doesNotMatch(read("components/studio/HeroHardwareNode.tsx"), /NODE AUTHENTICATED/);
+    assert.doesNotMatch(read("components/studio/ProcessAndTerminal.tsx"), /COMPUTER LIVE/);
     assert.match(read("components/studio/Hero.tsx"), /\/signup/);
     assert.match(read("components/studio/Hero.tsx"), /\/login/);
     assert.match(read("app/join/page.tsx"), /PlanGrid/);
     assert.match(read("app/join/page.tsx"), /readAuthFromCookies/);
     assert.match(read("components/studio/PlanGrid.tsx"), /planCheckoutHref/);
-    assert.match(read("components/studio/PlanGrid.tsx"), /Most Popular/);
+    assert.doesNotMatch(read("components/studio/PlanGrid.tsx"), /Most Popular/);
     assert.match(read("components/studio/PlanGrid.tsx"), /md:grid-cols-3/);
     assert.doesNotMatch(read("app/page.tsx"), /hero-node/);
     assert.doesNotMatch(read("app/page.tsx"), /A workplace/);

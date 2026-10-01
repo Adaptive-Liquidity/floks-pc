@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Tilt from "react-parallax-tilt";
 import { motion } from "motion/react";
 import { Activity, CheckCircle2, Cpu, HardDrive, ShieldCheck, Terminal, Wifi, Zap } from "lucide-react";
@@ -14,16 +14,9 @@ export function HeroHardwareNode() {
     "FILES: Private workspace mounted.",
     "SYSTEM: Waiting for Bot pair on /setup.",
   ]);
-  const [cpuUsage, setCpuUsage] = useState(14);
+  const [cpuUsage] = useState(24);
   const [isHandshaking, setIsHandshaking] = useState(false);
   const [handshakeDone, setHandshakeDone] = useState(false);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setCpuUsage((prev) => Math.min(42, Math.max(12, prev + (Math.random() * 6 - 3))));
-    }, 2000);
-    return () => window.clearInterval(interval);
-  }, []);
 
   function handleIgnite() {
     if (isHandshaking) return;
@@ -83,7 +76,7 @@ export function HeroHardwareNode() {
               <div className="text-on-surface-variant text-[9px] uppercase tracking-wider">Status</div>
               <div className="text-white flex items-center justify-end gap-1">
                 <Wifi className="w-3 h-3 text-secondary" />
-                LIVE
+                EXAMPLE
               </div>
             </div>
             <div>
@@ -159,7 +152,7 @@ export function HeroHardwareNode() {
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-secondary animate-pulse" />
             <span className="font-label-mono text-[11px] text-on-surface-variant">
-              {handshakeDone ? "NODE AUTHENTICATED" : "COMPUTER READY"}
+              {handshakeDone ? "ILLUSTRATION" : "EXAMPLE ONLY"}
             </span>
           </div>
           <button

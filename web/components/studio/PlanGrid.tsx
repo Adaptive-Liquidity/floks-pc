@@ -26,11 +26,6 @@ export function PlanGrid({
                   : "glass-card p-8 rounded-2xl border border-white/5 text-left flex flex-col"
               }
             >
-              {primary ? (
-                <div className="absolute top-0 right-8 -translate-y-1/2 bg-primary-fixed text-on-primary-fixed font-label-mono text-[10px] uppercase px-3 py-1 rounded-full tracking-wider">
-                  Most Popular
-                </div>
-              ) : null}
               <h3 className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase mb-2">{plan.name}</h3>
               <p className="font-label-mono text-label-mono text-primary-fixed mb-2">{plan.price}</p>
               <p className="font-body-md text-on-surface-variant mb-6">{catalog.blurb}</p>

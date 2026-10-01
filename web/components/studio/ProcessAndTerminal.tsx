@@ -37,7 +37,7 @@ const SEQUENCES: Record<string, Array<{ text: string; delay: number; color?: str
     { text: "> [OK] Key shown once. Lost key → revoke.", delay: 240 },
     { text: "> [RUNNING] Approve pending Bot claim...", delay: 280 },
     { text: "> [VERIFIED] That Bot occupies that computer.", delay: 240, color: "text-secondary-fixed" },
-    { text: "> BOUNDARY ON. COMPUTER LIVE.", delay: 160, color: "text-primary-fixed" },
+    { text: "> BOUNDARY ON. EXAMPLE ONLY.", delay: 160, color: "text-primary-fixed" },
   ],
 };
 
