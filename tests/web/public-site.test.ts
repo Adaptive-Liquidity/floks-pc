@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { oauthUiFromPreflight, parseAuthorizePreflightBody } from "../../web/lib/oauth.ts";
+import { oauthUiFromPreflight, parseAuthorizePreflightBody } from "../../web/lib/oauth-ui.ts";
 import { callbackFinishPlan } from "../../web/lib/setup-client.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -47,7 +47,8 @@ describe("public site lock", () => {
       "app/signup/route.ts",
       "app/callback/route.ts",
       "app/logout/route.ts",
-      "app/oauth/authorize/page.tsx",
+      "app/oauth/consent/page.tsx",
+      "app/oauth/authorize/route.ts",
       "app/legal/page.tsx",
       "app/legal/terms/page.tsx",
       "app/legal/privacy/page.tsx",

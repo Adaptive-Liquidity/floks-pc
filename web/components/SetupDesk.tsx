@@ -186,16 +186,6 @@ export function SetupDesk({
         <dl>
           <dt>MCP URL</dt>
           <dd>{connector.mcpUrl}</dd>
-          <dt>client_id</dt>
-          <dd>{connector.clientId}</dd>
-          <dt>client secret</dt>
-          <dd>(empty)</dd>
-          <dt>authorize</dt>
-          <dd>{connector.authorizeUrl}</dd>
-          <dt>token</dt>
-          <dd>{connector.tokenUrl}</dd>
-          <dt>scope</dt>
-          <dd>{connector.scope}</dd>
         </dl>
       </section>
       </>
