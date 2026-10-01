@@ -3,7 +3,6 @@ import { checkoutReturnUrls } from "../app-url";
 import {
   clampAgentQuantity,
   computersForPurchase,
-  hoursForPurchase,
   isCheckoutPlanId,
   PLAN_CATALOG,
   recordedAgentQuantity,
@@ -322,11 +321,11 @@ export async function applyStripeEvent(event: Stripe.Event): Promise<SeatRecord 
         ? (await store.listAll()).find((row) => row.stripeCustomerId === customerId) ?? null
         : null);
     if (!existing) return null;
+    if (existing.status === "canceled") return existing;
     if (event.type === "invoice.payment_failed") {
       return store.upsert({ ...existing, status: "past_due" });
     }
-    const line = invoice.lines?.data?.[0];
-    const quantity = recordedAgentQuantity(Number(line?.quantity ?? existing.agentQuantity));
+    const quantity = await quantityFromSubscriptionItem(subId, existing.agentQuantity);
     const entry = PLAN_CATALOG[existing.plan];
     const maxComputers = existing.plan === "team" ? quantity : entry.computers;
     const hoursIncluded =
@@ -340,6 +339,19 @@ export async function applyStripeEvent(event: Stripe.Event): Promise<SeatRecord 
     });
   }
   return null;
+}
+
+async function quantityFromSubscriptionItem(subscriptionId: string | null, fallback: number): Promise<number> {
+  const client = getStripe();
+  if (!subscriptionId || !client) return fallback;
+  try {
+    const sub = await client.subscriptions.retrieve(subscriptionId);
+    const itemQuantity = sub.items.data[0]?.quantity;
+    if (typeof itemQuantity !== "number") return fallback;
+    return recordedAgentQuantity(itemQuantity);
+  } catch {
+    return fallback;
+  }
 }
 
 export function constructStripeEvent(rawBody: string, signature: string | null): Stripe.Event {
