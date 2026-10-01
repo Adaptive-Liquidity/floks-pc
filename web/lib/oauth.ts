@@ -91,7 +91,7 @@ export class MemoryOauthStore implements OauthStore {
   }
   async revokeSubject(subject: string): Promise<void> {
     for (const row of this.access.values()) {
-      if (row.subject === subject) row.revoked = true;
+      if (row.subject === subject || row.flock === subject) row.revoked = true;
     }
   }
 }
@@ -183,7 +183,9 @@ export class PostgresOauthStore implements OauthStore {
     return mapAccess(result.rows[0]);
   }
   async revokeSubject(subject: string): Promise<void> {
-    await this.withClient((query) => query(`UPDATE oauth_access_tokens SET revoked = true WHERE subject = $1`, [subject]));
+    await this.withClient((query) =>
+      query(`UPDATE oauth_access_tokens SET revoked = true WHERE subject = $1 OR flock = $1`, [subject]),
+    );
   }
 }
 

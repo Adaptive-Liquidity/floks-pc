@@ -16,15 +16,17 @@ export function paidProviderForbiddenMessage(): string {
   return "Paid Staxions computers require FLOK_WEB_PROVIDER=runloop, RUNLOOP_API_KEY, and FLOK_RUNLOOP_BLUEPRINT. The demo provider cannot be served to a paying customer in production.";
 }
 
-let servicePromise: Promise<ComputerService> | null = null;
-let revealStore: PairRevealStore | null = null;
-let injectedRevealStore: PairRevealStore | null = null;
+const globalDesk = globalThis as typeof globalThis & {
+  __staxDeskService?: Promise<ComputerService> | null;
+  __staxReveal?: PairRevealStore | null;
+  __staxRevealInjected?: PairRevealStore | null;
+};
 
 function getRevealStore(): PairRevealStore {
-  if (revealStore) return revealStore;
+  if (globalDesk.__staxReveal) return globalDesk.__staxReveal;
   const databaseUrl = process.env.DATABASE_URL?.trim();
-  revealStore = databaseUrl ? new PostgresPairRevealStore(databaseUrl) : new MemoryPairRevealStore();
-  return revealStore;
+  globalDesk.__staxReveal = databaseUrl ? new PostgresPairRevealStore(databaseUrl) : new MemoryPairRevealStore();
+  return globalDesk.__staxReveal;
 }
 
 export function useRunloop(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -46,8 +48,8 @@ async function createProvider(): Promise<ComputerProvider> {
 }
 
 export async function getComputerService(): Promise<ComputerService> {
-  if (!servicePromise) {
-    servicePromise = (async () => {
+  if (!globalDesk.__staxDeskService) {
+    globalDesk.__staxDeskService = (async () => {
       const provider = await createProvider();
       const store =
         webControlPlaneStore(process.env, provider.name) ??
@@ -57,17 +59,17 @@ export async function getComputerService(): Promise<ComputerService> {
       return service;
     })();
   }
-  return servicePromise;
+  return globalDesk.__staxDeskService;
 }
 
 export function setPairRevealStoreForTests(store: PairRevealStore | null): void {
-  injectedRevealStore = store;
-  revealStore = store;
+  globalDesk.__staxRevealInjected = store;
+  globalDesk.__staxReveal = store;
 }
 
 export function resetDeskRuntimeForTests(): void {
-  servicePromise = null;
-  revealStore = injectedRevealStore ?? new MemoryPairRevealStore();
+  globalDesk.__staxDeskService = null;
+  globalDesk.__staxReveal = globalDesk.__staxRevealInjected ?? new MemoryPairRevealStore();
 }
 
 export function birdIdForSeat(seat: SeatRecord, index = 0): string {
@@ -210,6 +212,21 @@ export async function issuePairKey(seat: SeatRecord): Promise<{ code: string; ex
   const issued = await service.issuePairCode(computer.id);
   await getRevealStore().put(seat.id, { code: issued.code, pairCodeId: issued.id });
   return { code: issued.code, expiresAt: issued.expiresAt, computerId: computer.id };
+}
+
+export async function revokeSeatPairing(seat: SeatRecord): Promise<void> {
+  const service = await getComputerService();
+  await getRevealStore().delete(seat.id);
+  const ids = new Set<string>(seat.computerIds.filter(Boolean));
+  if (seat.computerId) ids.add(seat.computerId);
+  if (ids.size === 0) {
+    const computer = await service.getByBird(birdIdForSeat(seat));
+    if (computer) await service.revokeUnusedPairCodes(computer.id);
+    return;
+  }
+  for (const id of ids) {
+    await service.revokeUnusedPairCodes(id);
+  }
 }
 
 export async function revokePairKey(seat: SeatRecord): Promise<number> {
