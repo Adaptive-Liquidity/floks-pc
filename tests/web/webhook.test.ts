@@ -141,6 +141,47 @@ describe("stripe webhook entitlements", () => {
     assert.equal(paid?.agentQuantity, 2);
   });
 
+  it("does not revive a canceled seat or take Team quantity from invoice lines", async () => {
+    const created = await applyStripeEvent({
+      type: "customer.subscription.created",
+      data: {
+        object: {
+          id: "sub_keep",
+          status: "active",
+          customer: { id: "cus_keep", email: "keep@example.com" },
+          metadata: { plan: "team" },
+          items: { data: [{ price: { id: "price_team_test" }, quantity: 2 }] },
+        },
+      },
+    } as unknown as Stripe.Event);
+    assert.equal(created?.agentQuantity, 2);
+    const canceled = await applyStripeEvent({
+      type: "customer.subscription.deleted",
+      data: {
+        object: {
+          id: "sub_keep",
+          status: "canceled",
+          customer: "cus_keep",
+          metadata: { plan: "team" },
+          items: { data: [{ price: { id: "price_team_test" }, quantity: 2 }] },
+        },
+      },
+    } as unknown as Stripe.Event);
+    assert.equal(canceled?.status, "canceled");
+    const paid = await applyStripeEvent({
+      type: "invoice.paid",
+      data: {
+        object: {
+          customer: "cus_keep",
+          parent: { subscription_details: { subscription: "sub_keep" } },
+          lines: { data: [{ quantity: 9 }] },
+        },
+      },
+    } as unknown as Stripe.Event);
+    assert.equal(paid?.status, "canceled");
+    assert.equal(paid?.agentQuantity, 2);
+  });
+
   it("refuses a silent memory fallback when production has no DATABASE_URL", () => {
     assert.throws(
       () => seatStoreFromEnv({ NODE_ENV: "production" }),
