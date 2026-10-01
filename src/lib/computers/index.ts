@@ -188,6 +188,7 @@ export {
   JsonFileControlPlaneStore,
   MemoryControlPlaneStore,
   ControlPlaneSnapshotSchema,
+  StaleControlPlane,
   assertSnapshotHasNoRawSecrets,
   controlPlaneStoreFromEnv,
 } from "./control-plane-store.js";
