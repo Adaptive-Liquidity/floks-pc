@@ -14,14 +14,18 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
   redirect_uri TEXT NOT NULL,
   challenge    TEXT NOT NULL,
   subject      TEXT NOT NULL,
+  flock        TEXT NOT NULL,
   expires_at   TIMESTAMPTZ NOT NULL,
   used         BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS oauth_access_tokens (
-  token_hash TEXT PRIMARY KEY,
-  subject    TEXT NOT NULL,
-  client_id  TEXT NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL,
-  revoked    BOOLEAN NOT NULL DEFAULT FALSE
+  token_hash          TEXT PRIMARY KEY,
+  refresh_hash        TEXT NOT NULL,
+  subject             TEXT NOT NULL,
+  flock               TEXT NOT NULL,
+  client_id           TEXT NOT NULL,
+  expires_at          TIMESTAMPTZ NOT NULL,
+  refresh_expires_at  TIMESTAMPTZ NOT NULL,
+  revoked             BOOLEAN NOT NULL DEFAULT FALSE
 );
