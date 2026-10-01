@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { oauthUiFromPreflight, parseAuthorizePreflightBody } from "../../web/lib/oauth.ts";
+import { oauthUiFromPreflight, parseAuthorizePreflightBody } from "../../web/lib/oauth-ui.ts";
 import { callbackFinishPlan } from "../../web/lib/setup-client.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");

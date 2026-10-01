@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 import { csrfOk, requestOrigin } from "../../../lib/auth/cookies";
 import { userFromRequest } from "../../../lib/auth/request-session";
+import { getSeatStore } from "../../../lib/billing/seats";
+import { flockIdForEmail } from "../../../lib/desks/runtime";
 import { getOauthStore, issueCode, redirectAllowed } from "../../../lib/oauth";
 import { clientKey, rateLimitedBody, takeRateLimit } from "../../../lib/rate-limit";
+
+async function hasActiveSeat(email: string): Promise<boolean> {
+  const seats = await getSeatStore().listByEmail(email);
+  return seats.some((seat) => seat.status === "active");
+}
 
 export async function GET(request: Request): Promise<NextResponse> {
   if (!takeRateLimit(clientKey(request, "oauth-authorize"))) {
@@ -20,6 +27,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!redirectAllowed(client, redirectUri)) return NextResponse.json({ error: "invalid_client" });
   const { user } = await userFromRequest(request);
   if (!user) return NextResponse.json({ status: "signed_out" });
+  if (!(await hasActiveSeat(user.email))) return NextResponse.json({ status: "no_plan" });
   return NextResponse.json({ status: "ready" });
 }
 
@@ -43,11 +51,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     back.searchParams.set("return", `${new URL(request.url).pathname}${new URL(request.url).search}`);
     return NextResponse.redirect(back, { status: 303 });
   }
+  if (!(await hasActiveSeat(user.email))) {
+    return NextResponse.redirect(new URL("/pricing", origin), { status: 303 });
+  }
   const code = await issueCode({
     clientId,
     redirectUri,
     challenge,
     subject: user.id,
+    flock: flockIdForEmail(user.email),
   });
   const dest = new URL(redirectUri);
   dest.searchParams.set("code", code);
