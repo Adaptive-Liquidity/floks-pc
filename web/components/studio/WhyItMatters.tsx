@@ -26,8 +26,8 @@ export function WhyItMatters() {
         <div className="grid md:grid-cols-2 gap-8 mt-16 max-w-4xl mx-auto">
           <motion.div
             className="glass-card rounded-2xl p-8 border border-white/5 opacity-60"
-            initial={{ opacity: 0, x: -30 }}
-            whileInView={{ opacity: 1, x: 0 }}
+            initial={{ opacity: 0, y: 16 }}
+            whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: "-100px" }}
             transition={{ duration: 1, ease: [0.16, 1, 0.3, 1], delay: 0.2 }}
           >
@@ -61,8 +61,8 @@ export function WhyItMatters() {
           </motion.div>
           <motion.div
             className="glass-card rounded-2xl p-8 glow-border relative overflow-hidden"
-            initial={{ opacity: 0, x: 30 }}
-            whileInView={{ opacity: 1, x: 0 }}
+            initial={{ opacity: 0, y: 16 }}
+            whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: "-100px" }}
             transition={{ duration: 1, ease: [0.16, 1, 0.3, 1], delay: 0.4 }}
           >

@@ -387,4 +387,14 @@ describe("public site lock", () => {
     assert.equal(oauthUiFromPreflight(false, { status: "ready" }).state, "error");
     assert.equal(oauthUiFromPreflight(true, { ok: false }).state, "error");
   });
+
+  it("keeps the homepage illustration static and the layout inside a 375px screen", () => {
+    const node = read("components/studio/HeroHardwareNode.tsx");
+    assert.match(node, /not a live computer/i);
+    assert.doesNotMatch(node, /animate-ping|observe online|DISPLAY :0|Handshake|CPU LOAD|DEDICATED RAM/);
+    assert.doesNotMatch(read("app/globals.css"), /overflow-x:\s*hidden/);
+    const wide = `${read("components/studio/Hero.tsx")}\n${read("components/studio/StudioCTA.tsx")}`;
+    assert.doesNotMatch(wide, /w-\[\d{3,}px\]/);
+    assert.match(read("components/studio/Hero.tsx"), /min-\[480px\]:grid-cols-3/);
+  });
 });
