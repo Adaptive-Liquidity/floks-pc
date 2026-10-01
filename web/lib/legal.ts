@@ -44,7 +44,7 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
       {
         paragraphs: [
           LEGAL_DISCLAIMER,
-          `Staxions is sold by ${SELLER} (the name Stripe Checkout already shows).`,
+          `Staxions is a product of Asentxia Systems, sold by ${SELLER} (the name Stripe Checkout already shows).`,
         ],
       },
     ],
@@ -58,7 +58,7 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
       {
         paragraphs: [
           LEGAL_DISCLAIMER,
-          `Seller: ${SELLER} (the name Stripe Checkout already shows). Product: Staxions. You buy a paid seat for one Grok Bot to use one isolated Staxions Computer. Work stays in Grok. This site is create account, pay, setup, and status — not a second workspace.`,
+          `Seller: Asentxia Systems, ${SELLER} (the name Stripe Checkout already shows). Product: Staxions. You buy a paid seat for one Grok Bot to use one isolated Staxions Computer. Work stays in Grok. This site is create account, pay, setup, and status — not a second workspace.`,
         ],
       },
       {
@@ -119,7 +119,7 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
       {
         paragraphs: [
           LEGAL_DISCLAIMER,
-          `${SELLER} operates Staxions. We do not sell personal data.`,
+          `Asentxia Systems, ${SELLER}, operates Staxions. We do not sell personal data.`,
         ],
       },
       {
