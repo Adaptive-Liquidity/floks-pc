@@ -31,7 +31,7 @@ export type MaintenanceRow = {
 };
 
 export function isProductionLike(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.NODE_ENV === "production" || env.VERCEL_ENV === "production";
+  return env.NODE_ENV === "production";
 }
 
 export function assertPaidProviderAllowed(
