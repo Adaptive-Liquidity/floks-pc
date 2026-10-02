@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { CONNECTOR } from "./config";
 
 export type OauthClient = {
   id: string;
@@ -476,6 +477,7 @@ export function protectedResourceMetadata(origin: string): Record<string, unknow
   return {
     resource: `${origin}/mcp`,
     authorization_servers: [origin],
+    scopes_supported: [CONNECTOR.scope],
     bearer_methods_supported: ["header"],
   };
 }
