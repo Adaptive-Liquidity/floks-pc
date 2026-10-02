@@ -181,7 +181,7 @@ export interface RunloopDevboxSession {
   snapshotDisk(name: string): Promise<string>;
 
   /** C3B: start or no-op restart of display/WM/VNC. Idempotent. */
-  ensureInteractiveStack(): Promise<void>;
+  ensureInteractiveStack(opts?: { browser?: "strict" | "best-effort" }): Promise<void>;
   screenshot(): Promise<{ width: number; height: number; png: Buffer; activeWindow?: string }>;
   novncLocalOk(): Promise<boolean>;
   uiAction(action: Action): Promise<{ finalUrl?: string } | void>;

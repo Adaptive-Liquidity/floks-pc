@@ -168,7 +168,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "computer_observe",
     description:
-      "Observe the computer display. Set include_screenshot true to see the screen as an image. Set include_accessibility true for AX node ids (required before click_element). Accessibility is never fabricated as live CDP. Screenshot is screen_width by screen_height pixels (coordinate_space screen_pixels); your client may show it scaled. If bot_label is not your name, stop and call computer_pair.",
+      "Observe the computer display. Set include_screenshot true to see the screen as an image. Set include_accessibility true for AX node ids (required before click_element). Accessibility is never fabricated as live CDP. Screenshot is screen_width by screen_height pixels (coordinate_space screen_pixels); your client may show it scaled. screen_blank true means the screenshot is a single colour, including a white about:blank window. If bot_label is not your name, stop and call computer_pair.",
     inputSchema: advertisedSchema(ComputerObserveArgsSchema, []),
   },
   {

@@ -4,6 +4,7 @@
  */
 
 import { inflateSync } from "node:zlib";
+import { z } from "zod";
 import type { Action, ActionResult } from "../types.js";
 
 export const BROWSER_START_URL = "about:blank";
@@ -101,18 +102,26 @@ export async function ensureManagedBrowser(opts: {
   throw new BrowserNotReady();
 }
 
-function normalizePath(path: string): string {
-  if (path.length > 1 && path.endsWith("/")) return path.slice(0, -1);
-  return path.length === 0 ? "/" : path;
-}
-
-function registrableHost(host: string): string {
-  const lower = host.toLowerCase();
-  return lower.startsWith("www.") ? lower.slice(4) : lower;
-}
-
-/** Origin and path match. A trailing slash and a www host redirect still match. */
+/**
+ * Same registrable host and effective port. http to https on the default
+ * ports counts. Path, query, and hash are ignored. file: still requires the
+ * same path. Self-contained so toString() is valid guest JavaScript.
+ */
 export function navigationReached(requested: string, current: string): boolean {
+  function normalizePath(path: string): string {
+    if (path.length > 1 && path.endsWith("/")) return path.slice(0, -1);
+    return path.length === 0 ? "/" : path;
+  }
+  function registrableHost(host: string): string {
+    const lower = host.toLowerCase();
+    return lower.startsWith("www.") ? lower.slice(4) : lower;
+  }
+  function effectivePort(url: URL): string {
+    if (url.port) return url.port;
+    if (url.protocol === "http:") return "80";
+    if (url.protocol === "https:") return "443";
+    return "";
+  }
   let want: URL;
   let got: URL;
   try {
@@ -121,12 +130,24 @@ export function navigationReached(requested: string, current: string): boolean {
   } catch {
     return false;
   }
-  if (normalizePath(want.pathname) !== normalizePath(got.pathname)) return false;
   if (want.protocol === "file:" || got.protocol === "file:") {
-    return want.protocol === got.protocol;
+    return (
+      want.protocol === "file:" &&
+      got.protocol === "file:" &&
+      normalizePath(want.pathname) === normalizePath(got.pathname)
+    );
   }
-  if (want.protocol !== got.protocol) return false;
-  return registrableHost(want.hostname) === registrableHost(got.hostname);
+  if (registrableHost(want.hostname) !== registrableHost(got.hostname)) return false;
+  const wantPort = effectivePort(want);
+  const gotPort = effectivePort(got);
+  const upgrade =
+    want.protocol === "http:" &&
+    got.protocol === "https:" &&
+    wantPort === "80" &&
+    gotPort === "443";
+  if (want.protocol !== got.protocol && !upgrade) return false;
+  if (!upgrade && wantPort !== gotPort) return false;
+  return true;
 }
 
 export function navigationFailureMessage(origin: string, href: string | undefined): string {
@@ -134,25 +155,22 @@ export function navigationFailureMessage(origin: string, href: string | undefine
   return `page did not reach ${origin}; now at ${now}`;
 }
 
-export function parseNavHelperStdout(stdout: string): {
-  ok: boolean;
-  finalUrl?: string;
-  href?: string;
-  errorText?: string;
-} | null {
+export const NavHelperOutputSchema = z
+  .object({
+    ok: z.boolean(),
+    finalUrl: z.string().max(2048).optional(),
+    href: z.string().max(2048).optional(),
+    errorText: z.string().max(256).optional(),
+  })
+  .strict();
+
+export function parseNavHelperStdout(stdout: string): z.infer<typeof NavHelperOutputSchema> | null {
   const start = stdout.indexOf("{");
   if (start < 0) return null;
   try {
     const value: unknown = JSON.parse(stdout.slice(start));
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const row = value as Record<string, unknown>;
-    const parsed: { ok: boolean; finalUrl?: string; href?: string; errorText?: string } = {
-      ok: row.ok === true,
-    };
-    if (typeof row.finalUrl === "string") parsed.finalUrl = row.finalUrl;
-    if (typeof row.href === "string") parsed.href = row.href;
-    if (typeof row.errorText === "string") parsed.errorText = row.errorText;
-    return parsed;
+    const parsed = NavHelperOutputSchema.safeParse(value);
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }
@@ -322,18 +340,24 @@ export function screenIsBlank(png: Buffer): boolean {
   }
   const pixels = unfilterScanlines(inflated, width, height, bpp);
   if (!pixels) return false;
-  const count = width * height;
-  const stride = Math.max(1, Math.floor(count / 200));
   const firstAt = 0;
-  for (let i = 0; i < count; i += stride) {
-    const at = i * bpp;
-    for (let c = 0; c < channels; c++) {
-      if (pixels[at + c] !== pixels[firstAt + c]) return false;
-    }
+  const xs = new Set<number>([0, width - 1]);
+  const ys = new Set<number>([0, height - 1]);
+  const xSteps = Math.min(24, width);
+  const ySteps = Math.min(16, height);
+  for (let i = 0; i < xSteps; i++) {
+    xs.add(Math.min(width - 1, Math.round((i * (width - 1)) / Math.max(1, xSteps - 1))));
   }
-  const last = (count - 1) * bpp;
-  for (let c = 0; c < channels; c++) {
-    if (pixels[last + c] !== pixels[firstAt + c]) return false;
+  for (let j = 0; j < ySteps; j++) {
+    ys.add(Math.min(height - 1, Math.round((j * (height - 1)) / Math.max(1, ySteps - 1))));
+  }
+  for (const y of ys) {
+    for (const x of xs) {
+      const at = (y * width + x) * bpp;
+      for (let c = 0; c < channels; c++) {
+        if (pixels[at + c] !== pixels[firstAt + c]) return false;
+      }
+    }
   }
   return true;
 }

@@ -777,5 +777,12 @@ if command -v websockify >/dev/null 2>&1 && ! alive "$RUNDIR/novnc.pid"; then
     start_ui novnc websockify --web "$WEB" "127.0.0.1:\${NOVNC_PORT}" 127.0.0.1:5900
   fi
 fi
+if [ -L /run/flok-cdp ]; then
+  echo "refusing symlink /run/flok-cdp" >&2
+  exit 1
+fi
+mkdir -p /run/flok-cdp
+chown root:root /run/flok-cdp
+chmod 0700 /run/flok-cdp
 echo "ok display=$DISPLAY profile=$PROFILE ui=$UI_USER"
 `;

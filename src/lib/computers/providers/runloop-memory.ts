@@ -6,7 +6,7 @@
 
 import { randomBytes } from "node:crypto";
 import { posix as pathPosix } from "node:path";
-import { PathEscape } from "../errors.js";
+import { PathEscape, ProviderUnavailable } from "../errors.js";
 import type { Action } from "../types.js";
 import {
   BROWSER_PROFILE_DIR,
@@ -89,6 +89,9 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
   /** How many times ensureInteractiveStack actually (re)started. */
   stackStarts = 0;
   failEnsureOnce = false;
+  /** Test hook: Chrome never answers. Best-effort wake continues; strict observe fails. */
+  failBrowserEnsure = false;
+  suspendCalls = 0;
   /** Test hook: live-shaped CDP dump. Null keeps the memory-plane fail-closed throw. */
   cdpAxDumpResult: { nodes: unknown[] } | null = null;
   private stackUp = false;
@@ -120,6 +123,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
 
   async suspend(): Promise<void> {
     this.assertAlive();
+    this.suspendCalls += 1;
     this.current = "paused";
     this.stackUp = false;
   }
@@ -277,7 +281,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     return name;
   }
 
-  async ensureInteractiveStack(): Promise<void> {
+  async ensureInteractiveStack(opts?: { browser?: "strict" | "best-effort" }): Promise<void> {
     this.assertAlive();
     if (this.failEnsureOnce) {
       this.failEnsureOnce = false;
@@ -292,6 +296,13 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     }
     await this.fsMkdir(BROWSER_PROFILE_DIR);
     await this.fsMkdir(INTERACTIVE_DIR);
+    if (this.failBrowserEnsure) {
+      if (opts?.browser === "best-effort") {
+        process.stderr.write("flok-browser ensure failed\n");
+        return;
+      }
+      throw new ProviderUnavailable("runloop", "chrome did not answer on 127.0.0.1:9222");
+    }
   }
 
   async screenshot(): Promise<{

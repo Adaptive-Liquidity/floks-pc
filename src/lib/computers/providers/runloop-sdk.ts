@@ -39,6 +39,7 @@ import {
   bringManagedBrowserToFront,
   ensureManagedBrowser,
   navigateManagedPage,
+  parseNavHelperStdout,
 } from "./runloop-browser.js";
 import {
   assertNoControlPlaneSecrets,
@@ -434,10 +435,10 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     return snap.id;
   }
 
-  async ensureInteractiveStack(): Promise<void> {
+  async ensureInteractiveStack(opts?: { browser?: "strict" | "best-effort" }): Promise<void> {
     if (this.interactiveStackUp) {
       if (!this.graphicalStack || (await this.xvfbAlive())) {
-        await this.ensureBrowser();
+        await this.finishBrowser(opts);
         return;
       }
       this.interactiveStackUp = false;
@@ -489,7 +490,19 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     }
     this.interactiveGuest = this.graphicalStack && chromeOk;
     this.interactiveStackUp = true;
-    await this.ensureBrowser();
+    await this.finishBrowser(opts);
+  }
+
+  private async finishBrowser(opts?: { browser?: "strict" | "best-effort" }): Promise<void> {
+    try {
+      await this.ensureBrowser();
+    } catch (err) {
+      if (opts?.browser === "best-effort") {
+        process.stderr.write("flok-browser ensure failed\n");
+        return;
+      }
+      throw err;
+    }
   }
 
   async screenshot(): Promise<{
@@ -501,7 +514,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const shotPath = uniqueObsShotPath();
     this.requireFs(await this.fsMkdir(pathPosix.dirname(shotPath)), "screenshot dir");
     const shot = await this.exec({
-      argv: argvAsUiUser(["import", "-display", FLOK_DISPLAY, "-window", "root", shotPath]),
+      argv: argvAsUiUser(["import", "-display", FLOK_DISPLAY, "-window", "root", `PNG24:${shotPath}`]),
       cwd: RUNLOOP_WORKSPACE_ROOT,
       env: { DISPLAY: FLOK_DISPLAY },
       timeoutMs: 15_000,
@@ -646,16 +659,9 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     if (!this.interactiveGuest) return undefined;
     const r = await this.execGuest(["node", CDP_NAV_HELPER_PATH, "--href"], 10_000);
     if (r.exitCode !== 0) return undefined;
-    const start = r.stdout.indexOf("{");
-    if (start < 0) return undefined;
-    try {
-      const parsed: unknown = JSON.parse(r.stdout.slice(start));
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-      const href = (parsed as { href?: unknown }).href;
-      return typeof href === "string" && href.length > 0 ? href : undefined;
-    } catch {
-      return undefined;
-    }
+    const parsed = parseNavHelperStdout(r.stdout);
+    if (!parsed?.ok || !parsed.href) return undefined;
+    return parsed.href;
   }
 
   async cdpAxDump(): Promise<{
@@ -663,7 +669,6 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     viewportOrigin?: { x: number; y: number };
     devicePixelRatio?: number;
   }> {
-    await this.ensureInteractiveStack();
     let r = await this.runCdpHelper();
     const refused = /ECONNREFUSED|9222/.test(r.stderr);
     if (r.exitCode !== 0 && refused) {

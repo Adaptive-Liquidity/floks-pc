@@ -5,6 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { navigationReached } from "./runloop-browser.js";
 import { RUNLOOP_WORKSPACE_ROOT } from "./runloop-client.js";
 
 export const CDP_DEBUG_PORT = 9222;
@@ -243,11 +244,24 @@ export function selectPageTarget<T extends CdpPageTarget>(
 
 /** Guest copy of selectPageTarget. Both CDP helpers embed this text. */
 export const SELECT_PAGE_TARGET_JS = [
-  "const ACTIVE_TARGET = '/tmp/flok-interactive/active-target';",
+  "const CDP_DIR = '/run/flok-cdp';",
+  "const ACTIVE_TARGET = CDP_DIR + '/active-target';",
+  "function readPreferredId() {",
+  "  let fd;",
+  "  try {",
+  "    fd = openSync(ACTIVE_TARGET, constants.O_RDONLY | constants.O_NOFOLLOW);",
+  "    const buf = Buffer.alloc(128);",
+  "    const n = readSync(fd, buf, 0, buf.length, 0);",
+  "    return buf.subarray(0, n).toString('utf8').trim();",
+  "  } catch {",
+  "    return '';",
+  "  } finally {",
+  "    if (fd !== undefined) { try { closeSync(fd); } catch {} }",
+  "  }",
+  "}",
   "function selectPageTarget(list) {",
   "  const pages = (Array.isArray(list) ? list : []).filter((t) => t && t.type === 'page' && typeof t.webSocketDebuggerUrl === 'string');",
-  "  let preferred = '';",
-  "  try { preferred = readFileSync(ACTIVE_TARGET, 'utf8').trim(); } catch {}",
+  "  const preferred = readPreferredId();",
   "  if (preferred) {",
   "    const hit = pages.find((t) => t.id === preferred);",
   "    if (hit) return hit;",
@@ -256,10 +270,17 @@ export const SELECT_PAGE_TARGET_JS = [
   "}",
   "function rememberTarget(id) {",
   "  if (typeof id !== 'string' || !id) return;",
+  "  const tmp = CDP_DIR + '/active-' + process.pid + '-' + Date.now();",
+  "  let fd;",
   "  try {",
-  "    mkdirSync('/tmp/flok-interactive', { recursive: true });",
-  "    writeFileSync(ACTIVE_TARGET, id);",
-  "  } catch {}",
+  "    fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);",
+  "    writeSync(fd, id);",
+  "    closeSync(fd);",
+  "    fd = undefined;",
+  "    renameSync(tmp, ACTIVE_TARGET);",
+  "  } catch {",
+  "    if (fd !== undefined) { try { closeSync(fd); } catch {} }",
+  "  }",
   "}",
 ].join("\n");
 
@@ -269,7 +290,7 @@ export const SELECT_PAGE_TARGET_JS = [
  */
 export const CDP_AX_HELPER_JS = [
   "import http from 'node:http';",
-  "import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';",
+  "import { closeSync, constants, openSync, readSync, renameSync, writeSync } from 'node:fs';",
   "const BASE = 'http://127.0.0.1:9222';",
   `const DEADLINE_MS = ${CDP_AX_HELPER_DEADLINE_MS};`,
   "const reqs = new Set();",
@@ -434,7 +455,7 @@ export const CDP_AX_HELPER_JS = [
  */
 export const CDP_NAV_HELPER_JS = [
   "import http from 'node:http';",
-  "import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';",
+  "import { closeSync, constants, openSync, readSync, renameSync, writeSync } from 'node:fs';",
   "const BASE = 'http://127.0.0.1:9222';",
   "const reqs = new Set();",
   "let sock = null;",
@@ -483,22 +504,7 @@ export const CDP_NAV_HELPER_JS = [
   "  }",
   "}",
   SELECT_PAGE_TARGET_JS,
-  "function normPath(p) {",
-  "  if (p.length > 1 && p.endsWith('/')) return p.slice(0, -1);",
-  "  return p || '/';",
-  "}",
-  "function registrable(h) {",
-  "  const lower = String(h || '').toLowerCase();",
-  "  return lower.startsWith('www.') ? lower.slice(4) : lower;",
-  "}",
-  "function navigationReached(requested, current) {",
-  "  let want, got;",
-  "  try { want = new URL(requested); got = new URL(current); } catch { return false; }",
-  "  if (normPath(want.pathname) !== normPath(got.pathname)) return false;",
-  "  if (want.protocol === 'file:' || got.protocol === 'file:') return want.protocol === got.protocol;",
-  "  if (want.protocol !== got.protocol) return false;",
-  "  return registrable(want.hostname) === registrable(got.hostname);",
-  "}",
+  navigationReached.toString(),
   "async function hrefOf(call) {",
   "  const ev = await call('Runtime.evaluate', { expression: 'location.href', returnByValue: true });",
   "  const value = ev && ev.result ? ev.result.value : '';",
@@ -540,7 +546,16 @@ export const CDP_NAV_HELPER_JS = [
   "  const started = Date.now();",
   "  let href = '';",
   "  while (Date.now() - started < 15000) {",
-  "    href = await hrefOf(call);",
+  "    try {",
+  "      href = await hrefOf(call);",
+  "    } catch {",
+  "      await new Promise((r) => setTimeout(r, 250));",
+  "      continue;",
+  "    }",
+  "    if (href.startsWith('chrome-error://')) {",
+  "      process.stdout.write(JSON.stringify({ ok: false, href, errorText: 'navigation error page' }));",
+  "      return;",
+  "    }",
   "    if (navigationReached(arg, href)) {",
   "      if (typeof page.id === 'string') rememberTarget(page.id);",
   "      process.stdout.write(JSON.stringify({ ok: true, finalUrl: href }));",

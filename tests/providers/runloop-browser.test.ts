@@ -9,6 +9,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
 import { MCP_TOOL_NAMES, MCP_TOOLS } from "../../src/lib/mcp/tools.ts";
+import { MemoryRunloopControlPlane, RunloopProvider } from "../../src/lib/computers/providers/runloop.ts";
 import {
   BROWSER_START_URL,
   BrowserNotReady,
@@ -17,6 +18,7 @@ import {
   ensureManagedBrowser,
   navigateManagedPage,
   navigationReached,
+  parseNavHelperStdout,
   runValidatedActions,
   screenIsBlank,
   type GuestExecResult,
@@ -63,6 +65,30 @@ function rgbPng(width: number, pixels: Array<[number, number, number]>): Buffer 
       raw[at + 2] = pixel[2];
     }
   }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  return Buffer.concat([
+    signature,
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+function solidRgbWithDot(width: number, height: number, dotX: number, dotY: number): Buffer {
+  const stride = 1 + width * 3;
+  const raw = Buffer.alloc(height * stride);
+  for (let y = 0; y < height; y++) {
+    const row = y * stride;
+    raw[row] = 0;
+    raw.fill(255, row + 1, row + stride);
+  }
+  const at = dotY * stride + 1 + dotX * 3;
+  raw[at] = 0;
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
@@ -175,7 +201,8 @@ describe("visible browser ensure", () => {
     assert.ok(order.indexOf("launch") < order.indexOf("screenshot"));
     const sdk = readFileSync(join(root, "src/lib/computers/providers/runloop-sdk.ts"), "utf8");
     const stack = sdk.slice(sdk.indexOf("async ensureInteractiveStack"), sdk.indexOf("async screenshot"));
-    assert.equal(stack.split("ensureBrowser()").length - 1, 2);
+    assert.equal(stack.split("await this.finishBrowser(").length - 1, 2);
+    assert.match(sdk, /PNG24:/);
   });
 
   it("times out instead of hanging when Chrome never answers", async () => {
@@ -218,9 +245,14 @@ describe("honest open_url", () => {
     });
     assert.equal(result.finalUrl, "https://example.com/");
     assert.equal(seen.some((line) => /google-chrome|Popen/.test(line)), false);
+    assert.equal(navigationReached("http://example.com/", "https://example.com/"), true);
     assert.equal(navigationReached("https://example.com", "https://example.com/"), true);
     assert.equal(navigationReached("https://example.com/", "https://www.example.com/"), true);
-    assert.equal(navigationReached("https://example.com/", "https://example.com/other"), false);
+    assert.equal(navigationReached("https://x.com/", "https://x.com/home"), true);
+    assert.equal(navigationReached("https://host:8443/p", "https://host:9443/p"), false);
+    assert.equal(navigationReached("https://example.com/", "https://evil.test/"), false);
+    assert.equal(navigationReached("https://twitter.com/", "https://x.com/"), false);
+    assert.equal(navigationReached("file:///home/user/flok/a.html", "file:///home/user/flok/b.html"), false);
   });
 
   it("fails the rest of the batch when the origin is missed", async () => {
@@ -271,6 +303,15 @@ describe("honest open_url", () => {
     assert.equal(batch.results[1]?.error, "not executed");
   });
 
+  it("rejects nav helper stdout that fails the schema", () => {
+    assert.equal(parseNavHelperStdout(JSON.stringify({ ok: true, href: "https://example.com/", extra: 1 })), null);
+    assert.equal(parseNavHelperStdout(JSON.stringify({ ok: "yes", href: "https://example.com/" })), null);
+    assert.equal(parseNavHelperStdout(JSON.stringify({ ok: true, href: "h".repeat(2049) })), null);
+    const okHref = parseNavHelperStdout(JSON.stringify({ ok: true, href: "https://example.com/" }));
+    assert.equal(okHref?.ok, true);
+    assert.equal(okHref?.href, "https://example.com/");
+  });
+
   it("shares selectPageTarget between the AX helper and open_url", () => {
     const pages = [
       { id: "first", type: "page", webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/first" },
@@ -281,10 +322,17 @@ describe("honest open_url", () => {
     assert.equal(selectPageTarget(pages)?.id, "first");
     assert.equal(CDP_AX_HELPER_JS.includes(SELECT_PAGE_TARGET_JS), true);
     assert.equal(CDP_NAV_HELPER_JS.includes(SELECT_PAGE_TARGET_JS), true);
+    assert.equal(CDP_NAV_HELPER_JS.includes(navigationReached.toString()), true);
+    assert.match(CDP_NAV_HELPER_JS, /chrome-error:\/\//);
+    assert.match(CDP_NAV_HELPER_JS, /try \{\s*href = await hrefOf\(call\);/);
     assert.match(CDP_NAV_HELPER_JS, /Page\.navigate/);
     assert.match(CDP_NAV_HELPER_JS, /127\.0\.0\.1/);
     assert.doesNotMatch(CDP_NAV_HELPER_JS, /0\.0\.0\.0/);
     assert.doesNotMatch(CDP_NAV_HELPER_JS, /--no-sandbox/);
+    assert.doesNotMatch(CDP_AX_HELPER_JS, /\/tmp\/flok-interactive/);
+    assert.doesNotMatch(CDP_NAV_HELPER_JS, /\/tmp\/flok-interactive/);
+    assert.match(SELECT_PAGE_TARGET_JS, /O_NOFOLLOW/);
+    assert.match(SELECT_PAGE_TARGET_JS, /renameSync/);
   });
 
   it("focuses the managed browser without a fixture URL", async () => {
@@ -321,6 +369,15 @@ describe("screen truth and fixture removal", () => {
       false,
     );
     assert.equal(screenIsBlank(Buffer.from("not-png")), false);
+    const gray = readFileSync(join(root, "tests/fixtures/png/black-1bit-gray.png"));
+    const palette = readFileSync(join(root, "tests/fixtures/png/palette-1bit.png"));
+    const solid = readFileSync(join(root, "tests/fixtures/png/solid-8bit-rgb.png"));
+    assert.equal(screenIsBlank(gray), false);
+    assert.equal(screenIsBlank(palette), false);
+    assert.equal(screenIsBlank(solid), true);
+    const offColumn = Math.round(1439 / 23);
+    assert.equal(offColumn === 0 || offColumn === 720, false);
+    assert.equal(screenIsBlank(solidRgbWithDot(1440, 900, offColumn, 0)), false);
   });
 
   it("keeps the fixture out of customer source and starts a visible background", () => {
@@ -342,7 +399,24 @@ describe("screen truth and fixture removal", () => {
     const observe = MCP_TOOLS.find((tool) => tool.name === "computer_observe");
     const act = MCP_TOOLS.find((tool) => tool.name === "computer_act");
     assert.match(observe?.description ?? "", /coordinate_space screen_pixels/);
+    assert.match(observe?.description ?? "", /single colour/);
     assert.match(act?.description ?? "", /NAVIGATION_FAILED/);
     assert.equal(MCP_TOOL_NAMES.length, 8);
+  });
+});
+
+describe("wake when Chrome will not start", () => {
+  it("resolves wake without suspending and still fail-closes observe", async () => {
+    const plane = new MemoryRunloopControlPlane();
+    const provider = new RunloopProvider({ client: plane, blueprint: "memory" });
+    const created = await provider.provision({ birdId: "wake-browser", flockId: "f" });
+    const session = (await plane.get(created.providerRef)) as {
+      failBrowserEnsure: boolean;
+      suspendCalls: number;
+    };
+    session.failBrowserEnsure = true;
+    await provider.wake(created.providerRef);
+    assert.equal(session.suspendCalls, 0);
+    await assert.rejects(() => provider.observe(created.providerRef, { includeScreenshot: true }));
   });
 });

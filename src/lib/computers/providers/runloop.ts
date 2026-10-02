@@ -233,7 +233,7 @@ export class RunloopProvider implements ComputerProvider {
       await s.resume();
     }
     try {
-      await s.ensureInteractiveStack();
+      await s.ensureInteractiveStack({ browser: "best-effort" });
       if (this.requireInteractive && !s.interactiveGuest) {
         throw new InteractiveBlueprintRequired(
           "guest is missing flok-ui / Xvfb / Chrome after wake; not an Agent Computer",
@@ -543,7 +543,7 @@ export class RunloopProvider implements ComputerProvider {
     if (st === "deleted" || st === "paused" || st === "stopped" || st === "error") {
       throw new ProviderUnavailable("runloop", `health probe failed: ${st}`);
     }
-    await s.ensureInteractiveStack();
+    await s.ensureInteractiveStack({ browser: "best-effort" });
     if (this.requireInteractive && !s.interactiveGuest) {
       throw new InteractiveBlueprintRequired(
         "health probe failed: guest is missing flok-ui / Xvfb / Chrome",
