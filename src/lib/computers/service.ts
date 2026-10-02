@@ -1153,6 +1153,19 @@ export class ComputerService {
     return this.capabilities.get(id) ?? null;
   }
 
+  /** In-memory hit, or one reload when another instance minted the key. */
+  async findCapabilityForToken(token: string): Promise<ComputerCapability | null> {
+    const hit = this.capabilityForToken(token);
+    if (hit) return hit;
+    await this.reloadIfRevisionChanged();
+    return this.capabilityForToken(token);
+  }
+
+  /** Revision last loaded or saved. Safe to log; it is not a secret. */
+  controlPlaneRevision(): number {
+    return this.revision;
+  }
+
   async redeemBotClaim(input: {
     code: string;
     flockId: string;

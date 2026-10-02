@@ -569,10 +569,10 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
     if (!("token" in refreshed)) return;
     assert.equal((await getOauthStore().getAccess(hashToken(refreshed.token)))?.computerId, computer.id);
     const wrongClient = await refreshAccess(refreshed.refresh, client.id);
-    assert.deepEqual(wrongClient, { error: "invalid_grant" });
+    assert.equal("error" in wrongClient && wrongClient.error, "invalid_grant");
     await service.revokeCapability((await getOauthStore().getAccess(hashToken(refreshed.token)))?.capabilityId ?? "");
     const dead = await refreshAccess(refreshed.refresh, other.id);
-    assert.deepEqual(dead, { error: "invalid_grant" });
+    assert.equal("error" in dead && dead.error, "invalid_grant");
   });
 
   it("runs the purchased computer from the OAuth bearer and keeps a slow checkout", async () => {
@@ -809,7 +809,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
 
     setComputerServiceForTests(svcB);
     const wrong = await refreshAccess(exchanged.refresh, "not-this-client");
-    assert.deepEqual(wrong, { error: "invalid_grant" });
+    assert.equal("error" in wrong && wrong.error, "invalid_grant");
     const refreshed = await refreshAccess(exchanged.refresh, client.id);
     assert.ok("token" in refreshed);
     if (!("token" in refreshed)) return;

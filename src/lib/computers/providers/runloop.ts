@@ -77,6 +77,7 @@ export class RunloopProvider implements ComputerProvider {
   private readonly ownerId: string | null;
   private readonly workspaceId: string | null;
   private readonly keepAliveSeconds: number;
+  private readonly idleTimeSeconds: number;
   private readonly sessions = new Map<string, RunloopDevboxSession>();
 
   constructor(opts?: {
@@ -84,6 +85,7 @@ export class RunloopProvider implements ComputerProvider {
     blueprint?: string;
     apiKey?: string;
     keepAliveSeconds?: number;
+    idleTimeSeconds?: number;
     requireInteractive?: boolean;
     ownerId?: string | null;
     workspaceId?: string | null;
@@ -94,6 +96,7 @@ export class RunloopProvider implements ComputerProvider {
     this.blueprint =
       opts?.blueprint ?? process.env.FLOK_RUNLOOP_BLUEPRINT ?? DEFAULT_RUNLOOP_BLUEPRINT;
     this.keepAliveSeconds = opts?.keepAliveSeconds ?? LIVE_KEEP_ALIVE_SECONDS;
+    this.idleTimeSeconds = opts?.idleTimeSeconds ?? this.keepAliveSeconds;
     if (opts?.client) {
       this.plane = opts.client;
       return;
@@ -142,6 +145,7 @@ export class RunloopProvider implements ComputerProvider {
       blueprint,
       apiKey,
       keepAliveSeconds,
+      idleTimeSeconds: idleSeconds,
       requireInteractive,
     });
   }
@@ -523,6 +527,7 @@ export class RunloopProvider implements ComputerProvider {
       blueprint: this.blueprint,
       architecture: DEFAULT_RUNLOOP_ARCH,
       keepAliveSeconds: this.keepAliveSeconds,
+      idleTimeSeconds: this.idleTimeSeconds,
       labels: buildAgentComputerLabels(
         { birdId, flockId },
         { ownerId: this.ownerId, workspaceId: this.workspaceId },
@@ -568,6 +573,7 @@ export class RunloopProvider implements ComputerProvider {
       blueprint: this.blueprint,
       architecture: DEFAULT_RUNLOOP_ARCH,
       keepAliveSeconds: this.keepAliveSeconds,
+      idleTimeSeconds: this.idleTimeSeconds,
       labels: buildAgentComputerLabels(spec, {
         ownerId: this.ownerId,
         workspaceId: this.workspaceId,

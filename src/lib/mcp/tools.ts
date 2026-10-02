@@ -1,6 +1,6 @@
 /**
- * The eight C5 MCP tools. Input schemas are Zod (runtime) + JSON Schema (tools/list).
- * Handoffs are listed so the surface is exactly eight tools, then fail closed (C9).
+ * The eight MCP tools. Input schemas are Zod (runtime) + JSON Schema (tools/list).
+ * Handoffs stay listed so the surface is exactly eight tools, and then fail closed.
  */
 
 import { z } from "zod";
@@ -180,13 +180,13 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "handoff_send",
     description:
-      "Send an explicit file handoff to another Node. Not implemented in C5 (Gate C9). Fails closed.",
+      "Send an explicit file handoff to another Node. Not available yet. Returns NOT AVAILABLE; no files are sent or received.",
     inputSchema: advertisedSchema(HandoffArgsSchema, []),
   },
   {
     name: "handoff_receive",
     description:
-      "Receive an explicit file handoff. Not implemented in C5 (Gate C9). Fails closed.",
+      "Receive an explicit file handoff. Not available yet. Returns NOT AVAILABLE; no files are sent or received.",
     inputSchema: advertisedSchema(HandoffArgsSchema, []),
   },
 ];

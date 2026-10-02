@@ -63,9 +63,45 @@ export interface RunloopCreateParams {
   blueprint: string;
   architecture: "x86_64" | "arm64";
   keepAliveSeconds: number;
+  /** Used as after_idle.idle_time_seconds when FLOK_RUNLOOP_ON_IDLE=suspend. */
+  idleTimeSeconds?: number;
   labels: Record<string, string>;
   /** Guest environment. Must not contain control-plane secrets. */
   envVars: Record<string, string>;
+}
+
+export type RunloopLaunchParameters =
+  | {
+      architecture: "x86_64" | "arm64";
+      keep_alive_time_seconds: number;
+    }
+  | {
+      architecture: "x86_64" | "arm64";
+      lifecycle: { after_idle: { idle_time_seconds: number; on_idle: "suspend" } };
+    };
+
+/** Suspend-on-idle omits keep_alive. Runloop ignores keep_alive when after_idle is set. */
+export function runloopLaunchParameters(
+  params: RunloopCreateParams,
+  fallbackKeepAlive: number,
+  env: NodeJS.ProcessEnv = process.env,
+): RunloopLaunchParameters {
+  const architecture = params.architecture || DEFAULT_RUNLOOP_ARCH;
+  if (env.FLOK_RUNLOOP_ON_IDLE === "suspend") {
+    return {
+      architecture,
+      lifecycle: {
+        after_idle: {
+          idle_time_seconds: params.idleTimeSeconds ?? (params.keepAliveSeconds || fallbackKeepAlive),
+          on_idle: "suspend",
+        },
+      },
+    };
+  }
+  return {
+    architecture,
+    keep_alive_time_seconds: params.keepAliveSeconds || fallbackKeepAlive,
+  };
 }
 
 export interface RunloopExecResult {

@@ -550,19 +550,20 @@ export async function refreshAccess(
   refreshToken: string,
   clientId?: string,
   now = Date.now(),
-): Promise<{ token: string; refresh: string; subject: string; flock: string } | { error: "invalid_grant" }> {
+): Promise<{ token: string; refresh: string; subject: string; flock: string } | RefreshDenial> {
   const refreshHash = hashToken(refreshToken);
   const existing = await getOauthStore().getByRefresh(refreshHash);
-  if (!existing || existing.refreshExpiresAt <= now) return { error: "invalid_grant" };
-  if (clientId && clientId !== existing.clientId) return { error: "invalid_grant" };
+  if (!existing) return denied("missing");
+  if (existing.refreshExpiresAt <= now) return denied("expired");
+  if (clientId && clientId !== existing.clientId) return denied("client");
   const row = await getOauthStore().consumeRefresh(refreshHash);
-  if (!row) return { error: "invalid_grant" };
+  if (!row) return denied("consumed_or_revoked");
   const accountOnly = perBotKeysEnabled() && Boolean(row.computerId || row.capabilityId);
   if (!accountOnly && (row.computerId || row.capabilityId)) {
-    if (!row.computerId || !row.capabilityId) return { error: "invalid_grant" };
+    if (!row.computerId || !row.capabilityId) return denied("extend_failed");
     const { getComputerService } = await import("./desks/runtime");
     const extended = await (await getComputerService()).extendBoundCapability(row.capabilityId, row.flock);
-    if (!extended) return { error: "invalid_grant" };
+    if (!extended) return denied("extend_failed");
   }
   return saveTokenPair({
     subject: row.subject,
@@ -577,6 +578,19 @@ export async function refreshAccess(
 
 function perBotKeysEnabled(): boolean {
   return process.env.FLOK_PER_BOT_KEYS === "true";
+}
+
+export type RefreshDenialReason =
+  | "missing"
+  | "expired"
+  | "client"
+  | "consumed_or_revoked"
+  | "extend_failed";
+
+type RefreshDenial = { error: "invalid_grant"; reason: RefreshDenialReason };
+
+function denied(reason: RefreshDenialReason): RefreshDenial {
+  return { error: "invalid_grant", reason };
 }
 
 async function saveTokenPair(input: {
