@@ -1,7 +1,7 @@
 import { MCP_PREFERRED_PROTOCOL, MCP_SUPPORTED_PROTOCOLS } from "../../../src/lib/mcp/config";
 import { jsonRpcResult } from "../../../src/lib/mcp/protocol";
 import { getComputerService } from "../desks/runtime";
-import { getOauthStore, type OauthAccess } from "../oauth";
+import type { OauthAccess } from "../oauth";
 import { activeComputerIdsForFlock } from "./pending-binds";
 import {
   NO_COMPUTER_MESSAGE,
@@ -126,27 +126,9 @@ async function boundTool(
   if (computer.flockId !== access.flock) {
     return rpc(call.id, protocolVersion, true, { message: RECONNECT_COMPUTER_MESSAGE });
   }
-  if (call.name === "computer_status") {
-    return rpc(call.id, protocolVersion, false, {
-      connected: true,
-      computer_handle: computer.id,
-      state: computer.state,
-    });
-  }
-  const issued = await service.issueBoundCapability(computer.id, access.flock);
-  await getOauthStore().bindLiveTokens({
-    clientId: access.clientId,
-    subject: access.subject,
-    computerId: computer.id,
-    capabilityId: issued.capabilityId,
-  });
   return rpc(call.id, protocolVersion, false, {
     connected: true,
-    computer_handle: issued.computerHandle,
-    capability_token: issued.token,
-    capability_id: issued.capabilityId,
-    flock_id: issued.flockId,
-    scopes: issued.scopes,
-    expires_at: issued.expiresAt.toISOString(),
+    computer_handle: computer.id,
+    state: computer.state,
   });
 }

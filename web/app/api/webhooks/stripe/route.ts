@@ -25,16 +25,12 @@ export async function POST(request: Request) {
     const seat = await applyStripeEvent(event);
     if (seat?.status === "active" && event.type === "checkout.session.completed") {
       after(async () => {
-        let computers: Awaited<ReturnType<typeof provisionSeatComputers>> = [];
         try {
-          computers = await provisionSeatComputers(seat);
-        } catch (err) {
-          console.error("[stripe.webhook] provision", err instanceof Error ? err.message : err);
-        }
-        try {
+          const computers = await provisionSeatComputers(seat);
           await bindPurchasedComputer(event, seat, computers);
         } catch (err) {
-          console.error("[stripe.webhook] bind", err instanceof Error ? err.message : err);
+          console.error("[stripe.webhook] provision", err instanceof Error ? err.message : err);
+          await releaseStripeEvent(event.id);
         }
       });
     }

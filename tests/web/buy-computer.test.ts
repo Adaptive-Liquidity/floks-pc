@@ -277,12 +277,16 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
       }),
     );
-    const tools = (await listed.json()) as { result?: { tools?: Array<{ name: string }> } };
+    const tools = (await listed.json()) as {
+      result?: { tools?: Array<{ name: string; inputSchema?: { required?: string[] } }> };
+    };
     assert.deepEqual(
       tools.result?.tools?.map((tool) => tool.name),
       [...MCP_TOOL_NAMES],
     );
     assert.equal(MCP_TOOL_NAMES.length, 8);
+    const pairSchema = tools.result?.tools?.find((tool) => tool.name === "computer_pair")?.inputSchema;
+    assert.deepEqual(pairSchema?.required ?? [], []);
 
     const personal = await callTool(token, "computer_pair", {});
     assert.equal(personal.isError, false);
