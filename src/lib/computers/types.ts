@@ -333,6 +333,8 @@ export interface Observation {
   activeWindow?: string;
   screenshotBase64?: string;
   accessibilitySummary?: unknown;
+  /** CDP did not answer in time. The screenshot is real; the tree is not invented. */
+  accessibilityPending?: boolean;
 }
 
 export type ActionType =

@@ -184,6 +184,7 @@ export class ComputerService {
   private readonly betaRegistry: BetaRegistry | undefined;
   private readonly now: () => number;
   private readonly wakeTimeoutMs: number;
+  private readonly sleepFn: (ms: number) => Promise<void>;
   private wakeAdmission: (computerId: string) => Promise<boolean> = async () => true;
 
   constructor(
@@ -196,6 +197,7 @@ export class ComputerService {
       betaRegistry?: BetaRegistry;
       now?: () => number;
       wakeTimeoutMs?: number;
+      sleep?: (ms: number) => Promise<void>;
     },
   ) {
     this.store = opts?.store;
@@ -205,6 +207,9 @@ export class ComputerService {
     this.betaRegistry = opts?.betaRegistry;
     this.now = opts?.now ?? Date.now;
     this.wakeTimeoutMs = opts?.wakeTimeoutMs ?? 90_000;
+    this.sleepFn =
+      opts?.sleep ??
+      ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   /** When false, a shut-down devbox stays down. Missing seats are allowed. */
@@ -1041,8 +1046,43 @@ export class ComputerService {
       throw new ComputerNotFound(computer.id);
     }
     if (!computer.providerRef) return computer;
-    if ((await this.classifyProvider(computer.providerRef)) === "up") return computer;
+    if ((await this.classifyProvider(computer.providerRef)) === "up") {
+      return this.healToUp(computer);
+    }
     return this.enqueueDestroy(computer.id, () => this.ensureAwakeLocked(computer.id));
+  }
+
+  /** Move a stored state onto an already-running provider. Does not call pause/stop/wake. */
+  private async healToUp(computer: Computer): Promise<Computer> {
+    if (
+      computer.state === "ready" ||
+      computer.state === "running" ||
+      computer.state === "error" ||
+      computer.state === "deleting" ||
+      computer.state === "deleted"
+    ) {
+      return computer;
+    }
+    const steps: ComputerState[] =
+      computer.state === "recovery_failed"
+        ? ["waking", "ready"]
+        : computer.state === "paused"
+          ? ["running"]
+          : computer.state === "waking" || computer.state === "stopped" || computer.state === "provisioning"
+            ? ["ready"]
+            : [];
+    let current = computer;
+    for (const to of steps) {
+      if (!canTransition(current.state, to)) return current;
+      current = this.applyTransition(current, to);
+    }
+    if (current.state !== computer.state) await this.persist();
+    return current;
+  }
+
+  private wakeBudgetMs(): number {
+    const cap = Number(process.env.FLOK_WAKE_CALL_BUDGET_MS) || 45_000;
+    return Math.min(this.wakeTimeoutMs, cap);
   }
 
   private async ensureAwakeLocked(computerId: string): Promise<Computer> {
@@ -1053,9 +1093,9 @@ export class ComputerService {
       throw new ComputerNotFound(computer.id);
     }
     const kind = await this.classifyProvider(ref);
-    if (kind === "up") return computer;
+    if (kind === "up") return this.healToUp(computer);
     if (!(await this.wakeAdmission(computer.id))) throw new ComputerAsleep();
-    const deadline = this.now() + this.wakeTimeoutMs;
+    const deadline = this.now() + this.wakeBudgetMs();
     computer = this.markWaking(computer);
     await this.persist();
     let liveRef = computer.providerRef ?? ref;
@@ -1065,6 +1105,8 @@ export class ComputerService {
       } catch (err) {
         if (err instanceof ComputerStarting || !this.shouldReplaceDevbox(err)) throw err;
         computer = await this.replaceDevbox(computer);
+        this.axByComputer.delete(computer.id);
+        await this.healToUp(await this.get(computer.id));
         this.recordOperatorEvent({
           computerId: computer.id,
           birdId: computer.birdId,
@@ -1078,11 +1120,10 @@ export class ComputerService {
     }
     await this.withinDeadline(this.pollUntilUp(liveRef, deadline), deadline);
     const latest = await this.get(computer.id);
-    if (latest.state === "waking") {
-      this.applyTransition(latest, "ready");
-      await this.persist();
+    if (latest.state !== "ready" && latest.state !== "running") {
+      return this.healToUp(latest);
     }
-    return this.get(computer.id);
+    return latest;
   }
 
   private markWaking(computer: Computer): Computer {
@@ -1143,11 +1184,32 @@ export class ComputerService {
     return updated;
   }
 
+  private async observeWhenReady(ref: string, request: ObserveRequest): Promise<Observation> {
+    if (request.includeAccessibility !== true) {
+      return this.provider.observe(ref, request);
+    }
+    const deadline = this.now() + 20_000;
+    for (;;) {
+      const observation = await this.provider.observe(ref, request);
+      if (observation.accessibilitySummary !== undefined) return observation;
+      if (this.now() >= deadline) {
+        if (observation.screenshotBase64) {
+          return { ...observation, accessibilityPending: true };
+        }
+        throw new ObserveRetryable("starting");
+      }
+      await this.sleepFn(Math.min(500, Math.max(0, deadline - this.now())));
+    }
+  }
+
   private async pollUntilUp(ref: string, deadline: number): Promise<void> {
+    let delay = 500;
     for (;;) {
       if ((await this.classifyProvider(ref)) === "up") return;
       if (this.now() >= deadline) throw new ComputerStarting();
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      const wait = Math.min(delay, deadline - this.now());
+      await this.sleepFn(wait);
+      delay = Math.min(delay * 2, 2_000);
     }
   }
 
@@ -1308,11 +1370,12 @@ export class ComputerService {
     await this.reloadIfRevisionChanged();
     const authorized = this.authorize(auth, computerId, "observe");
     const computer = await this.ensureAwake(authorized.computer);
-    this.assertObserveAvailable(computer);
     const ref = this.requireProviderRef(computer);
+    const live = await this.classifyProvider(ref);
+    if (live !== "up") throw new ObserveRetryable(live);
     await this.touch(computer);
-    const observation = await this.provider.observe(ref, request);
-    if (request.includeAccessibility === true) {
+    const observation = await this.observeWhenReady(ref, request);
+    if (request.includeAccessibility === true && !observation.accessibilityPending) {
       const cache = axCacheFromObservation(observation, this.now());
       if (cache) this.axByComputer.set(computer.id, cache);
       else this.axByComputer.delete(computer.id);

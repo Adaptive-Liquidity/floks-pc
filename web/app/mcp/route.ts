@@ -9,6 +9,8 @@ import { bindPairFlock } from "../../lib/mcp-flock";
 import { accessClaims, getOauthStore, hashToken } from "../../lib/oauth";
 
 export const runtime = "nodejs";
+/** Must stay above FLOK_WAKE_CALL_BUDGET_MS so a wake can finish inside one request. */
+export const maxDuration = 120;
 
 let gateway: McpGateway | null = null;
 let gatewayService: ComputerService | null = null;

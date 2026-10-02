@@ -350,6 +350,7 @@ export class McpGateway {
       if (err instanceof ComputerStarting || err instanceof ComputerAsleep) {
         const payload: Record<string, unknown> = {
           state: err instanceof ComputerAsleep ? "sleeping" : "starting",
+          ...(err instanceof ComputerStarting ? { retry_after_ms: 15_000 } : {}),
         };
         if (ctx.bound) {
           payload.connected = true;
@@ -430,7 +431,10 @@ export class McpGateway {
     if (observation.activeWindow !== undefined) {
       payload.active_window = observation.activeWindow;
     }
-    if (parsed.include_accessibility === true && observation.accessibilitySummary !== undefined) {
+    if (observation.accessibilityPending === true) {
+      payload.accessibility_pending = true;
+      payload.retry_after_ms = 10_000;
+    } else if (parsed.include_accessibility === true && observation.accessibilitySummary !== undefined) {
       payload.accessibility_summary = observation.accessibilitySummary;
     }
     const outcome: ToolOk = { isError: false, payload };
