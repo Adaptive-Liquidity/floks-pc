@@ -20,7 +20,6 @@
 
 import { randomBytes } from "node:crypto";
 import type { ComputerProvider } from "./providers/provider.js";
-import { ComputerUseNotAvailable } from "./providers/runloop.js";
 import type {
   ActionBatch,
   ActionResult,
@@ -57,6 +56,7 @@ import {
   ComputerNotFound,
   ComputerRebuilt,
   ComputerStarting,
+  ComputerUseNotAvailable,
   InsufficientScope,
   CheckpointRequired,
   CleanupFailed,
@@ -364,7 +364,9 @@ export class ComputerService {
   private pruneBotClaims(): void {
     const now = this.now();
     for (const [id, claim] of this.botClaims) {
-      if (claim.status === "redeemed" || claim.expiresAt.getTime() <= now) {
+      // Redeemed and denied claims stay as tombstones until expiry so a second
+      // instance re-reading the snapshot sees "redeemed", not a missing row.
+      if (claim.expiresAt.getTime() <= now) {
         this.botClaims.delete(id);
         this.botClaimsByDigest.delete(claim.secretDigest);
       }
@@ -393,6 +395,24 @@ export class ComputerService {
           this.overlay(mine, base);
         }
       }
+    };
+    this.persistChain = this.persistChain.catch(() => undefined).then(write);
+    await this.persistChain;
+  }
+
+  /** One compare-and-save with no overlay. A conflict throws StaleControlPlane so the caller reloads and re-checks. */
+  private async persistExact(): Promise<void> {
+    this.pruneBotClaims();
+    const store = this.store;
+    if (!store) return;
+    const write = async (): Promise<void> => {
+      const mine = this.toSnapshot();
+      if (!store.compareAndSave) {
+        await store.save(mine);
+        return;
+      }
+      this.revision = await store.compareAndSave(mine, this.revision);
+      this.committed = structuredClone(mine);
     };
     this.persistChain = this.persistChain.catch(() => undefined).then(write);
     await this.persistChain;
@@ -1140,7 +1160,23 @@ export class ComputerService {
     | { pending: true; claimId: string; expiresAt: Date; checkoutOpen: boolean }
     | { pending: false; pair: PairResult; botLabel: string | null }
   > {
-    await this.reloadIfRevisionChanged();
+    for (let attempt = 0; ; attempt++) {
+      if (attempt === 0) await this.reloadIfRevisionChanged();
+      else await this.hydrate();
+      const done = await this.redeemBotClaimOnce(input);
+      if (done !== "stale") return done;
+      if (attempt >= 4) throw new StaleControlPlane();
+    }
+  }
+
+  private async redeemBotClaimOnce(input: {
+    code: string;
+    flockId: string;
+  }): Promise<
+    | "stale"
+    | { pending: true; claimId: string; expiresAt: Date; checkoutOpen: boolean }
+    | { pending: false; pair: PairResult; botLabel: string | null }
+  > {
     const digest = hashPairCode(input.code);
     const id = this.botClaimsByDigest.get(digest);
     const claim = id ? this.botClaims.get(id) : undefined;
@@ -1186,7 +1222,12 @@ export class ComputerService {
     this.capabilities.set(cap.id, cap);
     this.capabilitiesByDigest.set(cap.tokenDigest, cap.id);
     this.botClaims.set(claim.id, { ...claim, status: "redeemed" });
-    await this.persist();
+    try {
+      await this.persistExact();
+    } catch (err) {
+      if (err instanceof StaleControlPlane) return "stale";
+      throw err;
+    }
     return {
       pending: false,
       botLabel: claim.botLabel,

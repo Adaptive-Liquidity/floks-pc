@@ -115,6 +115,15 @@ export class ProviderUnavailable extends ComputerError {
   }
 }
 
+export class ComputerUseNotAvailable extends ComputerError {
+  constructor(
+    detail = "Secure human takeover is not enabled; local noVNC stays on 127.0.0.1",
+  ) {
+    super("C3B_TAKEOVER_UNAVAILABLE", detail);
+    this.name = "ComputerUseNotAvailable";
+  }
+}
+
 export class PathEscape extends ComputerError {
   constructor(path: string) {
     super(

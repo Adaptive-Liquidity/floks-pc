@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.ts";
+import { ComputerService, FakeProvider, MemoryControlPlaneStore, PairCodeInvalid } from "../../src/lib/computers/index.ts";
 import { McpGateway } from "../../src/lib/mcp/handler.ts";
 import { MCP_TOOL_NAMES } from "../../src/lib/mcp/tools.ts";
 import { blobContainsSecret, RecordingLogger } from "../../src/lib/mcp/log.ts";
@@ -509,5 +509,79 @@ describe("per-bot computer keys", () => {
       if (previousAuth === undefined) delete process.env.STAX_TEST_AUTH;
       else process.env.STAX_TEST_AUTH = previousAuth;
     }
+  });
+
+  it("redeems one code on two instances as a single live key", async () => {
+    const store = new MemoryControlPlaneStore();
+    const provider = new FakeProvider();
+    const writer = new ComputerService(provider, { store });
+    const flock = "flock-one-code";
+    const computer = await writer.requestComputer({ birdId: "bird-one-code", flockId: flock });
+    const claim = await writer.createBotClaim({ flockId: flock, subject: "user_a" });
+    await writer.approveBotClaim({
+      claimId: claim.claimId,
+      flockId: flock,
+      computerId: computer.id,
+      botLabel: "Ada",
+    });
+    const s1 = new ComputerService(provider, { store });
+    const s2 = new ComputerService(provider, { store });
+    await s1.hydrate();
+    await s2.hydrate();
+    const settled = await Promise.allSettled([
+      s1.redeemBotClaim({ code: claim.code, flockId: flock }),
+      s2.redeemBotClaim({ code: claim.code, flockId: flock }),
+    ]);
+    const fulfilled = settled.filter((row) => row.status === "fulfilled");
+    const rejected = settled.filter((row) => row.status === "rejected");
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.ok(rejected[0]?.status === "rejected" && rejected[0].reason instanceof PairCodeInvalid);
+    const s3 = new ComputerService(provider, { store });
+    await s3.hydrate();
+    const snap = await store.load();
+    const live = (snap?.capabilities ?? []).filter(
+      (cap) => cap.computerId === computer.id && cap.revokedAt === null,
+    );
+    assert.equal(live.length, 1);
+    assert.equal(s3.liveBotKey(computer.id)?.botLabel, "Ada");
+  });
+
+  it("keeps one live key when two claims for one computer redeem together", async () => {
+    const store = new MemoryControlPlaneStore();
+    const provider = new FakeProvider();
+    const writer = new ComputerService(provider, { store });
+    const flock = "flock-two-claims";
+    const computer = await writer.requestComputer({ birdId: "bird-two-claims", flockId: flock });
+    const first = await writer.createBotClaim({ flockId: flock, subject: "user_a" });
+    const second = await writer.createBotClaim({ flockId: flock, subject: "user_a" });
+    await writer.approveBotClaim({
+      claimId: first.claimId,
+      flockId: flock,
+      computerId: computer.id,
+      botLabel: "Ada",
+    });
+    await writer.approveBotClaim({
+      claimId: second.claimId,
+      flockId: flock,
+      computerId: computer.id,
+      botLabel: "Bea",
+    });
+    const s1 = new ComputerService(provider, { store });
+    const s2 = new ComputerService(provider, { store });
+    await s1.hydrate();
+    await s2.hydrate();
+    await Promise.allSettled([
+      s1.redeemBotClaim({ code: first.code, flockId: flock }),
+      s2.redeemBotClaim({ code: second.code, flockId: flock }),
+    ]);
+    const s3 = new ComputerService(provider, { store });
+    await s3.hydrate();
+    const snap = await store.load();
+    const live = (snap?.capabilities ?? []).filter(
+      (cap) => cap.computerId === computer.id && cap.revokedAt === null,
+    );
+    assert.equal(live.length, 1);
+    assert.ok(s3.liveBotKey(computer.id));
   });
 });
