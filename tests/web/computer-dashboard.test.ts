@@ -6,6 +6,8 @@ import {
   MemoryActivityStore,
   ProviderNeedsReplacement,
   RebuildConfirmRequired,
+  type ActivityEvent,
+  type ActivityStore,
 } from "../../src/lib/computers/index.js";
 import { MCP_TOOL_NAMES } from "../../src/lib/mcp/index.js";
 import { GET as getActivity } from "../../web/app/api/setup/computer-activity/[computerId]/route.ts";
@@ -30,6 +32,9 @@ import { resetRateLimitsForTests } from "../../web/lib/rate-limit.ts";
 
 const ORIGIN = "https://staxions-preview.vercel.app";
 
+let testIp = "198.51.100.1";
+let testIpN = 0;
+
 function userHeader(id: string, email: string): string {
   return JSON.stringify({ id, email });
 }
@@ -39,7 +44,11 @@ function params(computerId: string): { params: Promise<{ computerId: string }> }
 }
 
 function getReq(computerId: string, email: string | null, extra: HeadersInit = {}): Request {
-  const headers: Record<string, string> = { Accept: "application/json", ...asRecord(extra) };
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "x-forwarded-for": testIp,
+    ...asRecord(extra),
+  };
   if (email) headers["x-stax-test-user"] = userHeader(`user_${email}`, email);
   return new Request(`${ORIGIN}/api/setup/computer-lifecycle/${computerId}`, { headers });
 }
@@ -49,7 +58,10 @@ function activityReq(
   email: string | null,
   query = "",
 ): Request {
-  const headers: Record<string, string> = { Accept: "application/json" };
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "x-forwarded-for": testIp,
+  };
   if (email) headers["x-stax-test-user"] = userHeader(`user_${email}`, email);
   return new Request(`${ORIGIN}/api/setup/computer-activity/${computerId}${query}`, { headers });
 }
@@ -64,6 +76,7 @@ function postReq(
     Accept: "application/json",
     "content-type": "application/json",
     origin: ORIGIN,
+    "x-forwarded-for": testIp,
     ...asRecord(extra),
   };
   if (email) headers["x-stax-test-user"] = userHeader(`user_${email}`, email);
@@ -101,6 +114,8 @@ async function seatWithComputer(
 describe("owner computer dashboard", { concurrency: 1 }, () => {
   beforeEach(() => {
     process.env.STAX_TEST_AUTH = "1";
+    testIpN += 1;
+    testIp = `198.51.100.${(testIpN % 200) + 1}`;
     resetRateLimitsForTests();
     resetSeatStoreForTests();
     resetDeskRuntimeForTests();
@@ -135,6 +150,10 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
     const anonGet = await getLifecycle(getReq(computer.id, null), params(computer.id));
     assert.equal(anonGet.status, 401);
 
+    const anonActivity = await getActivity(activityReq(computer.id, null), params(computer.id));
+    assert.equal(anonActivity.status, 401);
+    assert.equal(JSON.stringify(await anonActivity.json()).includes("pause"), false);
+
     const anonPost = await postLifecycle(
       postReq(computer.id, null, { action: "pause" }),
       params(computer.id),
@@ -146,7 +165,49 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
       params(computer.id),
     );
     assert.equal(csrf.status, 403);
+
+    const missingOrigin = await postLifecycle(
+      postReq(computer.id, "owner@example.com", { action: "pause" }, { origin: "" }),
+      params(computer.id),
+    );
+    assert.equal(missingOrigin.status, 403);
     assert.equal((await service.get(computer.id)).state, "ready");
+  });
+
+  it("rejects invalid computer ids before looking the computer up", async () => {
+    const service = new ComputerService(new FakeProvider(), { activityStore: new MemoryActivityStore() });
+    setComputerServiceForTests(service);
+    await seatWithComputer("owner@example.com", service, "bird-valid");
+    for (const bad of ["../other", "a/b", "one two", ""] as const) {
+      const life = await getLifecycle(getReq(bad || " ", "owner@example.com"), params(bad || " "));
+      assert.equal(life.status, 400, bad || "(blank)");
+      const act = await getActivity(activityReq(bad || " ", "owner@example.com"), params(bad || " "));
+      assert.equal(act.status, 400, `activity ${bad || "(blank)"}`);
+      const post = await postLifecycle(
+        postReq(bad || " ", "owner@example.com", { action: "pause" }),
+        params(bad || " "),
+      );
+      assert.equal(post.status, 400, `post ${bad || "(blank)"}`);
+    }
+  });
+
+  it("ignores the test-user header when NODE_ENV is production", async () => {
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const service = new ComputerService(new FakeProvider(), { activityStore: new MemoryActivityStore() });
+      setComputerServiceForTests(service);
+      const computer = await seatWithComputer("owner@example.com", service, "bird-prod-header");
+      const res = await postLifecycle(
+        postReq(computer.id, "owner@example.com", { action: "pause" }),
+        params(computer.id),
+      );
+      assert.equal(res.status, 401);
+      assert.equal((await service.get(computer.id)).state, "ready");
+    } finally {
+      if (previous === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous;
+    }
   });
 
   it("denies another account pause/resume/restart and activity by id", async () => {
@@ -303,5 +364,113 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
     assert.equal(a.status, 200);
     assert.equal(b.status, 200);
     assert.equal((await service.get(computer.id)).state, "paused");
+  });
+
+  it("serializes concurrent pause and resume from the dashboard", async () => {
+    const service = new ComputerService(new FakeProvider(), { activityStore: new MemoryActivityStore() });
+    setComputerServiceForTests(service);
+    const computer = await seatWithComputer("owner@example.com", service, "bird-race-api");
+    const [pauseRes, resumeRes] = await Promise.all([
+      postLifecycle(postReq(computer.id, "owner@example.com", { action: "pause" }), params(computer.id)),
+      postLifecycle(postReq(computer.id, "owner@example.com", { action: "resume" }), params(computer.id)),
+    ]);
+    assert.ok([200, 409].includes(pauseRes.status), `pause ${pauseRes.status}`);
+    assert.ok([200, 409].includes(resumeRes.status), `resume ${resumeRes.status}`);
+    const state = (await service.get(computer.id)).state;
+    assert.ok(state === "paused" || state === "ready" || state === "running");
+  });
+
+  it("queues a dashboard pause until a mid-wake finishes", async () => {
+    const provider = new FakeProvider();
+    const service = new ComputerService(provider, { activityStore: new MemoryActivityStore() });
+    setComputerServiceForTests(service);
+    const computer = await seatWithComputer("owner@example.com", service, "bird-midwake-api");
+    await service.pauseThisComputer(computer.id);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const origWake = provider.wake.bind(provider);
+    provider.wake = async (ref: string) => {
+      await gate;
+      await origWake(ref);
+    };
+    const resume = postLifecycle(
+      postReq(computer.id, "owner@example.com", { action: "resume" }),
+      params(computer.id),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal((await service.get(computer.id)).state, "waking");
+    const pause = postLifecycle(
+      postReq(computer.id, "owner@example.com", { action: "pause" }),
+      params(computer.id),
+    );
+    release();
+    const resumeRes = await resume;
+    const pauseRes = await pause;
+    assert.equal(resumeRes.status, 200);
+    assert.equal(pauseRes.status, 200);
+    assert.equal((await service.get(computer.id)).state, "paused");
+  });
+
+  it("queues a dashboard pause while a confirmed rebuild is in flight", async () => {
+    const provider = new FakeProvider();
+    const service = new ComputerService(provider, { activityStore: new MemoryActivityStore() });
+    setComputerServiceForTests(service);
+    const computer = await seatWithComputer("owner@example.com", service, "bird-midrebuild-api");
+    const origProvision = provider.provision.bind(provider);
+    provider.wake = async () => {
+      throw new ProviderNeedsReplacement("fake");
+    };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    provider.provision = async (spec) => {
+      await gate;
+      return origProvision(spec);
+    };
+    const rebuild = postLifecycle(
+      postReq(computer.id, "owner@example.com", { action: "restart", confirmRebuild: true }),
+      params(computer.id),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const pause = postLifecycle(
+      postReq(computer.id, "owner@example.com", { action: "pause" }),
+      params(computer.id),
+    );
+    release();
+    const rebuildRes = await rebuild;
+    const pauseRes = await pause;
+    assert.equal(rebuildRes.status, 200);
+    assert.equal(pauseRes.status, 200);
+    assert.equal((await service.get(computer.id)).state, "paused");
+  });
+
+  it("still pauses when the activity store throws", async () => {
+    class BoomStore implements ActivityStore {
+      appendCalls = 0;
+      async append(): Promise<void> {
+        this.appendCalls += 1;
+        throw new Error("activity store down");
+      }
+      async list(): Promise<{ events: ActivityEvent[]; nextCursor: string | null }> {
+        return { events: [], nextCursor: null };
+      }
+      async purgeExpired(): Promise<number> {
+        return 0;
+      }
+    }
+    const boom = new BoomStore();
+    const service = new ComputerService(new FakeProvider(), { activityStore: boom });
+    setComputerServiceForTests(service);
+    const computer = await seatWithComputer("owner@example.com", service, "bird-log-fail");
+    const res = await postLifecycle(
+      postReq(computer.id, "owner@example.com", { action: "pause" }),
+      params(computer.id),
+    );
+    assert.equal(res.status, 200);
+    assert.equal((await service.get(computer.id)).state, "paused");
+    assert.ok(boom.appendCalls > 0);
   });
 });
