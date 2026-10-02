@@ -25,6 +25,8 @@ export async function POST(request: Request) {
   } catch (err) {
     console.error("[setup.disconnect]", err instanceof Error ? err.message : err);
   }
-  await getOauthStore().revokeComputerTokens(computerId);
+  if (process.env.FLOK_PER_BOT_KEYS !== "true") {
+    await getOauthStore().revokeComputerTokens(computerId);
+  }
   return NextResponse.json({ ok: true });
 }
