@@ -56,6 +56,7 @@ function signaturesMatch(left: string, right: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+/** Reads a signed checkout payload. Does not check expiry or single-use. Callers reject an expired exp. */
 export function readBuyToken(token: string, now = Date.now()): BuyPayload | null {
   const material = bindSecret();
   if (!material) return null;

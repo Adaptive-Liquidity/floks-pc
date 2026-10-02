@@ -518,18 +518,18 @@ export async function exchangeCode(input: {
   if (!row || row.used || row.expiresAt <= now) return { error: "invalid_grant" };
   if (row.clientId !== input.clientId || row.redirectUri !== input.redirectUri) return { error: "invalid_grant" };
   if (pkceS256(input.verifier) !== row.challenge) return { error: "invalid_grant" };
+  const consumed = await getOauthStore().consumeCode(input.code);
+  if (!consumed) return { error: "invalid_grant" };
   let capabilityId: string | null = null;
-  if (row.computerId) {
+  if (consumed.computerId) {
     try {
       const { getComputerService } = await import("./desks/runtime");
-      const issued = await (await getComputerService()).issueBoundCapability(row.computerId, row.flock);
+      const issued = await (await getComputerService()).issueBoundCapability(consumed.computerId, consumed.flock);
       capabilityId = issued.capabilityId;
     } catch {
       return { error: "invalid_grant" };
     }
   }
-  const consumed = await getOauthStore().consumeCode(input.code);
-  if (!consumed) return { error: "invalid_grant" };
   return saveTokenPair({
     subject: consumed.subject,
     flock: consumed.flock,
@@ -543,11 +543,15 @@ export async function exchangeCode(input: {
 
 export async function refreshAccess(
   refreshToken: string,
-  clientId: string,
+  clientId?: string,
   now = Date.now(),
 ): Promise<{ token: string; refresh: string; subject: string; flock: string } | { error: "invalid_grant" }> {
-  const row = await getOauthStore().consumeRefresh(hashToken(refreshToken));
-  if (!row || row.refreshExpiresAt <= now || row.clientId !== clientId) return { error: "invalid_grant" };
+  const refreshHash = hashToken(refreshToken);
+  const existing = await getOauthStore().getByRefresh(refreshHash);
+  if (!existing || existing.refreshExpiresAt <= now) return { error: "invalid_grant" };
+  if (clientId && clientId !== existing.clientId) return { error: "invalid_grant" };
+  const row = await getOauthStore().consumeRefresh(refreshHash);
+  if (!row) return { error: "invalid_grant" };
   if (row.computerId || row.capabilityId) {
     if (!row.computerId || !row.capabilityId) return { error: "invalid_grant" };
     const { getComputerService } = await import("./desks/runtime");

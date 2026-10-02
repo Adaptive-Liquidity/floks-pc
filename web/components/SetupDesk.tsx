@@ -64,12 +64,27 @@ export function SetupDesk({
             <p>{desk.state.replaceAll("_", " ")}</p>
             <p>{desk.botName ? `Bot: ${desk.botName}` : "Bot: none"}</p>
             {desk.computerId ? (
-              <form method="post" action={SETUP_ACTIONS.disconnect}>
-                <input type="hidden" name="computer_id" value={desk.computerId} />
-                <button className="ghost wide" type="submit" onClick={() => setMessage(null)}>
-                  Disconnect
-                </button>
-              </form>
+              <button
+                className="ghost wide"
+                type="button"
+                onClick={() => {
+                  const computerId = desk.computerId ?? "";
+                  void fetch(SETUP_ACTIONS.disconnect, {
+                    method: "POST",
+                    credentials: "include",
+                    headers: {
+                      "content-type": "application/x-www-form-urlencoded",
+                      Accept: "application/json",
+                    },
+                    body: new URLSearchParams({ computer_id: computerId }),
+                  }).then((res) => {
+                    if (res.ok) window.location.assign("/setup");
+                    else setMessage("Disconnect did not complete.");
+                  });
+                }}
+              >
+                Disconnect
+              </button>
             ) : null}
           </section>
         ))}

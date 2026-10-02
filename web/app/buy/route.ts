@@ -33,14 +33,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   const token = String(form.get("t") ?? "");
   const opened = await openBuyToken(token);
   if (!opened.ok) return NextResponse.json({ error: opened.reason }, { status: 400 });
-  const remainingMs = opened.payload.exp - Date.now();
-  const expiresAt = remainingMs >= 30 * 60 * 1000 ? Math.floor(opened.payload.exp / 1000) : undefined;
   try {
     const session = await createCheckoutSession({
       request,
       plan: opened.payload.plan,
       email: opened.payload.email,
-      ...(expiresAt ? { expiresAt } : {}),
       bindMetadata: {
         oauth_client_id: opened.payload.clientId,
         subject: opened.payload.subject,

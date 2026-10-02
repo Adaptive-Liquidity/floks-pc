@@ -630,7 +630,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
       argv: ["uname", "-s"],
     });
     assert.equal(exec.isError, false);
-    for (const path of ["/oauth/authorize", "/oauth/consent", "/setup"]) {
+    for (const path of ["/oauth/authorize", "/oauth/consent", "/setup", "/buy"]) {
       const response = middleware({ nextUrl: { pathname: path } });
       assert.equal(response.headers.get("x-frame-options"), "DENY", path);
       assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/, path);
@@ -763,6 +763,77 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
     const keptCall = await callTool(keptToken, "computer_exec", { argv: ["uname", "-s"] });
     assert.equal(keptCall.isError, false, JSON.stringify(keptCall.structuredContent));
     void keptSeat;
+  });
+
+  it("reloads a warm instance and does not burn a refresh token on a wrong client", async () => {
+    process.env.NODE_ENV = "test";
+    process.env.STAX_TEST_AUTH = "1";
+    resetRateLimitsForTests();
+    resetSeatStoreForTests();
+    setOauthStoreForTests(new MemoryOauthStore());
+    const store = new MemoryControlPlaneStore();
+    const provider = new FakeProvider();
+    const svcA = new ComputerService(provider, { store });
+    const svcB = new ComputerService(provider, { store });
+    await svcB.hydrate();
+    setComputerServiceForTests(svcA);
+    const flock = flockIdForEmail(EMAIL);
+    const computer = await svcA.requestComputer({ birdId: "seat:warm", flockId: flock });
+    await getSeatStore().upsert(
+      createSeat({
+        email: EMAIL,
+        plan: "personal",
+        stripeCustomerId: "cus_warm_reload",
+        computerId: computer.id,
+        computerIds: [computer.id],
+      }),
+    );
+    const client = registerClient(["https://grok.com/callback"], "Warm Bot");
+    await getOauthStore().saveClient(client);
+    const redirect = client.redirectUris[0] ?? "";
+    const verifier = "verifier-value-which-is-long-enough";
+    const allowed = await allowForm({
+      clientId: client.id,
+      redirect,
+      challenge: pkceS256(verifier),
+      email: EMAIL,
+      subject: SUBJECT,
+      ip: "203.0.113.80",
+    });
+    const code = new URL(allowed.headers.get("location") ?? "").searchParams.get("code") ?? "";
+    const exchanged = await exchangeCode({ code, verifier, clientId: client.id, redirectUri: redirect });
+    assert.ok("token" in exchanged);
+    if (!("token" in exchanged)) return;
+    const capabilityId = (await getOauthStore().getAccess(hashToken(exchanged.token)))?.capabilityId ?? "";
+    assert.ok(capabilityId);
+
+    setComputerServiceForTests(svcB);
+    const wrong = await refreshAccess(exchanged.refresh, "not-this-client");
+    assert.deepEqual(wrong, { error: "invalid_grant" });
+    const refreshed = await refreshAccess(exchanged.refresh, client.id);
+    assert.ok("token" in refreshed);
+    if (!("token" in refreshed)) return;
+    const exec = await callTool(refreshed.token, "computer_exec", { argv: ["uname", "-s"] });
+    assert.equal(exec.isError, false, JSON.stringify(exec.structuredContent));
+    const bare = await refreshAccess(refreshed.refresh);
+    assert.ok("token" in bare);
+    if (!("token" in bare)) return;
+    const again = await callTool(bare.token, "computer_exec", { argv: ["uname", "-s"] });
+    assert.equal(again.isError, false, JSON.stringify(again.structuredContent));
+
+    const cut = await disconnectPost(
+      new Request(`${ORIGIN}/api/setup/disconnect`, {
+        method: "POST",
+        headers: {
+          origin: ORIGIN,
+          "content-type": "application/x-www-form-urlencoded",
+          "x-stax-test-user": userHeader(SUBJECT, EMAIL),
+        },
+        body: new URLSearchParams({ computer_id: computer.id }),
+      }),
+    );
+    assert.equal(cut.status, 200);
+    assert.ok(svcB.getCapability(capabilityId).revokedAt);
   });
 });
 

@@ -962,6 +962,7 @@ export class ComputerService {
 
   /** Drop every capability and unused pair code on this computer. */
   async revokeBoundComputer(computerId: string): Promise<void> {
+    await this.reloadIfRevisionChanged();
     await this.get(computerId);
     this.revokeAllForComputer(computerId);
     await this.persist();
@@ -973,6 +974,7 @@ export class ComputerService {
    */
   async extendBoundCapability(capabilityId: string, flockId: string): Promise<boolean> {
     try {
+      await this.reloadIfRevisionChanged();
       const { capability } = this.authorize(
         { kind: "bound", capabilityId, flockId },
         "",
