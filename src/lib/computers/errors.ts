@@ -244,6 +244,17 @@ export class ComputerAsleep extends ComputerError {
   }
 }
 
+/** The old disk could not be resumed. The bot must see this before using the replacement. */
+export class ComputerRebuilt extends ComputerError {
+  constructor() {
+    super(
+      "COMPUTER_REBUILT",
+      "Your computer had to be rebuilt; files from before are gone",
+    );
+    this.name = "ComputerRebuilt";
+  }
+}
+
 /** The vendor machine cannot be resumed. The seat needs a new devbox with the same computer id. */
 export class ProviderNeedsReplacement extends ComputerError {
   constructor(provider: string) {

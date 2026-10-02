@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { ComputerService, FakeProvider, ProviderUnavailable } from "../../src/lib/computers/index.ts";
 import type { ComputerSpec, ExecRequest, ExecResult } from "../../src/lib/computers/types.ts";
 import { McpGateway } from "../../src/lib/mcp/handler.ts";
+import { RecordingLogger } from "../../src/lib/mcp/log.ts";
 import { POST as mcpPost } from "../../web/app/mcp/route.ts";
 
 const STARTING = "Your computer is starting. Try again in a minute.";
@@ -129,27 +130,30 @@ describe("wake a shut-down computer on use", () => {
     assert.equal(provider.wakes >= 1, true);
   });
 
-  it("re-provisions a shut-down devbox that cannot resume and keeps the computer id", async () => {
+  it("tells the bot files are gone before a rebuilt computer is used", async () => {
     const provider = new ShutdownProvider();
     provider.failResume = true;
     const service = new ComputerService(provider);
-    const gateway = new McpGateway(service);
+    const logger = new RecordingLogger();
+    const gateway = new McpGateway(service, { logger });
     const computer = await service.requestComputer({ birdId: "bird-re", flockId: "flock-wake" });
     const oldRef = computer.providerRef;
     assert.ok(oldRef);
     provider.down.add(oldRef);
     const paired = await service.issueBoundCapability(computer.id, computer.flockId);
-    const exec = await tool(
-      gateway,
-      "computer_exec",
-      { argv: ["echo", "hi"] },
-      { capabilityId: paired.capabilityId, flockId: computer.flockId },
-    );
+    const bound = { capabilityId: paired.capabilityId, flockId: computer.flockId };
+    const exec = await tool(gateway, "computer_exec", { argv: ["echo", "hi"] }, bound);
+    assert.equal(exec.isError, true);
+    assert.equal(exec.body.message, "Your computer had to be rebuilt; files from before are gone");
+    assert.equal(JSON.stringify(exec.body).includes("DEVBOX_SHUTDOWN"), false);
+    assert.match(logger.blob(), /mcp.computer_rebuilt/);
     const kept = await service.get(computer.id);
-    assert.equal(exec.isError, false);
     assert.equal(kept.id, computer.id);
     assert.notEqual(kept.providerRef, oldRef);
     assert.equal((await service.getCapability(paired.capabilityId)).computerId, computer.id);
+    const again = await tool(gateway, "computer_exec", { argv: ["echo", "hi"] }, bound);
+    assert.equal(again.isError, false);
+    assert.equal(again.body.exit_code, 0);
   });
 
   it("does not wake a seat that is not active", async () => {
