@@ -37,6 +37,7 @@ export type DeskRecord = {
   hoursIncluded: number | null;
   computerId: string | null;
   botName: string | null;
+  lastUsedLabel: string | null;
 };
 
 export type SeatSession = {

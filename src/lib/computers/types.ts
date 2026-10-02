@@ -101,6 +101,23 @@ export interface PairResult {
   expiresAt: Date;
 }
 
+export type BotClaimStatus = "pending" | "approved" | "redeemed" | "denied";
+
+/** Human-approved claim that becomes one bot's computer key. The raw code is never stored. */
+export interface BotClaim {
+  id: string;
+  secretDigest: string;
+  flockId: string;
+  subject: string;
+  botLabel: string | null;
+  computerId: string | null;
+  checkoutNonce: string | null;
+  status: BotClaimStatus;
+  createdAt: Date;
+  expiresAt: Date;
+  attemptCount: number;
+}
+
 export interface IssuedPairCode {
   id: string;
   /** Human-readable pair code — returned once, never stored */
@@ -255,6 +272,8 @@ export interface ComputerCapability {
   expiresAt: Date;
   revokedAt: Date | null;
   lastUsedAt: Date | null;
+  /** Set only for a per-bot key. Absent on account-bound capabilities. */
+  botLabel?: string | null;
 }
 
 export interface ComputerPairCode {

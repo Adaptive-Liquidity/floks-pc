@@ -134,6 +134,7 @@ function toDesk(
     hoursIncluded: seat.hoursIncluded,
     computerId: computer?.id ?? seat.computerId,
     botName: null,
+    lastUsedLabel: null,
   };
 }
 

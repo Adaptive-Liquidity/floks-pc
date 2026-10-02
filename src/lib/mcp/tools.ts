@@ -132,18 +132,19 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "computer_pair",
     description:
-      "Redeem a one-time pair code for a capability token bound to this Bot's computer/bird/flock. Account/MCP auth does not authorize pairing. If this Bot has no computer yet, call with an optional plan (personal, pro, or team) to get a checkout link.",
+      "Redeem a one-time pair code for a capability token bound to this Bot's computer/bird/flock. Account/MCP auth does not authorize pairing. If this Bot has no computer yet, call with an optional plan (personal, pro, or team) to get a checkout link. With per-bot keys, call with no arguments to get a pair code and approve_url, then call again with that pair_code. If bot_label is not your name, stop and call computer_pair. Keep pair_code and capability_token in your own bot memory.",
     inputSchema: advertisedSchema(ComputerPairArgsSchema, []),
   },
   {
     name: "computer_status",
-    description: "Return computer lifecycle state. Requires a valid capability with status scope.",
+    description:
+      "Return computer lifecycle state. Requires a valid capability with status scope. If bot_label is not your name, stop and call computer_pair.",
     inputSchema: advertisedSchema(ComputerStatusArgsSchema, []),
   },
   {
     name: "computer_exec",
     description:
-      "Run argv[] on the computer. Default mode is argv. mode=shell requires the shell scope (not granted by default pairing).",
+      "Run argv[] on the computer. Default mode is argv. mode=shell requires the shell scope (not granted by default pairing). Pipelines use argv [\"bash\",\"-lc\",\"...\"]. If bot_label is not your name, stop and call computer_pair.",
     inputSchema: advertisedSchema(
       ComputerExecArgsSchema,
       ["argv"],
@@ -159,19 +160,19 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "computer_fs",
     description:
-      "Filesystem operation inside the workspace jail (stat/list/read/write/mkdir/move/copy/delete). Path escape is rejected.",
+      "Filesystem operation inside the workspace jail (stat/list/read/write/mkdir/move/copy/delete). Path escape is rejected. If bot_label is not your name, stop and call computer_pair.",
     inputSchema: advertisedSchema(ComputerFsArgsSchema, ["operation", "path"]),
   },
   {
     name: "computer_observe",
     description:
-      "Observe the computer display. Set include_screenshot true to see the screen as an image. Set include_accessibility true for AX node ids (required before click_element). Accessibility is never fabricated as live CDP.",
+      "Observe the computer display. Set include_screenshot true to see the screen as an image. Set include_accessibility true for AX node ids (required before click_element). Accessibility is never fabricated as live CDP. If bot_label is not your name, stop and call computer_pair.",
     inputSchema: advertisedSchema(ComputerObserveArgsSchema, []),
   },
   {
     name: "computer_act",
     description:
-      "Apply a bounded action batch. For clicks: computer_observe({ include_accessibility: true }) then click_element with an AX node id from that tree (15s). Guessed/offscreen clicks fail closed. Also open_url/type/key/scroll/wait. No public VNC/takeover.",
+      "Apply a bounded action batch. For clicks: computer_observe({ include_accessibility: true }) then click_element with an AX node id from that tree (15s). Guessed/offscreen clicks fail closed. Also open_url/type/key/scroll/wait. No public VNC/takeover. If bot_label is not your name, stop and call computer_pair.",
     inputSchema: advertisedSchema(ComputerActArgsSchema, ["actions"]),
   },
   {

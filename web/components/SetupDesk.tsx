@@ -62,7 +62,13 @@ export function SetupDesk({
             <h2>{`Computer ${index + 1}`}</h2>
             <p>{session.plan ?? "no plan"}</p>
             <p>{desk.state.replaceAll("_", " ")}</p>
-            <p>{desk.botName ? `Bot: ${desk.botName}` : "Bot: none"}</p>
+            <p>
+              {desk.botName
+                ? desk.lastUsedLabel
+                  ? `Bot: ${desk.botName} · last used ${desk.lastUsedLabel}`
+                  : `Bot: ${desk.botName}`
+                : "Bot: none"}
+            </p>
             {desk.computerId ? (
               <button
                 className="ghost wide"

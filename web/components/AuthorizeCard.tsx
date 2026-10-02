@@ -32,6 +32,7 @@ export function AuthorizeCard() {
   const [needsComputer, setNeedsComputer] = useState(false);
   const [botName, setBotName] = useState<string | null>(null);
   const [computers, setComputers] = useState<AuthorizeComputer[]>([]);
+  const [accountOnly, setAccountOnly] = useState(false);
 
   useEffect(() => {
     const next = new URLSearchParams(query);
@@ -50,6 +51,7 @@ export function AuthorizeCard() {
         setNeedsComputer(raw?.needsComputer === true);
         setBotName(raw?.clientName ?? null);
         setComputers(raw?.computers ?? []);
+        setAccountOnly(raw?.accountOnly === true);
         setState(nextState.state);
       })
       .catch(() => {
@@ -69,7 +71,11 @@ export function AuthorizeCard() {
     <section className="stage">
       <div className="card">
         <h1 className="question">{OAUTH_TITLE}</h1>
-        <p className="lede">{OAUTH_BODY}</p>
+        <p className="lede">
+          {accountOnly
+            ? "Connect Staxions to your Grok account. Each bot gets its own computer the first time it asks."
+            : OAUTH_BODY}
+        </p>
         {params.get("redirect_uri") ? (
           <p className="note">Redirect host: {redirectHost(params.get("redirect_uri") ?? "")}</p>
         ) : null}
@@ -93,7 +99,7 @@ export function AuthorizeCard() {
               <input key={key} type="hidden" name={key} value={value} />
             ))}
             {botName ? <p className="note">Bot: {botName}</p> : null}
-            {computers.length > 0 ? (
+            {accountOnly || computers.length === 0 ? null : (
               <fieldset className="note">
                 <legend>Computer</legend>
                 {computers.map((computer) => (
@@ -114,7 +120,7 @@ export function AuthorizeCard() {
                   </label>
                 ))}
               </fieldset>
-            ) : null}
+            )}
             {needsComputer && computers.length === 0 ? <p className="note">{OAUTH_NO_COMPUTER}</p> : null}
             <button className="key wide" type="submit" name="allow" value="1">
               Allow

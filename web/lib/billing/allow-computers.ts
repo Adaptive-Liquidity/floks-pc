@@ -8,11 +8,13 @@ export type AllowComputer = {
   plan: string;
   status: string;
   in_use_by_bot?: string;
+  last_used?: string;
 };
 
 export async function listAllowComputers(email: string): Promise<AllowComputer[]> {
   const seats = (await getSeatStore().listByEmail(email)).filter((seat) => seat.status === "active");
-  const found: Array<{ id: string; plan: string; status: string; bot: string | null }> = [];
+  const perBot = process.env.FLOK_PER_BOT_KEYS === "true";
+  const found: Array<{ id: string; plan: string; status: string; bot: string | null; lastUsed: string | null }> = [];
   const service = await getComputerService();
   for (const seat of seats) {
     for (const id of computerIds(seat)) {
@@ -23,13 +25,20 @@ export async function listAllowComputers(email: string): Promise<AllowComputer[]
       } catch {
         status = seat.status;
       }
-      const binding = await getOauthStore().liveComputerBinding(id);
       let bot: string | null = null;
-      if (binding) {
-        const client = await getOauthStore().getClient(binding.clientId);
-        bot = client?.clientName || "another Bot";
+      let lastUsed: string | null = null;
+      if (perBot) {
+        const key = service.liveBotKey(id);
+        bot = key?.botLabel ?? null;
+        lastUsed = key?.lastUsedAt ? key.lastUsedAt.toISOString() : null;
+      } else {
+        const binding = await getOauthStore().liveComputerBinding(id);
+        if (binding) {
+          const client = await getOauthStore().getClient(binding.clientId);
+          bot = client?.clientName || "another Bot";
+        }
       }
-      found.push({ id, plan: seat.plan, status, bot });
+      found.push({ id, plan: seat.plan, status, bot, lastUsed });
     }
   }
   found.sort((left, right) => Number(Boolean(left.bot)) - Number(Boolean(right.bot)));
@@ -39,6 +48,7 @@ export async function listAllowComputers(email: string): Promise<AllowComputer[]
     plan: row.plan,
     status: row.status,
     ...(row.bot ? { in_use_by_bot: row.bot } : {}),
+    ...(row.lastUsed ? { last_used: row.lastUsed } : {}),
   }));
 }
 

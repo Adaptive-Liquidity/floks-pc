@@ -57,6 +57,7 @@ function deskRecord(state: DeskState, pending: boolean): DeskRecord {
     hoursIncluded: 25,
     computerId: "preview-computer",
     botName: null,
+    lastUsedLabel: null,
   };
 }
 

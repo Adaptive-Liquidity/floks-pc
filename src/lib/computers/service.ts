@@ -23,6 +23,7 @@ import type { ComputerProvider } from "./providers/provider.js";
 import type {
   ActionBatch,
   ActionResult,
+  BotClaim,
   CapabilityScope,
   Computer,
   ComputerCapability,
@@ -122,6 +123,7 @@ import {
 } from "./path.js";
 import { StaleControlPlane, type ControlPlaneStore, type ControlPlaneSnapshot } from "./control-plane-store.js";
 import {
+  botClaimsFromSnapshot,
   capabilitiesFromSnapshot,
   computersFromSnapshot,
   pairCodesFromSnapshot,
@@ -169,6 +171,9 @@ export class ComputerService {
   private pairIssueExtras = new Map<string, PairIssueExtras>();
   private capabilities = new Map<string, ComputerCapability>();
   private capabilitiesByDigest = new Map<string, string>();
+  private botClaims = new Map<string, BotClaim>();
+  private botClaimsByDigest = new Map<string, string>();
+  private keyRenewed = false;
   /** Keyed by presented bird+flock, never by shared MCP account id. */
   private pairFailuresByIdentity = new Map<string, PairFailureWindow>();
   private readonly store: ControlPlaneStore | undefined;
@@ -254,6 +259,7 @@ export class ComputerService {
       capabilities: [...this.capabilities.values()],
       pairIssueExtras,
       pairFailuresByIdentity,
+      botClaims: [...this.botClaims.values()],
     };
   }
 
@@ -280,6 +286,10 @@ export class ComputerService {
     for (const [id, win] of Object.entries(snap.pairFailuresByIdentity)) {
       this.pairFailuresByIdentity.set(id, win);
     }
+    for (const claim of botClaimsFromSnapshot(snap)) {
+      this.botClaims.set(claim.id, claim);
+      this.botClaimsByDigest.set(claim.secretDigest, claim.id);
+    }
   }
 
   private overlay(mine: ControlPlaneSnapshot, base: ControlPlaneSnapshot | null): void {
@@ -303,7 +313,7 @@ export class ComputerService {
     );
     this.overlayRecords(
       capabilitiesFromSnapshot(mine),
-      new Map((base?.capabilities ?? []).map((row) => [row.id, row])),
+      new Map((base ? capabilitiesFromSnapshot(base) : []).map((row) => [row.id, row])),
       (row) => this.capabilities.get(row.id),
       (row) => {
         this.capabilities.set(row.id, row);
@@ -320,6 +330,16 @@ export class ComputerService {
     for (const [id, win] of Object.entries(mine.pairFailuresByIdentity)) {
       if (!sameJson(win, baseFailures[id])) this.pairFailuresByIdentity.set(id, win);
     }
+    const baseClaims = new Map((base?.botClaims ?? []).map((row) => [row.id, row]));
+    this.overlayRecords(
+      mine.botClaims ?? [],
+      baseClaims,
+      (row) => this.botClaims.get(row.id),
+      (row) => {
+        this.botClaims.set(row.id, row);
+        this.botClaimsByDigest.set(row.secretDigest, row.id);
+      },
+    );
   }
 
   private overlayRecords<T extends { id: string }>(
@@ -339,7 +359,18 @@ export class ComputerService {
     }
   }
 
+  private pruneBotClaims(): void {
+    const now = this.now();
+    for (const [id, claim] of this.botClaims) {
+      if (claim.status === "redeemed" || claim.expiresAt.getTime() <= now) {
+        this.botClaims.delete(id);
+        this.botClaimsByDigest.delete(claim.secretDigest);
+      }
+    }
+  }
+
   private async persist(): Promise<void> {
+    this.pruneBotClaims();
     const store = this.store;
     if (!store) return;
     const write = async (): Promise<void> => {
@@ -374,6 +405,8 @@ export class ComputerService {
     this.pairIssueExtras.clear();
     this.capabilities.clear();
     this.capabilitiesByDigest.clear();
+    this.botClaims.clear();
+    this.botClaimsByDigest.clear();
     this.pairFailuresByIdentity.clear();
     this.operatorEvents = [];
     this.destroyChains.clear();
@@ -939,6 +972,211 @@ export class ComputerService {
     };
   }
 
+  private static readonly BOT_CLAIM_TTL_MS = 15 * 60 * 1000;
+  private static readonly BOT_KEY_RENEW_WITHIN_MS = 7 * 24 * 60 * 60 * 1000;
+
+  private maybeRenew(capability: ComputerCapability): ComputerCapability {
+    if (!capability.botLabel) return capability;
+    const remaining = capability.expiresAt.getTime() - this.now();
+    if (remaining >= ComputerService.BOT_KEY_RENEW_WITHIN_MS) return capability;
+    const next: ComputerCapability = {
+      ...capability,
+      scopes: copyScopes(capability.scopes),
+      expiresAt: new Date(this.now() + DEFAULT_CAPABILITY_TTL_MS),
+    };
+    this.capabilities.set(next.id, next);
+    this.keyRenewed = true;
+    return next;
+  }
+
+  private openClaimCount(flockId: string): number {
+    let n = 0;
+    for (const claim of this.botClaims.values()) {
+      if (claim.flockId !== flockId) continue;
+      if (claim.status !== "pending" && claim.status !== "approved") continue;
+      if (claim.expiresAt.getTime() <= this.now()) continue;
+      n += 1;
+    }
+    return n;
+  }
+
+  async createBotClaim(input: {
+    flockId: string;
+    subject: string;
+  }): Promise<{ claimId: string; code: string; expiresAt: Date }> {
+    await this.reloadIfRevisionChanged();
+    if (this.openClaimCount(input.flockId) >= 10) throw new QuotaExceeded("bot-claims");
+    const material = generatePairCode(ComputerService.BOT_CLAIM_TTL_MS);
+    const now = new Date(this.now());
+    const claim: BotClaim = {
+      id: randomBytes(16).toString("base64url"),
+      secretDigest: material.digest,
+      flockId: input.flockId,
+      subject: input.subject,
+      botLabel: null,
+      computerId: null,
+      checkoutNonce: null,
+      status: "pending",
+      createdAt: now,
+      expiresAt: new Date(this.now() + ComputerService.BOT_CLAIM_TTL_MS),
+      attemptCount: 0,
+    };
+    this.botClaims.set(claim.id, claim);
+    this.botClaimsByDigest.set(claim.secretDigest, claim.id);
+    await this.persist();
+    return { claimId: claim.id, code: material.code, expiresAt: claim.expiresAt };
+  }
+
+  async getBotClaim(claimId: string): Promise<BotClaim | null> {
+    await this.reloadIfRevisionChanged();
+    const claim = this.botClaims.get(claimId);
+    if (!claim) return null;
+    if (claim.status !== "redeemed" && claim.expiresAt.getTime() <= this.now()) return null;
+    return claim;
+  }
+
+  async denyBotClaim(input: { claimId: string; flockId: string }): Promise<void> {
+    await this.reloadIfRevisionChanged();
+    const claim = this.botClaims.get(input.claimId);
+    if (!claim || claim.flockId !== input.flockId) throw new PairCodeInvalid("mismatch");
+    this.botClaims.set(claim.id, { ...claim, status: "denied" });
+    await this.persist();
+  }
+
+  async approveBotClaim(input: {
+    claimId: string;
+    flockId: string;
+    computerId: string;
+    botLabel: string;
+  }): Promise<BotClaim> {
+    await this.reloadIfRevisionChanged();
+    const claim = this.botClaims.get(input.claimId);
+    if (!claim || claim.flockId !== input.flockId) throw new PairCodeInvalid("mismatch");
+    if (claim.status === "redeemed" || claim.status === "denied") throw new PairCodeInvalid(claim.status);
+    if (claim.expiresAt.getTime() <= this.now()) throw new PairCodeInvalid("expired");
+    const label = input.botLabel.trim();
+    if (label.length < 1 || label.length > 40) throw new PairCodeInvalid("bot label");
+    const computer = await this.get(input.computerId);
+    if (computer.state === "deleted" || computer.flockId !== input.flockId) {
+      throw new PairCodeInvalid("computer");
+    }
+    const next: BotClaim = {
+      ...claim,
+      status: "approved",
+      computerId: computer.id,
+      botLabel: label,
+      expiresAt: new Date(this.now() + ComputerService.BOT_CLAIM_TTL_MS),
+    };
+    this.botClaims.set(claim.id, next);
+    await this.persist();
+    return next;
+  }
+
+  async setClaimCheckoutNonce(input: { claimId: string; flockId: string; nonce: string }): Promise<void> {
+    await this.reloadIfRevisionChanged();
+    const claim = this.botClaims.get(input.claimId);
+    if (!claim || claim.flockId !== input.flockId) throw new PairCodeInvalid("mismatch");
+    this.botClaims.set(claim.id, { ...claim, checkoutNonce: input.nonce });
+    await this.persist();
+  }
+
+  async attachPurchaseToClaim(
+    checkoutNonce: string,
+    computerId: string,
+    botLabel?: string,
+  ): Promise<boolean> {
+    await this.reloadIfRevisionChanged();
+    const claim = [...this.botClaims.values()].find((row) => row.checkoutNonce === checkoutNonce);
+    if (!claim || claim.status === "denied" || claim.status === "redeemed") return false;
+    const computer = this.computers.get(computerId);
+    if (!computer || computer.state === "deleted" || computer.flockId !== claim.flockId) return false;
+    if (this.liveBotKey(computerId)) return false;
+    const label = botLabel?.trim();
+    this.botClaims.set(claim.id, {
+      ...claim,
+      computerId,
+      ...(label ? { botLabel: label } : {}),
+    });
+    await this.persist();
+    return true;
+  }
+
+  liveBotKey(computerId: string): { botLabel: string; lastUsedAt: Date | null } | null {
+    for (const cap of this.capabilities.values()) {
+      if (cap.computerId !== computerId || !cap.botLabel) continue;
+      if (cap.revokedAt !== null || cap.expiresAt.getTime() <= this.now()) continue;
+      return { botLabel: cap.botLabel, lastUsedAt: cap.lastUsedAt };
+    }
+    return null;
+  }
+
+  capabilityForToken(token: string): ComputerCapability | null {
+    const id = this.capabilitiesByDigest.get(hashToken(token));
+    if (!id) return null;
+    return this.capabilities.get(id) ?? null;
+  }
+
+  async redeemBotClaim(input: {
+    code: string;
+    flockId: string;
+  }): Promise<{ pending: true; claimId: string; expiresAt: Date } | { pending: false; pair: PairResult; botLabel: string | null }> {
+    await this.reloadIfRevisionChanged();
+    const digest = hashPairCode(input.code);
+    const id = this.botClaimsByDigest.get(digest);
+    const claim = id ? this.botClaims.get(id) : undefined;
+    if (!claim) throw new PairCodeInvalid("mismatch");
+    const fail = async (reason: string): Promise<never> => {
+      const next = { ...claim, attemptCount: claim.attemptCount + 1 };
+      this.botClaims.set(claim.id, next);
+      await this.persist();
+      throw new PairCodeInvalid(reason);
+    };
+    if (claim.attemptCount >= 5) return fail("locked");
+    if (claim.flockId !== input.flockId) return fail("flock");
+    if (claim.expiresAt.getTime() <= this.now()) return fail("expired");
+    if (claim.status === "denied" || claim.status === "redeemed") return fail(claim.status);
+    if (claim.status === "pending" || !claim.computerId) {
+      return { pending: true, claimId: claim.id, expiresAt: claim.expiresAt };
+    }
+    const computer = this.computers.get(claim.computerId);
+    if (!computer || computer.state === "deleted" || computer.flockId !== claim.flockId) {
+      return fail("computer");
+    }
+    this.revokeAllForComputer(computer.id);
+    const scopes = copyScopes(parseScopes(DEFAULT_PAIR_SCOPES));
+    const minted = issueCapability(DEFAULT_CAPABILITY_TTL_MS);
+    const cap: ComputerCapability = {
+      id: newId(),
+      computerId: computer.id,
+      birdId: computer.birdId,
+      flockId: computer.flockId,
+      tokenDigest: minted.digest,
+      scopes,
+      issuedAt: minted.issuedAt,
+      expiresAt: minted.expiresAt,
+      revokedAt: null,
+      lastUsedAt: null,
+      botLabel: claim.botLabel,
+    };
+    this.capabilities.set(cap.id, cap);
+    this.capabilitiesByDigest.set(cap.tokenDigest, cap.id);
+    this.botClaims.set(claim.id, { ...claim, status: "redeemed" });
+    await this.persist();
+    return {
+      pending: false,
+      botLabel: claim.botLabel,
+      pair: {
+        token: minted.token,
+        capabilityId: cap.id,
+        computerHandle: computer.id,
+        nodeHandle: computer.birdId,
+        flockId: computer.flockId,
+        scopes: copyScopes(scopes),
+        expiresAt: cap.expiresAt,
+      },
+    };
+  }
+
   /**
    * Owner path after checkout. Mints a capability for a computer that already
    * belongs to this flock. Does not redeem a pair code. The raw token is
@@ -1042,6 +1280,10 @@ export class ComputerService {
    * left down.
    */
   private async ensureAwake(computer: Computer): Promise<Computer> {
+    if (this.keyRenewed) {
+      this.keyRenewed = false;
+      await this.persist();
+    }
     if (computer.state === "deleted" || computer.state === "deleting") {
       throw new ComputerNotFound(computer.id);
     }
@@ -1777,11 +2019,11 @@ export class ComputerService {
         throw new InsufficientScope(scope, capability.scopes);
       }
     }
-    const touched: ComputerCapability = {
+    const touched = this.maybeRenew({
       ...capability,
       scopes: copyScopes(capability.scopes),
       lastUsedAt: new Date(this.now()),
-    };
+    });
     this.capabilities.set(capability.id, touched);
     return { computer, capability: touched };
   }
@@ -1820,11 +2062,11 @@ export class ComputerService {
     if (!computer || computer.state === "deleted") {
       throw new ComputerNotFound(computerId);
     }
-    const touched: ComputerCapability = {
+    const touched = this.maybeRenew({
       ...capability,
       scopes: copyScopes(capability.scopes),
-      lastUsedAt: new Date(),
-    };
+      lastUsedAt: new Date(this.now()),
+    });
     this.capabilities.set(capability.id, touched);
     return { computer, capability: touched };
   }

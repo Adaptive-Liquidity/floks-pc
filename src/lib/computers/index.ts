@@ -8,6 +8,7 @@ export type {
   ActionBatch,
   ActionResult,
   ActionType,
+  BotClaim,
   CapabilityScope,
   Computer,
   ComputerAuditEvent,
@@ -49,6 +50,7 @@ export type {
 export { LEGAL_TRANSITIONS, CAPABILITY_SCOPES } from "./types.js";
 
 export {
+  BotClaimSchema,
   ActionBatchSchema,
   ActionSchema,
   ActionTypeSchema,
@@ -82,6 +84,7 @@ export {
   CrossNodeDenied,
   DestroyConfirmRequired,
   DestroyProviderRefMismatch,
+  BotKeyRequired,
   BetaInviteRequired,
   BetaStoreRequired,
   DuplicateComputer,
