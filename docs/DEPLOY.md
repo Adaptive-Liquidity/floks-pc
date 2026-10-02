@@ -14,12 +14,12 @@ Do **not** promote a Preview to Vercel Production, change DNS, or edit live Stri
 
 ## Kill switch and rollback
 
-- Stop new purchases without a deploy: set `CHECKOUT_DISABLED=1` on the Vercel environment for this branch. `POST /api/checkout` returns 503.
+- Stop new purchases: set `CHECKOUT_DISABLED=1` on the Vercel environment for this branch, then redeploy. Vercel applies environment changes on the next deployment. After that, `POST /api/checkout` returns 503.
 - Pause Stripe deliveries in the Stripe dashboard for the webhook endpoint. The handler inserts the event id into `stripe_events` before applying it. If apply throws, that row is deleted so Stripe can retry. A row that remains is a finished delivery and the next copy of that id is skipped. `invoice.paid` does not turn a canceled seat back on.
 - This launch URL is a Preview alias. Rollback is: in Vercel, point `staxions-preview.vercel.app` back at the previous deployment, or revert the commit on `cursor/aistudio-authkit-desks-a695`. Instant Rollback applies to Production deployments only.
 - If this stack is merged to `main`, tag the previous tip first: `git tag pre-staxions-main 08438f55`. After the merge commit, undo it with `git revert -m 1 <merge-commit>`. Do not force-push `main`.
 - Moving to `asentxia.com` later changes `APP_URL`, the WorkOS redirect, the Stripe webhook URL, and `SITE_INDEXABLE`. It does not require a code change if those four are the only host switches.
-- Do not merge this branch to `main` or promote it to Production until the owner approves the exact SHA. The HANDOFF section 7 gate (test mode, then one live run, on Runloop) has not been run.
+- Do not merge this branch to `main` or promote it to Production until the owner approves the exact SHA. The launch gate is the owner's external HANDOFF brief (test mode, then one live Runloop run). That brief is not in this repository, and the gate has not been run.
 
 ## Postgres
 
