@@ -17,7 +17,7 @@ export const HOME_TOOLS =
   "Same eight tools on every desk. Renews monthly until you cancel.";
 
 export const FOOTER_MARK = "Staxions";
-export const FOOTER_ORG = "Asentxia Systems";
+export const FOOTER_ORG = "Asentxia Inc.";
 
 export const JOIN_LINE = "Create an account. Then buy a computer. We email a 6-digit code.";
 
@@ -124,7 +124,7 @@ export const ERROR_ONE_LINE = "This page isn’t here.";
 export const SERVER_ERROR_ONE_LINE = "Staxions could not finish that request.";
 
 export const LEGAL_DISCLAIMER =
-  "Staxions product policy. These pages describe how Staxions works. They are not a statute, SLA, or law-firm letter. Last updated 2026-09-28.";
+  "Staxions product policy. These pages describe how Staxions works. They are not a statute, SLA, or law-firm letter. Last updated 2026-10-01.";
 
 export const PRODUCT_EYEBROW = "The Agent Computer";
 export const PRODUCT_TITLE = "What Staxions is";
@@ -193,5 +193,5 @@ export const FAQ_QA: ReadonlyArray<[string, string]> = [
     "What’s the refund rule?",
     "If we cannot deliver the Computer you paid for (provision fails / pair cannot start that box), we refund that payment. We do not promise a 30-day no-questions refund. See /legal/refund.",
   ],
-  ["Who sells Staxions?", `Adaptive Liquidity, Inc. Support: ${SUPPORT_EMAIL}. These pages are not an SLA.`],
+  ["Who sells Staxions?", `Asentxia Inc. Support: ${SUPPORT_EMAIL}. These pages are not an SLA.`],
 ];

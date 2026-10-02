@@ -22,8 +22,8 @@ export function Concept() {
       <div className="max-w-container-max mx-auto grid md:grid-cols-2 gap-gutter items-center relative z-10">
         <motion.div
           className="space-y-stack-md"
-          initial={{ opacity: 0, x: -30 }}
-          whileInView={{ opacity: 1, x: 0 }}
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-100px" }}
           transition={{ duration: 1, ease: [0.16, 1, 0.3, 1], delay: 0.2 }}
         >

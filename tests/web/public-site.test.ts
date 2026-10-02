@@ -179,13 +179,15 @@ describe("public site lock", () => {
     assert.match(read("components/studio/Concept.tsx"), /object-contain/);
     assert.doesNotMatch(read("components/studio/Concept.tsx"), /inset-x-10 top-1\/2/);
     assert.doesNotMatch(read("components/studio/Concept.tsx"), /glass-card|glow-border/);
-    assert.match(read("components/studio/HeroHardwareNode.tsx"), /GROK MCP SUBSYSTEM/);
+    assert.match(read("components/studio/HeroHardwareNode.tsx"), /EXAMPLE/);
+    assert.doesNotMatch(read("components/studio/HeroHardwareNode.tsx"), /NODE AUTHENTICATED/);
+    assert.doesNotMatch(read("components/studio/ProcessAndTerminal.tsx"), /COMPUTER LIVE/);
     assert.match(read("components/studio/Hero.tsx"), /\/signup/);
     assert.match(read("components/studio/Hero.tsx"), /\/login/);
     assert.match(read("app/join/page.tsx"), /PlanGrid/);
     assert.match(read("app/join/page.tsx"), /readAuthFromCookies/);
     assert.match(read("components/studio/PlanGrid.tsx"), /planCheckoutHref/);
-    assert.match(read("components/studio/PlanGrid.tsx"), /Most Popular/);
+    assert.doesNotMatch(read("components/studio/PlanGrid.tsx"), /Most Popular/);
     assert.match(read("components/studio/PlanGrid.tsx"), /md:grid-cols-3/);
     assert.doesNotMatch(read("app/page.tsx"), /hero-node/);
     assert.doesNotMatch(read("app/page.tsx"), /A workplace/);
@@ -210,7 +212,10 @@ describe("public site lock", () => {
     assert.doesNotMatch(text, /Get Started/);
     assert.doesNotMatch(read("app/setup/page.tsx"), /\bAllow\b/);
     const footer = `${read("components/LegalFooter.tsx")}\n${read("lib/legal.ts")}\n${read("lib/copy.ts")}`;
-    assert.match(footer, /Asentxia Systems/);
+    const legalSeller = `${read("components/LegalFooter.tsx")}\n${read("lib/legal.ts")}`;
+    assert.match(legalSeller, /Asentxia Inc\./);
+    assert.doesNotMatch(legalSeller, /Adaptive Liquidity, Inc\./);
+    assert.doesNotMatch(legalSeller, /Asentxia Systems/);
     assert.match(footer, /FOOTER_MARK/);
     assert.match(footer, /FOOTER_NAV/);
     assert.match(footer, /label: "Terms"/);
@@ -384,5 +389,15 @@ describe("public site lock", () => {
     assert.equal(oauthUiFromPreflight(true, { ok: true }).state, "ready");
     assert.equal(oauthUiFromPreflight(false, { status: "ready" }).state, "error");
     assert.equal(oauthUiFromPreflight(true, { ok: false }).state, "error");
+  });
+
+  it("keeps the homepage illustration static and the layout inside a 375px screen", () => {
+    const node = read("components/studio/HeroHardwareNode.tsx");
+    assert.match(node, /not a live computer/i);
+    assert.doesNotMatch(node, /animate-ping|observe online|DISPLAY :0|Handshake|CPU LOAD|DEDICATED RAM/);
+    assert.doesNotMatch(read("app/globals.css"), /overflow-x:\s*hidden/);
+    const wide = `${read("components/studio/Hero.tsx")}\n${read("components/studio/StudioCTA.tsx")}`;
+    assert.doesNotMatch(wide, /w-\[\d{3,}px\]/);
+    assert.match(read("components/studio/Hero.tsx"), /min-\[480px\]:grid-cols-3/);
   });
 });

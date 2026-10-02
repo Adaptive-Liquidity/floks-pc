@@ -37,7 +37,7 @@ const SEQUENCES: Record<string, Array<{ text: string; delay: number; color?: str
     { text: "> [OK] Key shown once. Lost key → revoke.", delay: 240 },
     { text: "> [RUNNING] Approve pending Bot claim...", delay: 280 },
     { text: "> [VERIFIED] That Bot occupies that computer.", delay: 240, color: "text-secondary-fixed" },
-    { text: "> BOUNDARY ON. COMPUTER LIVE.", delay: 160, color: "text-primary-fixed" },
+    { text: "> BOUNDARY ON. EXAMPLE ONLY.", delay: 160, color: "text-primary-fixed" },
   ],
 };
 
@@ -103,8 +103,8 @@ export function ProcessAndTerminal() {
       </div>
       <div className="max-w-container-max mx-auto grid lg:grid-cols-2 gap-section-gap">
         <motion.div
-          initial={{ opacity: 0, x: -30 }}
-          whileInView={{ opacity: 1, x: 0 }}
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-100px" }}
           transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
         >
@@ -140,8 +140,8 @@ export function ProcessAndTerminal() {
           </div>
         </motion.div>
         <motion.div
-          initial={{ opacity: 0, x: 30 }}
-          whileInView={{ opacity: 1, x: 0 }}
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-100px" }}
           transition={{ duration: 1, ease: [0.16, 1, 0.3, 1], delay: 0.2 }}
         >

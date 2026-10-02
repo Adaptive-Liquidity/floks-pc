@@ -32,7 +32,7 @@ export function Hero() {
     >
       <motion.div
         style={{ y: glowY, opacity: glowOpacity }}
-        className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[700px] h-[500px] bg-gradient-to-tr from-secondary/10 via-white/5 to-transparent rounded-full blur-[140px] pointer-events-none -z-10"
+        className="absolute top-1/4 left-0 right-0 mx-auto w-full max-w-3xl h-[320px] bg-gradient-to-tr from-secondary/10 via-white/5 to-transparent rounded-full blur-[140px] pointer-events-none -z-10"
       />
       <motion.div
         style={{ opacity: heroOpacity, scale: heroScale }}
@@ -47,10 +47,6 @@ export function Hero() {
             className="inline-flex flex-wrap items-center gap-3 px-3.5 py-1.5 rounded-full bg-surface-container/60 border border-white/10 backdrop-blur-xl shadow-lg"
           >
             <span className="flex items-center gap-2 font-label-mono text-[11px] text-white uppercase tracking-wider">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-80" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
-              </span>
               THE AGENT COMPUTER
             </span>
             <span className="w-px h-3 bg-white/20" />
@@ -89,7 +85,7 @@ export function Hero() {
 
           <motion.div
             style={{ y: yCards }}
-            className="grid grid-cols-3 gap-3 pt-2 max-w-lg"
+            className="grid grid-cols-1 min-[480px]:grid-cols-3 gap-3 pt-2 max-w-lg"
             initial={{ opacity: 0, y: 20, filter: "blur(10px)" }}
             animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
             transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1], delay: 0.65 }}

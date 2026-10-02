@@ -236,7 +236,6 @@ body {
   font-size: 16px;
   line-height: 1.6;
   background: transparent;
-  overflow-x: hidden;
 }
 
 a {
@@ -1035,6 +1034,10 @@ input.code {
 }
 
 @media (max-width: 767px) {
+  :root {
+    --spacing-margin-x: 16px;
+  }
+
   .nav-wide {
     display: none;
   }
@@ -1060,9 +1063,10 @@ input.code {
   .nav-drawer {
     display: none;
     position: absolute;
-    right: var(--gutter);
+    right: 16px;
+    left: 16px;
     top: 56px;
-    min-width: 180px;
+    min-width: 0;
     padding: 12px;
     gap: 10px;
     background: rgba(10, 10, 10, 0.92);
