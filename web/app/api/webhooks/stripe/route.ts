@@ -1,12 +1,10 @@
 import { NextResponse, after } from "next/server";
 import { applyStripeEvent, constructStripeEvent, parseUnsignedStripeEvent } from "@/lib/billing/stripe";
-import { claimStripeEvent, releaseStripeEvent, resetStripeEventsForTests } from "@/lib/billing/stripe-events";
+import { claimStripeEvent, releaseStripeEvent } from "@/lib/billing/stripe-events";
 import { provisionSeatComputers, shutdownSeatComputers } from "@/lib/billing/lifecycle";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-export { resetStripeEventsForTests };
 
 export async function POST(request: Request) {
   const raw = await request.text();
