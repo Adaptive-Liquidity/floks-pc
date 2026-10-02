@@ -46,6 +46,5 @@ export function csrfOk(request: Request, origin: string): boolean {
   if (header === origin) return true;
   // A no-referrer document posts Origin: "null". Same-site fetch metadata still proves the caller.
   if (request.headers.get("sec-fetch-site") === "same-origin") return true;
-  if (!header) return true;
   return false;
 }

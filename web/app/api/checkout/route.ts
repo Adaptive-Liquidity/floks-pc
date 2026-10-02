@@ -3,10 +3,14 @@ import { csrfOk, requestOrigin } from "@/lib/auth/cookies";
 import { userFromRequest } from "@/lib/auth/request-session";
 import { CheckoutNotConfigured, createCheckoutSession } from "@/lib/billing/stripe";
 import { isCheckoutPlanId } from "@/lib/billing/catalog";
+import { clientKey, rateLimitedBody, takeRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
 async function startCheckout(request: Request, plan: string, quantity: number): Promise<NextResponse> {
+  if (!takeRateLimit(clientKey(request, "checkout"))) {
+    return NextResponse.json(rateLimitedBody(), { status: 429 });
+  }
   const { user } = await userFromRequest(request);
   if (!user) {
     return NextResponse.redirect(new URL("/signup", request.url), { status: 303 });

@@ -12,6 +12,7 @@ import {
 } from "../../lib/auth/callback";
 import { applySessionCookie, csrfOk } from "../../lib/auth/cookies";
 import { authenticateAuthKitCode } from "../../lib/auth/workos";
+import { clientKey, takeRateLimit } from "../../lib/rate-limit";
 
 const NO_STORE = { "cache-control": "no-store, no-cache, must-revalidate" } as const;
 
@@ -88,6 +89,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!takeRateLimit(clientKey(request, "callback"))) {
+    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  }
   const origin = publicOriginFromRequest(request);
   if (!csrfOk(request, origin)) {
     logAuthKitFailure("callback.csrf", new Error("Origin mismatch"));

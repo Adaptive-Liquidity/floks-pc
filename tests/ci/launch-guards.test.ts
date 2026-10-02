@@ -80,6 +80,7 @@ describe("launch guards", () => {
       "0003_web_seats.sql",
       "0004_launch_store.sql",
       "0005_pair_reveals.sql",
+      "0006_rate_limits.sql",
     ]);
   });
 
