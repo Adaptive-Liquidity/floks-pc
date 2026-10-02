@@ -206,6 +206,13 @@ export class ComputerService {
     this.committed = this.toSnapshot();
   }
 
+  /** Reload when another instance has saved the shared control plane. */
+  async reloadIfRevisionChanged(): Promise<void> {
+    if (!this.store?.currentRevision) return;
+    const latest = await this.store.currentRevision();
+    if (latest !== this.revision) await this.hydrate();
+  }
+
   private toSnapshot(): ControlPlaneSnapshot {
     const pairIssueExtras: ControlPlaneSnapshot["pairIssueExtras"] = {};
     for (const [id, extras] of this.pairIssueExtras) {
@@ -819,6 +826,7 @@ export class ComputerService {
     // C5 may pass verified MCP auth later. C4 must not treat caller-supplied
     // accountId as a limiter (bypass + shared-account DoS).
     void sharedAuth;
+    await this.reloadIfRevisionChanged();
 
     this.sweepPairState();
     this.assertPairRateLimit(identity);
@@ -935,6 +943,7 @@ export class ComputerService {
   }
 
   async status(auth: ComputerOperationAuth, computerId: string): Promise<ComputerStatus> {
+    await this.reloadIfRevisionChanged();
     const { computer } = this.authorize(auth, computerId, "status");
     const result: ComputerStatus = { state: computer.state };
     if (computer.lastActiveAt !== null) {
@@ -965,6 +974,7 @@ export class ComputerService {
     computerId: string,
     request: ExecRequest,
   ): Promise<ExecResult> {
+    await this.reloadIfRevisionChanged();
     // Validate request at service boundary (schema-level enforcement)
     const validatedRequest = ExecRequestSchema.parse(request) as ExecRequest;
 
@@ -1018,6 +1028,7 @@ export class ComputerService {
     computerId: string,
     request: FsRequest,
   ): Promise<FsResult> {
+    await this.reloadIfRevisionChanged();
     const validatedRequest = FsRequestSchema.parse(request) as FsRequest;
     const { computer } = this.authorize(auth, computerId, "fs");
     const ref = this.requireProviderRef(computer);
@@ -1064,6 +1075,7 @@ export class ComputerService {
     computerId: string,
     request: ObserveRequest,
   ): Promise<Observation> {
+    await this.reloadIfRevisionChanged();
     const { computer } = this.authorize(auth, computerId, "observe");
     this.assertObserveAvailable(computer);
     const ref = this.requireProviderRef(computer);
@@ -1090,6 +1102,7 @@ export class ComputerService {
     computerId: string,
     request: ActionBatch,
   ): Promise<ActionResult> {
+    await this.reloadIfRevisionChanged();
     const { computer } = this.authorize(auth, computerId, "act");
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
@@ -1129,11 +1142,13 @@ export class ComputerService {
   }
 
   async wake(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
     this.authorize(auth, computerId, "lifecycle");
     return this.wakeThisComputer(computerId);
   }
 
   async pause(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
     this.authorize(auth, computerId, "lifecycle");
     return this.pauseThisComputer(computerId);
   }
@@ -1441,6 +1456,7 @@ export class ComputerService {
   }
 
   async stop(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
     this.authorize(auth, computerId, "lifecycle");
     return this.transition(computerId, "stopped");
   }
