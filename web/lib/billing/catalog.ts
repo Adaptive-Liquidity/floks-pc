@@ -175,6 +175,11 @@ export function planFromStripePriceId(
   return null;
 }
 
+export function checkoutBlocked(plan: string, quantity: number): "team_minimum" | null {
+  if (plan === "team" && quantity < 3) return "team_minimum";
+  return null;
+}
+
 export function recordedAgentQuantity(raw: number): number {
   if (!Number.isFinite(raw) || raw < 1) return 1;
   return Math.floor(raw);
