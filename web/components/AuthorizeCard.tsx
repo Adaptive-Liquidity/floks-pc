@@ -11,8 +11,16 @@ import {
   OAUTH_TITLE,
 } from "@/lib/copy";
 import { CONNECTOR } from "@/lib/config";
-import { oauthUiFromPreflight, parseAuthorizePreflightBody } from "@/lib/oauth";
+import { oauthUiFromPreflight, parseAuthorizePreflightBody } from "@/lib/oauth-ui";
 import type { OauthUiState } from "@/lib/types";
+
+function redirectHost(uri: string): string {
+  try {
+    return new URL(uri).host;
+  } catch {
+    return "invalid";
+  }
+}
 
 export function AuthorizeCard() {
   const search = useSearchParams();
@@ -24,7 +32,7 @@ export function AuthorizeCard() {
   useEffect(() => {
     const next = new URLSearchParams(query);
     const clientId = next.get("client_id");
-    if (!clientId || clientId !== CONNECTOR.clientId) {
+    if (!clientId) {
       setState("invalid_client");
       return;
     }
@@ -44,16 +52,33 @@ export function AuthorizeCard() {
       });
   }, [query]);
 
-  const cancelHref = "/";
+  const redirectUri = params.get("redirect_uri");
+  const cancelHref =
+    state === "ready" && redirectUri
+      ? `${redirectUri}${redirectUri.includes("?") ? "&" : "?"}error=access_denied`
+      : "/";
 
   return (
     <section className="stage">
       <div className="card">
         <h1 className="question">{OAUTH_TITLE}</h1>
         <p className="lede">{OAUTH_BODY}</p>
+        {params.get("redirect_uri") ? (
+          <p className="note">Redirect host: {redirectHost(params.get("redirect_uri") ?? "")}</p>
+        ) : null}
         {state === "loading" ? <p className="note">{OAUTH_LOADING}</p> : null}
         {state === "invalid_client" ? <p className="fail">{OAUTH_INVALID}</p> : null}
         {state === "already_allowed" ? <p className="note">{OAUTH_ALREADY}</p> : null}
+        {state === "signed_out" ? (
+          <p className="note">
+            <a href={`/login?return=${encodeURIComponent(`/oauth/authorize?${query}`)}`}>Sign in</a>
+          </p>
+        ) : null}
+        {state === "no_plan" ? (
+          <p className="note">
+            <a href="/pricing">See plans</a>
+          </p>
+        ) : null}
         {state === "error" ? <p className="fail">{detail ?? OAUTH_ERROR}</p> : null}
         {state === "ready" ? (
           <form className="actions" method="post" action={CONNECTOR.authorizeUrl}>

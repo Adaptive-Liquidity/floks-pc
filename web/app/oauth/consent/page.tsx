@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function AuthorizePage() {
+export default function ConsentPage() {
   return (
     <Suspense
       fallback={

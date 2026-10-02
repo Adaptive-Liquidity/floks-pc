@@ -12,6 +12,23 @@ export const CONNECTOR = {
   scope: "mcp",
 } as const;
 
+export function publicConnector(origin = configuredAppUrl() ?? ""): {
+  mcpUrl: string;
+  authorizeUrl: string;
+  tokenUrl: string;
+  clientId: string;
+  scope: string;
+} {
+  const base = origin.replace(/\/+$/, "");
+  return {
+    mcpUrl: base ? `${base}/mcp` : "/mcp",
+    authorizeUrl: base ? `${base}/oauth/authorize` : "/oauth/authorize",
+    tokenUrl: base ? `${base}/oauth/token` : "/oauth/token",
+    clientId: CONNECTOR.clientId,
+    scope: CONNECTOR.scope,
+  };
+}
+
 export const SUPPORT_EMAIL =
   process.env.SUPPORT_EMAIL?.trim() || process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim() || "contact@asentxia.com";
 export const SELLER = process.env.NEXT_PUBLIC_SELLER?.trim() || "Adaptive Liquidity, Inc.";
