@@ -1,19 +1,23 @@
 import assert from "node:assert/strict";
 import { describe, it, beforeEach } from "node:test";
 import { mapComputerState } from "../../web/lib/desks/map-state.ts";
-import { ComputerService, FakeProvider } from "../../src/lib/computers/index.js";
+import { ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.js";
 import { createSeat, resetSeatStoreForTests, getSeatStore } from "../../web/lib/billing/seats.ts";
 import { provisionSeatComputers, shutdownSeatComputers } from "../../web/lib/billing/lifecycle.ts";
 import { claimStripeEvent, releaseStripeEvent, resetStripeEventsForTests } from "../../web/lib/billing/stripe-events.ts";
 import {
   approvePairCode,
+  birdIdForSeat,
   consumeRevealedCode,
   desksForSeats,
+  ensureComputer,
+  ensureComputersForSeat,
   flockIdForEmail,
   getComputerService,
   issuePairKey,
   resetDeskRuntimeForTests,
   revokePairKey,
+  setComputerServiceForTests,
   setPairRevealStoreForTests,
   webProviderName,
 } from "../../web/lib/desks/runtime.ts";
@@ -177,6 +181,32 @@ describe("pair keys on FakeProvider", () => {
     assert.equal(desks[0]?.userCode, issued.code);
   });
 
+  it("lets a warm instance pair a code issued later and show it on setup", async () => {
+    const store = new MemoryControlPlaneStore();
+    const provider = new FakeProvider();
+    const issuer = new ComputerService(provider, { store });
+    const warm = new ComputerService(provider, { store });
+    setComputerServiceForTests(issuer);
+    const seat = await getSeatStore().upsert(
+      createSeat({
+        email: "warm@example.com",
+        plan: "personal",
+        stripeCustomerId: "cus_warm",
+      }),
+    );
+    await ensureComputer(seat);
+    await warm.hydrate();
+    const issued = await issuePairKey(seat);
+    setComputerServiceForTests(warm);
+    const desks = await desksForSeats([seat]);
+    assert.equal(desks[0]?.userCode, issued.code);
+    const paired = await warm.pair(issued.code, {
+      birdId: birdIdForSeat(seat),
+      flockId: flockIdForEmail(seat.email),
+    });
+    assert.equal(paired.flockId, flockIdForEmail(seat.email));
+  });
+
   it("keeps each seat's reveal across 50 issue and revoke cycles", async () => {
     const shared = new Map<string, { code: string; pairCodeId: string }>();
     const writer = new MemoryPairRevealStore(shared);
@@ -259,5 +289,24 @@ describe("pair keys on FakeProvider", () => {
     assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "duplicate");
     await releaseStripeEvent("evt_retry");
     assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "new");
+  });
+
+  it("keeps extra computer ids when the paid maximum drops", async () => {
+    const seat = await getSeatStore().upsert(
+      createSeat({
+        email: "downgrade@example.com",
+        plan: "team",
+        stripeCustomerId: "cus_down",
+        status: "active",
+        maxComputers: 2,
+        agentQuantity: 2,
+        computerId: "comp-a",
+        computerIds: ["comp-a", "comp-b", "comp-c", "comp-d"],
+      }),
+    );
+    await ensureComputersForSeat(seat);
+    const fresh = await getSeatStore().getById(seat.id);
+    assert.equal(fresh?.computerIds.includes("comp-c"), true);
+    assert.equal(fresh?.computerIds.includes("comp-d"), true);
   });
 });
