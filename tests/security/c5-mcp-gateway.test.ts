@@ -1073,11 +1073,13 @@ describe("C5 MCP gateway", () => {
       assert.equal(res.status, 200);
       assert.equal(res.headers.get("mcp-protocol-version"), MCP_PREFERRED_PROTOCOL);
       const json = (await res.json()) as {
-        result: { protocolVersion: string };
-        _meta: { "io.modelcontextprotocol/protocolVersion": string };
+        result: {
+          protocolVersion: string;
+          _meta: { "io.modelcontextprotocol/protocolVersion": string };
+        };
       };
       assert.equal(json.result.protocolVersion, MCP_PREFERRED_PROTOCOL);
-      assert.equal(json._meta["io.modelcontextprotocol/protocolVersion"], MCP_PREFERRED_PROTOCOL);
+      assert.equal(json.result._meta["io.modelcontextprotocol/protocolVersion"], MCP_PREFERRED_PROTOCOL);
 
       const listed = await fetch(base, {
         method: "POST",
@@ -1140,11 +1142,11 @@ describe("C5 MCP gateway", () => {
       const mixedJson = (await mixed.json()) as Array<{
         id?: number;
         error?: unknown;
-        _meta?: { "io.modelcontextprotocol/protocolVersion"?: string };
+        result?: { _meta?: { "io.modelcontextprotocol/protocolVersion"?: string } };
       }>;
       assert.equal(Array.isArray(mixedJson), true);
       const ping = mixedJson.find((item) => item.id === 2);
-      assert.equal(ping?._meta?.["io.modelcontextprotocol/protocolVersion"], legacy);
+      assert.equal(ping?.result?._meta?.["io.modelcontextprotocol/protocolVersion"], legacy);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
     }

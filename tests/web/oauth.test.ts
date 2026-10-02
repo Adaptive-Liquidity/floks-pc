@@ -351,4 +351,74 @@ describe("oauth and mcp", { concurrency: 1 }, () => {
     assert.equal(typeof issued.access_token, "string");
     assert.equal(issued.token_type, "Bearer");
   });
+
+  it("returns a JSON-RPC envelope without a top-level _meta", async () => {
+    resetRateLimitsForTests();
+    const memory = new MemoryOauthStore();
+    setOauthStoreForTests(memory);
+    const client = registerClient(["https://grok.com/callback"]);
+    await getOauthStore().saveClient(client);
+    const verifier = "verifier-value-which-is-long-enough";
+    const code = await issueCode({
+      clientId: client.id,
+      redirectUri: client.redirectUris[0] ?? "",
+      challenge: pkceS256(verifier),
+      subject: SUBJECT,
+      flock: flockIdForEmail(EMAIL),
+    });
+    const issued = await exchangeCode({
+      code,
+      verifier,
+      clientId: client.id,
+      redirectUri: client.redirectUris[0] ?? "",
+    });
+    assert.ok("token" in issued);
+    if (!("token" in issued)) return;
+    const headers = {
+      "content-type": "application/json",
+      authorization: `Bearer ${issued.token}`,
+      "mcp-protocol-version": "2026-07-28",
+    };
+    const call = (body: string) =>
+      mcpPost(
+        new Request("https://staxions-preview.vercel.app/mcp", {
+          method: "POST",
+          headers,
+          body,
+        }),
+      );
+    const initialized = await call(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2026-07-28",
+          capabilities: {},
+          clientInfo: { name: "grok", version: "0" },
+        },
+      }),
+    );
+    assert.equal(initialized.status, 200);
+    const initBody = (await initialized.json()) as { result?: { tools?: unknown } };
+    assert.deepEqual(Object.keys(initBody).sort(), ["id", "jsonrpc", "result"]);
+    const listed = await call(
+      JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+    );
+    assert.equal(listed.status, 200);
+    const listBody = (await listed.json()) as { result?: { tools?: Array<{ name: string }> } };
+    assert.deepEqual(Object.keys(listBody).sort(), ["id", "jsonrpc", "result"]);
+    assert.deepEqual(
+      listBody.result?.tools?.map((tool) => tool.name),
+      [...MCP_TOOL_NAMES],
+    );
+    assert.equal(listBody.result?.tools?.length, 8);
+    const note = await call(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
+    assert.equal(note.status, 202);
+    assert.equal(await note.text(), "");
+    const malformed = await call("{");
+    assert.equal(malformed.status, 400);
+    const parseError = (await malformed.json()) as { error?: { code?: number } };
+    assert.equal(parseError.error?.code, -32700);
+  });
 });
