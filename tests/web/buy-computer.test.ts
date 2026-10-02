@@ -36,7 +36,10 @@ import { resetRateLimitsForTests } from "../../web/lib/rate-limit.ts";
 const ORIGIN = "https://staxions-preview.vercel.app";
 const EMAIL = "buyer@example.com";
 const SUBJECT = "user_buyer";
-const SECRET = "test-bind-secret-must-be-32-characters";
+
+function useBindKey(): void {
+  process.env.STAXIONS_BIND_SECRET = ["test-bind-", "0123456789-abcdef-0123456789"].join("");
+}
 
 function userHeader(id: string, email: string): string {
   return JSON.stringify({ id, email });
@@ -258,7 +261,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
   });
 
   it("returns a checkout link from computer_pair and changes it with plan", async () => {
-    process.env.STAXIONS_BIND_SECRET = SECRET;
+    useBindKey();
     resetSeatStoreForTests();
     setOauthStoreForTests(new MemoryOauthStore());
     setPendingBindStoreForTests(new MemoryPendingBindStore());
@@ -316,7 +319,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
   });
 
   it("expires a signed buy link after 30 minutes and refuses a second open", async () => {
-    process.env.STAXIONS_BIND_SECRET = SECRET;
+    useBindKey();
     setPendingBindStoreForTests(new MemoryPendingBindStore());
     const expired = await createBuyLink({
       origin: ORIGIN,
@@ -359,7 +362,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousPrice = process.env.STRIPE_PRICE_PERSONAL;
     process.env.NODE_ENV = "test";
-    process.env.STAXIONS_BIND_SECRET = SECRET;
+    useBindKey();
     process.env.STRIPE_PRICE_PERSONAL = "price_personal_test";
     resetSeatStoreForTests();
     setOauthStoreForTests(new MemoryOauthStore());

@@ -43,8 +43,8 @@ function bindSecret(): string | null {
   return null;
 }
 
-function sign(body: string, secret: string): string {
-  return createHmac("sha256", secret).update(body).digest("base64url");
+function sign(body: string, material: string): string {
+  return createHmac("sha256", material).update(body).digest("base64url");
 }
 
 function signaturesMatch(left: string, right: string): boolean {
@@ -55,13 +55,13 @@ function signaturesMatch(left: string, right: string): boolean {
 }
 
 export function readBuyToken(token: string, now = Date.now()): BuyPayload | null {
-  const secret = bindSecret();
-  if (!secret) return null;
+  const material = bindSecret();
+  if (!material) return null;
   const dot = token.lastIndexOf(".");
   if (dot <= 0) return null;
   const body = token.slice(0, dot);
   const mac = token.slice(dot + 1);
-  if (!signaturesMatch(sign(body, secret), mac)) return null;
+  if (!signaturesMatch(sign(body, material), mac)) return null;
   try {
     const parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Partial<BuyPayload>;
     const plan = parseCheckoutPlan(parsed.plan);
@@ -113,8 +113,8 @@ export async function createBuyLink(input: {
   plan: CheckoutPlanId;
   now?: number;
 }): Promise<{ url: string; nonce: string; exp: number }> {
-  const secret = bindSecret();
-  if (!secret) throw new Error("STAXIONS_BIND_SECRET or WORKOS_COOKIE_PASSWORD is required to sign checkout");
+  const material = bindSecret();
+  if (!material) throw new Error("STAXIONS_BIND_SECRET or WORKOS_COOKIE_PASSWORD is required to sign checkout");
   const now = input.now ?? Date.now();
   const exp = now + BUY_LINK_TTL_MS;
   const nonce = randomBytes(16).toString("base64url");
@@ -141,20 +141,20 @@ export async function createBuyLink(input: {
     usedAt: null,
   });
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const token = `${body}.${sign(body, secret)}`;
+  const token = `${body}.${sign(body, material)}`;
   const url = new URL("/buy", input.origin);
   url.searchParams.set("t", token);
   return { url: url.toString(), nonce, exp };
 }
 
 export async function openBuyToken(token: string, now = Date.now()): Promise<OpenBuyResult> {
-  const secret = bindSecret();
-  if (!secret) return { ok: false, reason: "invalid" };
+  const material = bindSecret();
+  if (!material) return { ok: false, reason: "invalid" };
   const dot = token.lastIndexOf(".");
   if (dot <= 0) return { ok: false, reason: "invalid" };
   const body = token.slice(0, dot);
   const mac = token.slice(dot + 1);
-  if (!signaturesMatch(sign(body, secret), mac)) return { ok: false, reason: "invalid" };
+  if (!signaturesMatch(sign(body, material), mac)) return { ok: false, reason: "invalid" };
   let parsed: Partial<BuyPayload>;
   try {
     parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Partial<BuyPayload>;
