@@ -6,8 +6,9 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { z } from "zod";
-import type { CapabilityScope, Computer, ComputerCapability, ComputerPairCode } from "./types.js";
+import type { BotClaim, CapabilityScope, Computer, ComputerCapability, ComputerPairCode } from "./types.js";
 import {
+  BotClaimSchema,
   CapabilityScopeSchema,
   ComputerSchema,
   ComputerCapabilitySchema,
@@ -33,6 +34,7 @@ export const ControlPlaneSnapshotSchema = z.object({
   capabilities: z.array(ComputerCapabilitySchema),
   pairIssueExtras: z.record(z.string(), PairIssueExtrasSchema),
   pairFailuresByIdentity: z.record(z.string(), PairFailureSchema),
+  botClaims: z.array(BotClaimSchema).default([]),
 });
 
 export type ControlPlaneSnapshot = z.infer<typeof ControlPlaneSnapshotSchema>;
@@ -170,11 +172,28 @@ export function pairCodesFromSnapshot(snapshot: ControlPlaneSnapshot): ComputerP
 }
 
 export function capabilitiesFromSnapshot(snapshot: ControlPlaneSnapshot): ComputerCapability[] {
-  return snapshot.capabilities.map((c) => ({
-    ...c,
-    issuedAt: new Date(c.issuedAt),
-    expiresAt: new Date(c.expiresAt),
-    revokedAt: c.revokedAt ? new Date(c.revokedAt) : null,
-    lastUsedAt: c.lastUsedAt ? new Date(c.lastUsedAt) : null,
+  return snapshot.capabilities.map((c) => {
+    const cap: ComputerCapability = {
+      id: c.id,
+      computerId: c.computerId,
+      birdId: c.birdId,
+      flockId: c.flockId,
+      tokenDigest: c.tokenDigest,
+      scopes: c.scopes,
+      issuedAt: new Date(c.issuedAt),
+      expiresAt: new Date(c.expiresAt),
+      revokedAt: c.revokedAt ? new Date(c.revokedAt) : null,
+      lastUsedAt: c.lastUsedAt ? new Date(c.lastUsedAt) : null,
+    };
+    if (c.botLabel) cap.botLabel = c.botLabel;
+    return cap;
+  });
+}
+
+export function botClaimsFromSnapshot(snapshot: ControlPlaneSnapshot): BotClaim[] {
+  return (snapshot.botClaims ?? []).map((claim) => ({
+    ...claim,
+    createdAt: new Date(claim.createdAt),
+    expiresAt: new Date(claim.expiresAt),
   }));
 }

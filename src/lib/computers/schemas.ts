@@ -212,6 +212,21 @@ export const ComputerCapabilitySchema = z.object({
   expiresAt: z.coerce.date(),
   revokedAt: z.coerce.date().nullable(),
   lastUsedAt: z.coerce.date().nullable(),
+  botLabel: z.string().max(40).nullable().optional(),
+});
+
+export const BotClaimSchema = z.object({
+  id: z.string().min(1),
+  secretDigest: z.string().min(1),
+  flockId: z.string().min(1),
+  subject: z.string().min(1),
+  botLabel: z.string().max(40).nullable(),
+  computerId: z.string().min(1).nullable(),
+  checkoutNonce: z.string().min(1).nullable(),
+  status: z.enum(["pending", "approved", "redeemed", "denied"]),
+  createdAt: z.coerce.date(),
+  expiresAt: z.coerce.date(),
+  attemptCount: z.number().int().nonnegative(),
 });
 
 export const ComputerPairCodeSchema = z.object({

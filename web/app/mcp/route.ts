@@ -9,6 +9,8 @@ import { bindPairFlock } from "../../lib/mcp-flock";
 import { accessClaims, getOauthStore, hashToken } from "../../lib/oauth";
 
 export const runtime = "nodejs";
+/** Must stay above FLOK_WAKE_CALL_BUDGET_MS so a wake can finish inside one request. */
+export const maxDuration = 120;
 
 let gateway: McpGateway | null = null;
 let gatewayService: ComputerService | null = null;
@@ -68,12 +70,14 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
   const protocol = request.headers.get("mcp-protocol-version") ?? undefined;
+  logRequestShape(request, body);
+  const perBotKeys = process.env.FLOK_PER_BOT_KEYS === "true";
   const access = token ? await getOauthStore().getAccess(hashToken(token)) : null;
   const bound =
-    access && access.computerId && access.capabilityId
+    !perBotKeys && access && access.computerId && access.capabilityId
       ? { capabilityId: access.capabilityId, flockId: access.flock }
       : undefined;
-  if (access && !access.revoked && access.expiresAt > Date.now() && !bound) {
+  if (!perBotKeys && access && !access.revoked && access.expiresAt > Date.now() && !bound) {
     const purchased = await purchaseToolResult(body, access, origin, protocolForPurchase(protocol));
     if (purchased) {
       return NextResponse.json(purchased, {
@@ -85,9 +89,54 @@ export async function POST(request: Request): Promise<Response> {
     authorization: `Bearer oauth:${claims.subject}`,
     ...(protocol ? { protocolVersionHeader: protocol } : {}),
     ...(bound ? { bound } : {}),
+    ...(perBotKeys
+      ? { perBotKeys: true, account: { subject: claims.subject, flock: claims.flock, origin } }
+      : {}),
   });
   if (result === null) return new Response(null, { status: 202 });
   return NextResponse.json(result, {
     headers: { "Mcp-Protocol-Version": mcpNegotiatedProtocol(result, protocol) },
   });
+}
+
+function logRequestShape(request: Request, body: unknown): void {
+  if (process.env.VERCEL_ENV === "production") return;
+  const names = [...request.headers.keys()].filter(
+    (name) => !/authorization|cookie|token|code/i.test(name),
+  );
+  const record = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+  const params =
+    record.params && typeof record.params === "object" && !Array.isArray(record.params)
+      ? (record.params as Record<string, unknown>)
+      : {};
+  const meta =
+    params._meta && typeof params._meta === "object" && !Array.isArray(params._meta)
+      ? (params._meta as Record<string, unknown>)
+      : record._meta && typeof record._meta === "object" && !Array.isArray(record._meta)
+        ? (record._meta as Record<string, unknown>)
+        : {};
+  const clientInfo = clientInfoOf(params.clientInfo) ?? clientInfoOf(meta["io.modelcontextprotocol/clientInfo"]);
+  console.info(
+    JSON.stringify({
+      event: "mcp.request_shape",
+      headers: names,
+      user_agent: (request.headers.get("user-agent") ?? "").slice(0, 120),
+      mcp_protocol_version: request.headers.get("mcp-protocol-version"),
+      mcp_method: request.headers.get("mcp-method"),
+      mcp_name: request.headers.get("mcp-name"),
+      has_mcp_session_id: request.headers.has("mcp-session-id"),
+      meta_keys: Object.keys(meta),
+      client_info: clientInfo,
+      method: typeof record.method === "string" ? record.method : undefined,
+    }),
+  );
+}
+
+function clientInfoOf(value: unknown): { name?: string; version?: string } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const row = value as { name?: unknown; version?: unknown };
+  const info: { name?: string; version?: string } = {};
+  if (typeof row.name === "string") info.name = row.name.slice(0, 80);
+  if (typeof row.version === "string") info.version = row.version.slice(0, 40);
+  return info;
 }

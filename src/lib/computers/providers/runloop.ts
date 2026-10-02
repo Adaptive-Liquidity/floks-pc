@@ -29,7 +29,14 @@ import type {
   RestoreRequest,
   TakeoverGrant,
 } from "../types.js";
-import { ComputerError, PathEscape, ProviderNeedsReplacement, ProviderUnavailable } from "../errors.js";
+import {
+  ComputerError,
+  ComputerUseNotAvailable,
+  PathEscape,
+  ProviderNeedsReplacement,
+  ProviderUnavailable,
+} from "../errors.js";
+export { ComputerUseNotAvailable };
 import { assertInsideRoot } from "../path.js";
 import { logCdpAxObserve, mapCdpAxDump, sanitizeCdpAxHint, validateAction } from "./runloop-interactive.js";
 import {
@@ -59,15 +66,6 @@ export class RunloopBlueprintRequired extends ComputerError {
   constructor(detail: string) {
     super("RUNLOOP_BLUEPRINT_REQUIRED", detail);
     this.name = "RunloopBlueprintRequired";
-  }
-}
-
-export class ComputerUseNotAvailable extends ComputerError {
-  constructor(
-    detail = "Secure human takeover is not enabled; local noVNC stays on 127.0.0.1",
-  ) {
-    super("C3B_TAKEOVER_UNAVAILABLE", detail);
-    this.name = "ComputerUseNotAvailable";
   }
 }
 

@@ -9,7 +9,6 @@ import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
 import {
   ComputerService,
-  ComputerUseNotAvailable,
   FLAGS,
   FakeProvider,
   MemoryRunloopControlPlane,
@@ -520,12 +519,18 @@ describe("C5 MCP gateway", () => {
     assert.notEqual(summary.source, "cdp");
   });
 
-  it("computer_observe include_accessibility fail-closes without guest Chrome CDP", async () => {
+  it("computer_observe returns a screenshot when guest Chrome CDP is not ready", async () => {
+    let now = 0;
     const runloop = new RunloopProvider({
       client: new MemoryRunloopControlPlane(),
       blueprint: "memory-linux-vm",
     });
-    const svc = new ComputerService(runloop);
+    const svc = new ComputerService(runloop, {
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+    });
     const gw = new McpGateway(svc, { logger: new RecordingLogger() });
     const computer = await svc.requestComputer({ birdId: "runloop-ax", flockId: FLOCK });
     const issued = await svc.issuePairCode(computer.id);
@@ -562,13 +567,10 @@ describe("C5 MCP gateway", () => {
     );
     const env = observed as Record<string, unknown>;
     const result = env.result as { isError: boolean; structuredContent: Record<string, unknown> };
-    assert.equal(result.isError, true);
-    assert.equal(result.structuredContent.code, new ComputerUseNotAvailable().code);
-    assert.match(
-      String(result.structuredContent.message),
-      /guest Chrome CDP is not available on the memory plane/,
-    );
-    assert.equal("accessibility_summary" in result.structuredContent, false);
+    assert.equal(result.isError, false);
+    assert.equal(result.structuredContent.has_screenshot, true);
+    assert.equal(result.structuredContent.accessibility_pending, true);
+    assert.equal(result.structuredContent.accessibility_summary, undefined);
   });
 
   it("computer_act fail-closes click_element and still omits fake AX after open_url", async () => {

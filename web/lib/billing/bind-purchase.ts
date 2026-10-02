@@ -40,6 +40,15 @@ export async function bindPurchasedComputer(
   if (pending.openedAt === null && pending.expiresAt <= Date.now()) return false;
   if (pending.subject !== subject || pending.flock !== flock || pending.clientId !== clientId) return false;
   if (pending.flock !== flockIdForEmail(seat.email)) return false;
+  const service = await getComputerService();
+  if (process.env.FLOK_PER_BOT_KEYS === "true") {
+    const open = computers.find((row) => row.flockId === pending.flock && !service.liveBotKey(row.id));
+    if (!open) return false;
+    const attached = await service.attachPurchaseToClaim(nonce, open.id);
+    if (!attached) return false;
+    await getPendingBindStore().markUsed(nonce);
+    return true;
+  }
   const computer = computers.find((row) => row.flockId === pending.flock);
   if (!computer) return false;
   const store = getOauthStore();

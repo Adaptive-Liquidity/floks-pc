@@ -27,6 +27,9 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!redirectAllowed(client, redirectUri)) return NextResponse.json({ error: "invalid_client" });
   const { user } = await userFromRequest(request);
   if (!user) return NextResponse.json({ status: "signed_out" });
+  if (process.env.FLOK_PER_BOT_KEYS === "true") {
+    return NextResponse.json({ status: "ready", account_only: true, client_name: client.clientName });
+  }
   const computers = await listAllowComputers(user.email);
   if (computers.length > 0) {
     return NextResponse.json({ status: "ready", client_name: client.clientName, computers });
@@ -54,10 +57,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     back.searchParams.set("return", `${new URL(request.url).pathname}${new URL(request.url).search}`);
     return NextResponse.redirect(back, { status: 303 });
   }
-  const computers = await listAllowComputers(user.email);
+  const perBot = process.env.FLOK_PER_BOT_KEYS === "true";
+  const computers = perBot ? [] : await listAllowComputers(user.email);
   const picked = String(form.get("computer_id") ?? "");
   let computerId: string | null = null;
-  if (computers.length > 0) {
+  if (!perBot && computers.length > 0) {
     const chosen = picked || (computers.length === 1 ? computers[0]?.id ?? "" : "");
     if (!chosen || !computers.some((row) => row.id === chosen)) {
       return NextResponse.redirect(consentUrl(request), { status: 303 });

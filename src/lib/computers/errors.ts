@@ -115,6 +115,15 @@ export class ProviderUnavailable extends ComputerError {
   }
 }
 
+export class ComputerUseNotAvailable extends ComputerError {
+  constructor(
+    detail = "Secure human takeover is not enabled; local noVNC stays on 127.0.0.1",
+  ) {
+    super("C3B_TAKEOVER_UNAVAILABLE", detail);
+    this.name = "ComputerUseNotAvailable";
+  }
+}
+
 export class PathEscape extends ComputerError {
   constructor(path: string) {
     super(
@@ -241,6 +250,16 @@ export class ComputerAsleep extends ComputerError {
   constructor() {
     super("COMPUTER_ASLEEP", "This seat is not active, so the computer stays asleep.");
     this.name = "ComputerAsleep";
+  }
+}
+
+export class BotKeyRequired extends ComputerError {
+  constructor() {
+    super(
+      "BOT_KEY_REQUIRED",
+      "This bot has no computer key yet. Call computer_pair with no arguments to get one.",
+    );
+    this.name = "BotKeyRequired";
   }
 }
 

@@ -3,7 +3,7 @@ import { COOKIE_NAME, loadAuthSession } from "./auth/workos";
 import { getSeatStore } from "./billing/seats";
 import { ensureSeatFromCheckout, getStripeCheckoutEmail } from "./billing/stripe";
 import { provisionSeatComputers } from "./billing/lifecycle";
-import { desksForSeats } from "./desks/runtime";
+import { desksForSeats, getComputerService } from "./desks/runtime";
 import { getOauthStore } from "./oauth";
 import { sessionFromSeats } from "./setup-payload";
 import { gateFromSearch, previewSession } from "./session";
@@ -39,8 +39,17 @@ export async function liveSeatSession(email: string, webhookPending = false): Pr
   }
   seats = await store.listByEmail(email);
   const desks = await desksForSeats(seats);
+  const perBot = process.env.FLOK_PER_BOT_KEYS === "true";
+  const service = perBot ? await getComputerService() : null;
   for (const desk of desks) {
     if (!desk.computerId) continue;
+    if (service) {
+      const key = service.liveBotKey(desk.computerId);
+      if (!key) continue;
+      desk.botName = key.botLabel;
+      desk.lastUsedLabel = key.lastUsedAt ? key.lastUsedAt.toISOString() : "never";
+      continue;
+    }
     const binding = await getOauthStore().liveComputerBinding(desk.computerId);
     if (!binding) continue;
     const client = await getOauthStore().getClient(binding.clientId);

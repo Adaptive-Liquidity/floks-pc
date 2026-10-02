@@ -11,6 +11,7 @@ export function parseAuthorizePreflightBody(text: string): {
   error?: string;
   ok?: boolean;
   needsComputer?: boolean;
+  accountOnly?: boolean;
   clientName?: string;
   computers?: AuthorizeComputer[];
 } | null {
@@ -20,6 +21,7 @@ export function parseAuthorizePreflightBody(text: string): {
       error?: unknown;
       ok?: unknown;
       needs_computer?: unknown;
+      account_only?: unknown;
       computers?: unknown;
       client_name?: unknown;
     };
@@ -50,6 +52,7 @@ export function parseAuthorizePreflightBody(text: string): {
       ...(typeof raw.error === "string" ? { error: raw.error } : {}),
       ...(typeof raw.ok === "boolean" ? { ok: raw.ok } : {}),
       ...(raw.needs_computer === true ? { needsComputer: true } : {}),
+      ...(raw.account_only === true ? { accountOnly: true } : {}),
       ...(typeof raw.client_name === "string" ? { clientName: raw.client_name } : {}),
       ...(computers.length > 0 ? { computers } : {}),
     };

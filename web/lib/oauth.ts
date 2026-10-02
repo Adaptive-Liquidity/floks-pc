@@ -522,8 +522,11 @@ export async function exchangeCode(input: {
   if (pkceS256(input.verifier) !== row.challenge) return { error: "invalid_grant" };
   const consumed = await getOauthStore().consumeCode(input.code);
   if (!consumed) return { error: "invalid_grant" };
+  let computerId: string | null = consumed.computerId;
   let capabilityId: string | null = null;
-  if (consumed.computerId) {
+  if (perBotKeysEnabled()) {
+    computerId = null;
+  } else if (consumed.computerId) {
     try {
       const { getComputerService } = await import("./desks/runtime");
       const issued = await (await getComputerService()).issueBoundCapability(consumed.computerId, consumed.flock);
@@ -537,7 +540,7 @@ export async function exchangeCode(input: {
     flock: consumed.flock,
     clientId: consumed.clientId,
     email: consumed.email,
-    computerId: consumed.computerId,
+    computerId,
     capabilityId,
     now,
   });
@@ -554,7 +557,8 @@ export async function refreshAccess(
   if (clientId && clientId !== existing.clientId) return { error: "invalid_grant" };
   const row = await getOauthStore().consumeRefresh(refreshHash);
   if (!row) return { error: "invalid_grant" };
-  if (row.computerId || row.capabilityId) {
+  const accountOnly = perBotKeysEnabled() && Boolean(row.computerId || row.capabilityId);
+  if (!accountOnly && (row.computerId || row.capabilityId)) {
     if (!row.computerId || !row.capabilityId) return { error: "invalid_grant" };
     const { getComputerService } = await import("./desks/runtime");
     const extended = await (await getComputerService()).extendBoundCapability(row.capabilityId, row.flock);
@@ -565,10 +569,14 @@ export async function refreshAccess(
     flock: row.flock,
     clientId: row.clientId,
     email: row.email,
-    computerId: row.computerId,
-    capabilityId: row.capabilityId,
+    computerId: accountOnly ? null : row.computerId,
+    capabilityId: accountOnly ? null : row.capabilityId,
     now,
   });
+}
+
+function perBotKeysEnabled(): boolean {
+  return process.env.FLOK_PER_BOT_KEYS === "true";
 }
 
 async function saveTokenPair(input: {
