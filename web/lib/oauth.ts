@@ -51,6 +51,8 @@ export interface OauthStore {
   saveAccess(row: OauthAccess): Promise<void>;
   getAccess(tokenHash: string): Promise<OauthAccess | null>;
   getByRefresh(refreshHash: string): Promise<OauthAccess | null>;
+  /** Distinguishes a rotated token from one that was never issued. Read-only. */
+  refreshState(refreshHash: string): Promise<"live" | "revoked" | "missing">;
   consumeRefresh(refreshHash: string): Promise<OauthAccess | null>;
   revokeSubject(subject: string): Promise<void>;
   /** True when a different signed-in account already holds this computer. */
@@ -103,6 +105,13 @@ export class MemoryOauthStore implements OauthStore {
       if (row.refreshHash === refreshHash && !row.revoked) return row;
     }
     return null;
+  }
+  async refreshState(refreshHash: string): Promise<"live" | "revoked" | "missing"> {
+    for (const row of this.access.values()) {
+      if (row.refreshHash !== refreshHash) continue;
+      return row.revoked ? "revoked" : "live";
+    }
+    return "missing";
   }
   async consumeRefresh(refreshHash: string): Promise<OauthAccess | null> {
     for (const row of this.access.values()) {
@@ -270,6 +279,14 @@ export class PostgresOauthStore implements OauthStore {
       query(`SELECT * FROM oauth_access_tokens WHERE refresh_hash = $1 AND revoked = false`, [refreshHash]),
     );
     return mapAccess(result.rows[0]);
+  }
+  async refreshState(refreshHash: string): Promise<"live" | "revoked" | "missing"> {
+    const result = await this.withClient((query) =>
+      query(`SELECT revoked FROM oauth_access_tokens WHERE refresh_hash = $1 LIMIT 1`, [refreshHash]),
+    );
+    const row = result.rows[0];
+    if (!row) return "missing";
+    return row.revoked ? "revoked" : "live";
   }
   async consumeRefresh(refreshHash: string): Promise<OauthAccess | null> {
     const result = await this.withClient((query) =>
@@ -553,7 +570,10 @@ export async function refreshAccess(
 ): Promise<{ token: string; refresh: string; subject: string; flock: string } | RefreshDenial> {
   const refreshHash = hashToken(refreshToken);
   const existing = await getOauthStore().getByRefresh(refreshHash);
-  if (!existing) return denied("missing");
+  if (!existing) {
+    const state = await getOauthStore().refreshState(refreshHash);
+    return denied(state === "revoked" ? "consumed_or_revoked" : "missing");
+  }
   if (existing.refreshExpiresAt <= now) return denied("expired");
   if (clientId && clientId !== existing.clientId) return denied("client");
   const row = await getOauthStore().consumeRefresh(refreshHash);

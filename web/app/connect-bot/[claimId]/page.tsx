@@ -9,10 +9,13 @@ export const metadata = { title: "Connect a bot", robots: { index: false, follow
 
 export default async function ConnectBotPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ claimId: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const { claimId } = await params;
+  const query = await searchParams;
   const jar = await cookies();
   const request = new Request("https://staxions.local/connect-bot", {
     headers: { cookie: `${COOKIE_NAME}=${jar.get(COOKIE_NAME)?.value ?? ""}` },
@@ -28,10 +31,23 @@ export default async function ConnectBotPage({
         <h1 className="question">Name this bot</h1>
         <p className="lede">Pick the computer it may use. The name is yours, not the bot&apos;s.</p>
         <form className="actions" method="post" action={`/api/bots/claims/${claimId}/approve`}>
-          <label className="note">
+          {query.error === "bot_name" ? (
+            <p className="fail" role="alert">
+              Give this bot a name first.
+            </p>
+          ) : null}
+          <label htmlFor="bot-name" className="note">
             Bot name
-            <input name="bot_name" required minLength={1} maxLength={40} />
           </label>
+          <input
+            id="bot-name"
+            name="bot_name"
+            className="code"
+            required
+            minLength={1}
+            maxLength={40}
+            autoComplete="off"
+          />
           <fieldset className="note">
             <legend>Computer</legend>
             {computers.map((computer) => (
@@ -50,14 +66,13 @@ export default async function ConnectBotPage({
           <button className="key wide" type="submit">
             Approve
           </button>
-        </form>
-        <form method="post" action={`/api/bots/claims/${claimId}/buy`}>
-          <label className="note">
-            Bot name
-            <input name="bot_name" required minLength={1} maxLength={40} />
-          </label>
           <input type="hidden" name="plan" value="personal" />
-          <button className="ghost wide" type="submit">
+          <button
+            className="ghost wide"
+            type="submit"
+            formAction={`/api/bots/claims/${claimId}/buy`}
+            formNoValidate
+          >
             Buy a new computer for this bot
           </button>
         </form>

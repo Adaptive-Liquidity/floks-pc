@@ -101,4 +101,28 @@ describe("oauth refresh denials", () => {
       assert.equal(row.line.split("oauth.refresh_denied").length - 1, 1);
     }
   });
+
+  it("logs a reused refresh token as consumed_or_revoked", async () => {
+    resetRateLimitsForTests();
+    delete process.env.FLOK_PER_BOT_KEYS;
+    setOauthStoreForTests(new MemoryOauthStore());
+    await save("refresh-once");
+    const first = await tokenPost(
+      new Request(`${ORIGIN}/oauth/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "refresh_token",
+          refresh_token: "refresh-once",
+          client_id: "client-a",
+        }),
+      }),
+    );
+    assert.equal(first.status, 200);
+    const again = await denied("refresh-once");
+    assert.equal(again.status, 400);
+    assert.deepEqual(again.body, { error: "invalid_grant" });
+    assert.match(again.line, /"reason":"consumed_or_revoked"/);
+    assert.equal(again.line.split("oauth.refresh_denied").length - 1, 1);
+  });
 });
