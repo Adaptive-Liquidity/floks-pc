@@ -69,6 +69,11 @@ export function SetupDesk({
                   : `Bot: ${desk.botName}`
                 : "Bot: none"}
             </p>
+            {desk.computerId && !preview ? (
+              <a className="ghost wide" href={`/setup/computers/${desk.computerId}`}>
+                Open screen
+              </a>
+            ) : null}
             {desk.computerId ? (
               <button
                 className="ghost wide"
