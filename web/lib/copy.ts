@@ -17,7 +17,7 @@ export const HOME_TOOLS =
   "Same eight tools on every desk. Renews monthly until you cancel.";
 
 export const FOOTER_MARK = "Staxions";
-export const FOOTER_ORG = "Asentxia Systems";
+export const FOOTER_ORG = "Asentxia Inc.";
 
 export const JOIN_LINE = "Create an account. Then buy a computer. We email a 6-digit code.";
 
@@ -193,5 +193,5 @@ export const FAQ_QA: ReadonlyArray<[string, string]> = [
     "What’s the refund rule?",
     "If we cannot deliver the Computer you paid for (provision fails / pair cannot start that box), we refund that payment. We do not promise a 30-day no-questions refund. See /legal/refund.",
   ],
-  ["Who sells Staxions?", `Adaptive Liquidity, Inc. Support: ${SUPPORT_EMAIL}. These pages are not an SLA.`],
+  ["Who sells Staxions?", `Asentxia Inc. Support: ${SUPPORT_EMAIL}. These pages are not an SLA.`],
 ];
