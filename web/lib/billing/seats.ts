@@ -36,6 +36,8 @@ export type SeatRecord = {
   computerId: string | null;
   computerIds: string[];
   lastMeteredAt: string | null;
+  graceUntil: string | null;
+  billingEventAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -90,6 +92,8 @@ export function createSeat(input: {
   computerId?: string | null;
   computerIds?: string[];
   lastMeteredAt?: string | null;
+  graceUntil?: string | null;
+  billingEventAt?: string | null;
 }): SeatRecord {
   const now = new Date().toISOString();
   const plan = asCheckoutPlan(input.plan);
@@ -121,6 +125,8 @@ export function createSeat(input: {
     computerId: computerIds[0] ?? input.computerId ?? null,
     computerIds,
     lastMeteredAt: input.lastMeteredAt ?? now,
+    graceUntil: input.graceUntil ?? null,
+    billingEventAt: input.billingEventAt ?? null,
     createdAt: now,
     updatedAt: now,
   };
@@ -143,6 +149,8 @@ function normalizeSeat(seat: SeatRecord): SeatRecord {
     overageEnabled: Boolean(seat.overageEnabled),
     maxComputers: seat.maxComputers || 1,
     agentQuantity: seat.agentQuantity || 1,
+    graceUntil: seat.graceUntil ?? null,
+    billingEventAt: seat.billingEventAt ?? null,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -269,7 +277,18 @@ function hydrateSeat(row: SeatRecord): SeatRecord {
     computerIds,
     computerId: computerIds[0] ?? row.computerId ?? null,
     lastMeteredAt: row.lastMeteredAt ?? row.updatedAt ?? null,
+    graceUntil: asIso(row.graceUntil),
+    billingEventAt: asIso(row.billingEventAt),
   };
+}
+
+function asIso(value: unknown): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString();
+  const raw = String(value);
+  if (!raw || raw === "null" || raw === "undefined") return null;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : raw;
 }
 
 const SEAT_SELECT = `SELECT id, email, plan, status,
@@ -288,6 +307,8 @@ const SEAT_SELECT = `SELECT id, email, plan, status,
               computer_id AS "computerId",
               computer_ids AS "computerIds",
               last_metered_at AS "lastMeteredAt",
+              grace_until AS "graceUntil",
+              billing_event_at AS "billingEventAt",
               created_at AS "createdAt",
               updated_at AS "updatedAt"
          FROM billing_seats`;
@@ -352,8 +373,9 @@ export class PostgresSeatStore implements SeatStore {
           id, email, plan, status, stripe_customer_id, stripe_subscription_id,
           stripe_checkout_session_id, stripe_price_id, hours_included, hours_used,
           seconds_used, overage_enabled, max_computers, agent_quantity, period_start,
-          period_end, computer_id, computer_ids, last_metered_at, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+          period_end, computer_id, computer_ids, last_metered_at, grace_until,
+          billing_event_at, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
         ON CONFLICT (id) DO UPDATE SET
           email = EXCLUDED.email,
           plan = EXCLUDED.plan,
@@ -373,6 +395,8 @@ export class PostgresSeatStore implements SeatStore {
           computer_id = EXCLUDED.computer_id,
           computer_ids = EXCLUDED.computer_ids,
           last_metered_at = EXCLUDED.last_metered_at,
+          grace_until = EXCLUDED.grace_until,
+          billing_event_at = EXCLUDED.billing_event_at,
           updated_at = EXCLUDED.updated_at`,
       [
         next.id,
@@ -394,6 +418,8 @@ export class PostgresSeatStore implements SeatStore {
         next.computerId,
         next.computerIds,
         next.lastMeteredAt,
+        next.graceUntil,
+        next.billingEventAt,
         next.createdAt,
         next.updatedAt,
       ],

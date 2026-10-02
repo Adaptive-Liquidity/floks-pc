@@ -55,6 +55,7 @@ export type SeatSession = {
   hoursIncluded: number | null;
   portalReady: boolean;
   revealedPairCode: string | null;
+  canceledHold: boolean;
 };
 
 export type SetupView =

@@ -81,6 +81,7 @@ export function previewSession(name: string): SeatSession | null {
     hoursIncluded: 25,
     portalReady: true,
     revealedPairCode: null,
+    canceledHold: false,
   };
   if (key === "past_due") {
     return { ...base, flockStatus: "past_due" };
@@ -194,6 +195,7 @@ export function parseSeatSession(raw: unknown): SeatSession | null {
     hoursIncluded: asNumber(obj.hoursIncluded) ?? asNumber(obj.hours_included),
     portalReady: asBoolean(obj.portalReady) ?? true,
     revealedPairCode: asString(obj.revealedPairCode) ?? asString(obj.revealed_pair_code),
+    canceledHold: asBoolean(obj.canceledHold) ?? asBoolean(obj.canceled_hold) ?? false,
   };
 }
 

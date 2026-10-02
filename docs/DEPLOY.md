@@ -9,7 +9,7 @@ Do **not** promote a Preview to Vercel Production, change DNS, or edit live Stri
 - Root Directory: `web`
 - `web/vercel.json` installs `web` **and** the repo root so `../src` can resolve `zod`.
 - Cron: `GET /api/cron/computers` every 5 minutes (Pro plan). Set `CRON_SECRET`. Vercel sends `Authorization: Bearer $CRON_SECRET`.
-- Apply SQL in order: `migrations/0001_node_computers.sql` through `0008_stripe_events.sql`. Run `npm run migrate` only with `DATABASE_URL` set, and only after the owner approves that database change.
+- Apply SQL in order: `migrations/0001_node_computers.sql` through `0010_billing_grace.sql`. Run `npm run migrate` only with `DATABASE_URL` set, and only after the owner approves that database change. `0010_billing_grace.sql` is a FILE in this PR — do not apply it to a live database from the PR.
 - Apply `migrations/0005_pair_reveals.sql` to the preview database before pull request 33 or 34 deploys. Without that column, `/setup` returns 500 for a paying customer.
 
 ## Kill switch and rollback
@@ -56,8 +56,16 @@ Register these events (test endpoint on Preview, live endpoint on Production):
 - `customer.subscription.deleted`
 - `invoice.payment_failed`
 - `invoice.paid`
+- `invoice.payment_succeeded` (alias of paid on some API versions)
+- `checkout.session.expired`
+- `charge.refunded`
+- `charge.dispute.created`
+- `charge.dispute.updated`
+- `charge.dispute.closed`
 
 Set `STRIPE_WEBHOOK_SECRET` to that endpoint’s signing secret (`whsec_…`). Preview and Production need different secrets if they use different Stripe modes.
+
+Payment failure and cancel start a 72-hour grace (`STAXIONS_BILLING_GRACE_HOURS`). After grace the computer sleeps and files stay. Billing events never delete a computer immediately. Successful `invoice.paid` resumes access. Preview does not run Vercel Cron; grace is enforced on the webhook, `/setup`, and the next computer use.
 
 ## WorkOS AuthKit
 
@@ -92,6 +100,8 @@ A config mismatch now renders a clear HTML error on `/callback` and `/setup?erro
 | `STRIPE_PRICE_PERSONAL` | yes to sell Personal | Test Price id `price_…` |
 | `STRIPE_PRICE_PRO` | yes to sell Pro | Test Price id |
 | `STRIPE_PRICE_TEAM` | yes to sell Team | Test Price id |
+| `STRIPE_PORTAL_CONFIGURATION_ID` | recommended | Dashboard Customer Portal config that allows plan, quantity, and cancel |
+| `STAXIONS_BILLING_GRACE_HOURS` | optional | Default `72` |
 | `SUPPORT_EMAIL` | optional | Default `contact@asentxia.com` |
 | `CRON_SECRET` | yes if cron is used | Vercel cron bearer |
 | `STAXIONS_IDLE_MINUTES` | optional | Default `30` |
@@ -126,7 +136,7 @@ Same names. Use `sk_live_…`, live Price ids, live webhook secret, Production W
 
 1. Create Stripe **test** products/prices for Personal / Pro / Team. Copy the `price_…` ids into Preview env vars.
 2. Add a test webhook to `/api/webhooks/stripe` with the events above. Copy `whsec_…` to Preview.
-3. Provision Neon or Vercel Postgres. Set `DATABASE_URL`. Apply `0001` through `0008`, and apply `0005` before pull request 33 or 34 deploys.
+3. Provision Neon or Vercel Postgres. Set `DATABASE_URL`. Apply `0001` through `0010` only after the owner approves that database. `0010` is a file in this PR and was not applied to any live database.
 4. Fix WorkOS: one Client ID + API key pair per Vercel environment. Add the Preview callback URL.
 5. Set `APP_URL` to the Preview origin (not floks-pc.com).
 6. For a real computer on Preview: `FLOK_WEB_PROVIDER=runloop`, `RUNLOOP_API_KEY`, `FLOK_RUNLOOP_BLUEPRINT`.

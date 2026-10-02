@@ -8,7 +8,12 @@ export function sessionFromSeats(input: {
   webhookPending?: boolean;
   revealedPairCode?: string | null;
 }): SeatSession {
-  const live = input.seats.filter((seat) => seat.status !== "canceled");
+  const live = input.seats.filter(
+    (seat) =>
+      seat.status !== "canceled" ||
+      Boolean(seat.computerId) ||
+      seat.computerIds.length > 0,
+  );
   const primary = live[0] ?? input.seats[0] ?? null;
   const desk = input.desks[0] ?? null;
   const plan: PlanId | null = primary?.plan ?? null;
@@ -29,5 +34,6 @@ export function sessionFromSeats(input: {
     hoursIncluded: live.length ? hoursIncluded : null,
     portalReady: Boolean(primary?.stripeCustomerId),
     revealedPairCode: input.revealedPairCode ?? null,
+    canceledHold: input.seats.some((seat) => seat.status === "canceled"),
   };
 }

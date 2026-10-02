@@ -1,3 +1,5 @@
+import { DurableStoreRequired, requiresDurableStore } from "./seats";
+
 const seen = new Set<string>();
 
 export function resetStripeEventsForTests(): void {
@@ -8,6 +10,11 @@ export function resetStripeEventsForTests(): void {
 export async function claimStripeEvent(id: string, eventType: string): Promise<"new" | "duplicate"> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
+    if (requiresDurableStore()) {
+      throw new DurableStoreRequired(
+        "DATABASE_URL is required to claim Stripe events on Vercel and in production. In-memory event ids are not shared across instances.",
+      );
+    }
     if (seen.has(id)) return "duplicate";
     seen.add(id);
     return "new";

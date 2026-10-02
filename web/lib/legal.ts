@@ -200,8 +200,8 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
           LEGAL_DISCLAIMER,
           "Cancel and update the card in the Stripe Customer Portal. On /setup, use Manage billing.",
           "If the portal sets cancel-at-period-end, the subscription stays until Stripe ends it. You keep that seat until then.",
-          "When Stripe sends customer.subscription.deleted, Staxions revokes unused and consumed seats for that subscription only. Those seats are no longer assignable. The Computer for that subscription is shut down. Another subscription on the same customer is not revoked.",
-          "Revoke is immediate on that deleted event. It is not “wait until you log out.”",
+          "When Stripe sends customer.subscription.deleted, Staxions starts a grace period for that subscription only. The Computer stays available during grace, then sleeps. Files stay. The machine is not deleted on that event. Another subscription on the same customer is not revoked.",
+          "Access after grace is refused until you pay again. That hold is not “wait until you log out.”",
         ],
       },
     ],
@@ -215,7 +215,7 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
       {
         paragraphs: [
           LEGAL_DISCLAIMER,
-          "After cancel, we keep Stripe ids (customer, subscription, checkout, event id), the webhook event log, and the seat ledger (revoked). We keep those to prove pay, grant, and revoke. We do not keep the live Computer disk after shutdown. Shutdown ends the Computer.",
+          "After cancel, we keep Stripe ids (customer, subscription, checkout, event id), the webhook event log, and the seat ledger. We keep those to prove pay, grant, and revoke. The Computer disk stays through the grace period and while the machine is suspended. We do not delete the Computer on the cancel event.",
           "We do not claim we delete Stripe’s copies, Cloudflare logs, or Vercel logs. Those operators keep what their own products keep.",
           "AuthKit codes expire on WorkOS’s side. Setup cookies end on logout, refresh failure, or expiry. Pair codes are one-time; we store a hash, not the code, after reveal.",
         ],

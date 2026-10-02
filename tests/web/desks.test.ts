@@ -94,7 +94,7 @@ describe("desk state mapping", () => {
         hoursIncluded: 8,
         seatStatus: "canceled",
       }),
-      "shut_down",
+      "sleeping",
     );
     assert.equal(
       mapComputerState({

@@ -7,6 +7,7 @@ import {
   hashPairCode,
 } from "../../../src/lib/computers/index";
 import type { Computer, ComputerPairCode, ComputerProvider } from "../../../src/lib/computers/index";
+import { graceAllowsAccess } from "../billing/grace";
 import { shouldSuspendForCap } from "../billing/metering";
 import { getSeatStore, type SeatRecord } from "../billing/seats";
 import { webControlPlaneStore } from "../store/control-plane-pg";
@@ -71,7 +72,7 @@ export async function getComputerService(): Promise<ComputerService> {
             (row) => row.computerId === computerId || row.computerIds.includes(computerId),
           );
           if (!seat) return true;
-          if (seat.status !== "active") return false;
+          if (!graceAllowsAccess(seat)) return false;
           return !shouldSuspendForCap(seat);
         } catch {
           return false;
@@ -122,6 +123,7 @@ function toDesk(
     hoursUsed: seat.hoursUsed,
     hoursIncluded: seat.hoursIncluded,
     seatStatus: seat.status,
+    graceActive: graceAllowsAccess(seat),
   });
   const revealedCode = revealed?.code ?? null;
   return {
@@ -303,6 +305,11 @@ export function webProviderName(): "fake" | "runloop" {
 export async function pauseComputer(computerId: string): Promise<void> {
   const service = await getComputerService();
   await service.pauseThisComputer(computerId);
+}
+
+export async function resumeComputer(computerId: string): Promise<void> {
+  const service = await getComputerService();
+  await service.wakeThisComputer(computerId);
 }
 
 export async function shutdownComputer(
