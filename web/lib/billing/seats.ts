@@ -8,7 +8,7 @@ import {
   type CheckoutPlanId,
   type PlanId,
 } from "./catalog";
-import { hoursForPlan, normalizeEmail } from "./plans";
+import { normalizeEmail } from "./plans";
 
 function hoursFromSeconds(seconds: number): number {
   return seconds / 3600;
@@ -136,7 +136,6 @@ function normalizeSeat(seat: SeatRecord): SeatRecord {
     ...seat,
     email: normalizeEmail(seat.email),
     plan: asCheckoutPlan(seat.plan),
-    hoursIncluded: hoursForPlan(seat.plan, seat.agentQuantity || 1),
     secondsUsed,
     hoursUsed: hoursFromSeconds(secondsUsed),
     computerIds,
