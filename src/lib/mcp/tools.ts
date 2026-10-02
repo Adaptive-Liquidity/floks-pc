@@ -168,13 +168,13 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "computer_observe",
     description:
-      "Observe the computer display. Set include_screenshot true to see the screen as an image. Set include_accessibility true for AX node ids (required before click_element). Accessibility is never fabricated as live CDP. If bot_label is not your name, stop and call computer_pair.",
+      "Observe the computer display. Set include_screenshot true to see the screen as an image. Set include_accessibility true for AX node ids (required before click_element). Accessibility is never fabricated as live CDP. Screenshot is screen_width by screen_height pixels (coordinate_space screen_pixels); your client may show it scaled. screen_blank true means the screenshot is a single colour, including a white about:blank window. If bot_label is not your name, stop and call computer_pair.",
     inputSchema: advertisedSchema(ComputerObserveArgsSchema, []),
   },
   {
     name: "computer_act",
     description:
-      "Apply a bounded action batch. For clicks: computer_observe({ include_accessibility: true }) then click_element with an AX node id from that tree (15s). Guessed/offscreen clicks fail closed. Also open_url/type/key/scroll/wait. No public VNC/takeover. If bot_label is not your name, stop and call computer_pair.",
+      "Apply a bounded action batch. For clicks: computer_observe({ include_accessibility: true }) then click_element with an AX node id from that tree (15s). Guessed/offscreen clicks fail closed. click_coordinates use full-size screen pixels from computer_observe. Prefer click_element. open_url reports NAVIGATION_FAILED if the page didn't load. Also type/key/scroll/wait. No public VNC/takeover. If bot_label is not your name, stop and call computer_pair.",
     inputSchema: advertisedSchema(ComputerActArgsSchema, ["actions"]),
   },
   {

@@ -39,6 +39,7 @@ import {
 export { ComputerUseNotAvailable };
 import { assertInsideRoot } from "../path.js";
 import { logCdpAxObserve, mapCdpAxDump, sanitizeCdpAxHint, validateAction } from "./runloop-interactive.js";
+import { runValidatedActions, screenIsBlank } from "./runloop-browser.js";
 import {
   assertNoControlPlaneSecrets,
   DEFAULT_RUNLOOP_ARCH,
@@ -232,7 +233,7 @@ export class RunloopProvider implements ComputerProvider {
       await s.resume();
     }
     try {
-      await s.ensureInteractiveStack();
+      await s.ensureInteractiveStack({ browser: "best-effort" });
       if (this.requireInteractive && !s.interactiveGuest) {
         throw new InteractiveBlueprintRequired(
           "guest is missing flok-ui / Xvfb / Chrome after wake; not an Agent Computer",
@@ -432,8 +433,14 @@ export class RunloopProvider implements ComputerProvider {
     const obs: Observation = {
       screenWidth: shot.width,
       screenHeight: shot.height,
+      coordinateSpace: "screen_pixels",
+      screenBlank: screenIsBlank(shot.png),
     };
     if (shot.activeWindow) obs.activeWindow = shot.activeWindow;
+    if (s.browserUrl) {
+      const href = await s.browserUrl();
+      if (href) obs.browserUrl = href;
+    }
     if (request.includeScreenshot !== false) {
       obs.screenshotBase64 = shot.png.toString("base64");
     }
@@ -478,36 +485,7 @@ export class RunloopProvider implements ComputerProvider {
   async act(ref: string, request: ActionBatch): Promise<ActionResult> {
     const s = await this.requireSession(ref);
     await s.ensureInteractiveStack();
-    const results: ActionResult["results"] = [];
-    let ok = true;
-    for (let i = 0; i < request.actions.length; i++) {
-      const action = request.actions[i]!;
-      const err = validateAction(action);
-      if (err) {
-        ok = false;
-        results.push({ action, success: false, error: err });
-        for (const rest of request.actions.slice(i + 1)) {
-          results.push({ action: rest, success: false, error: "not executed" });
-        }
-        break;
-      }
-      try {
-        await s.uiAction(action);
-        results.push({ action, success: true });
-      } catch (e) {
-        ok = false;
-        results.push({
-          action,
-          success: false,
-          error: e instanceof Error ? e.message : "action failed",
-        });
-        for (const rest of request.actions.slice(i + 1)) {
-          results.push({ action: rest, success: false, error: "not executed" });
-        }
-        break;
-      }
-    }
-    return { ok, results };
+    return runValidatedActions(request.actions, validateAction, (action) => s.uiAction(action));
   }
 
   async takeover(_ref: string): Promise<TakeoverGrant> {
@@ -565,7 +543,7 @@ export class RunloopProvider implements ComputerProvider {
     if (st === "deleted" || st === "paused" || st === "stopped" || st === "error") {
       throw new ProviderUnavailable("runloop", `health probe failed: ${st}`);
     }
-    await s.ensureInteractiveStack();
+    await s.ensureInteractiveStack({ browser: "best-effort" });
     if (this.requireInteractive && !s.interactiveGuest) {
       throw new InteractiveBlueprintRequired(
         "health probe failed: guest is missing flok-ui / Xvfb / Chrome",

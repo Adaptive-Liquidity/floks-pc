@@ -528,7 +528,14 @@ export class McpGateway {
     const payload: Record<string, unknown> = {
       screen_width: observation.screenWidth,
       screen_height: observation.screenHeight,
+      coordinate_space: "screen_pixels",
     };
+    if (typeof observation.browserUrl === "string" && observation.browserUrl.length > 0) {
+      payload.browser_url = observation.browserUrl;
+    }
+    if (typeof observation.screenBlank === "boolean") {
+      payload.screen_blank = observation.screenBlank;
+    }
     if (observation.activeWindow !== undefined) {
       payload.active_window = observation.activeWindow;
     }
@@ -566,6 +573,8 @@ export class McpGateway {
           success: r.success,
         };
         if (r.error !== undefined) row.error = r.error;
+        if (r.code !== undefined) row.code = r.code;
+        if (r.finalUrl !== undefined) row.final_url = r.finalUrl;
         return row;
       }),
     };

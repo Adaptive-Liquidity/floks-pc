@@ -117,6 +117,15 @@ export function runloopLaunchParameters(
   };
 }
 
+/** Launch mode only. No ids, keys, or env values. */
+export function logRunloopLaunch(op: "create" | "restore", launch: RunloopLaunchParameters): void {
+  const line =
+    "lifecycle" in launch
+      ? { op, mode: "suspend" as const, idle_s: launch.lifecycle.after_idle.idle_time_seconds }
+      : { op, mode: "keep_alive" as const, keep_alive_s: launch.keep_alive_time_seconds };
+  process.stderr.write(`runloop.launch ${JSON.stringify(line)}\n`);
+}
+
 export interface RunloopExecResult {
   exitCode: number;
   stdout: string;
@@ -172,12 +181,18 @@ export interface RunloopDevboxSession {
   snapshotDisk(name: string): Promise<string>;
 
   /** C3B: start or no-op restart of display/WM/VNC. Idempotent. */
-  ensureInteractiveStack(): Promise<void>;
+  ensureInteractiveStack(opts?: { browser?: "strict" | "best-effort" }): Promise<void>;
   screenshot(): Promise<{ width: number; height: number; png: Buffer; activeWindow?: string }>;
   novncLocalOk(): Promise<boolean>;
-  uiAction(action: Action): Promise<void>;
+  uiAction(action: Action): Promise<{ finalUrl?: string } | void>;
   /** Guest Chrome CDP dump. Memory plane has no Chrome and must fail closed. */
-  cdpAxDump(): Promise<{ nodes: unknown[] }>;
+  cdpAxDump(): Promise<{
+    nodes: unknown[];
+    viewportOrigin?: { x: number; y: number };
+    devicePixelRatio?: number;
+  }>;
+  /** Current page URL when CDP is up. Memory plane omits it. */
+  browserUrl?(): Promise<string | undefined>;
 }
 
 export interface RunloopControlPlane {

@@ -3,14 +3,17 @@
  * When the flag is set, missing credentials FAIL (never silent-skip).
  * Always destroy the paid Devbox in finally.
  *
- * open_url is launch-accepted (Popen), not Chrome-ready. This suite polls
- * pollUntilChromeReady after every launch before continuing.
+ * open_url navigates the one visible Chrome and checks the loaded URL.
+ * The C3B HTML fixture is test-only: this file writes it into the workspace.
  *
  * Do not run from ordinary verify / PR CI.
  */
 
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { RunloopProvider } from "../../src/lib/computers/providers/index.js";
 import type { ExecResult } from "../../src/lib/computers/types.js";
 import {
@@ -19,7 +22,6 @@ import {
   CHROME_READY_TIMEOUT_MS,
   DISPLAY_HEIGHT,
   DISPLAY_WIDTH,
-  FIXTURE_PATH,
   chromeHasNoSandbox,
   chromeHasUserDataDir,
   chromeProfileHasBrowserState,
@@ -32,6 +34,11 @@ import {
 } from "../../src/lib/computers/providers/runloop-interactive.js";
 
 const LIVE = process.env.FLOK_LIVE_RUNLOOP_C3B_TEST === "1";
+const FIXTURE_WORKSPACE = "/home/user/flok/c3b-fixture.html";
+const FIXTURE_HTML = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../fixtures/c3b-fixture.html"),
+  "utf8",
+);
 
 const LISTEN_CHECK = [
   "import pathlib,sys",
@@ -198,10 +205,51 @@ describe("Runloop C3B live interactive Devbox", { skip: !LIVE }, () => {
       );
       assert.match(openbox.stdout, /openbox/i, "Openbox: process missing");
 
-      const opened = await p.act(a.providerRef, {
-        actions: [{ type: "open_url", url: `file://${FIXTURE_PATH}` }],
+      const firstShot = await p.observe(a.providerRef, { includeScreenshot: true });
+      assert.equal(firstShot.coordinateSpace, "screen_pixels");
+      assert.equal(firstShot.screenBlank, false, "screenshot after provision is a single colour");
+      assert.equal(firstShot.screenWidth, DISPLAY_WIDTH);
+      assert.equal(firstShot.screenHeight, DISPLAY_HEIGHT);
+
+      const example = await p.act(a.providerRef, {
+        actions: [{ type: "open_url", url: "https://example.com" }],
       });
-      assert.equal(opened.ok, true, `open_url launch accepted: ${JSON.stringify(opened.results)}`);
+      assert.equal(example.ok, true, `example.com: ${JSON.stringify(example.results)}`);
+      assert.match(example.results[0]?.finalUrl ?? "", /^https:\/\/example\.com\/?$/);
+      const exampleObs = await p.observe(a.providerRef, {
+        includeScreenshot: true,
+        includeAccessibility: true,
+      });
+      assert.equal(exampleObs.screenBlank, false);
+      assert.match(exampleObs.browserUrl ?? "", /example\.com/);
+      const axNodes = (exampleObs.accessibilitySummary as { nodes?: Array<{ role?: string; name?: string }> } | undefined)
+        ?.nodes;
+      const axRoot = axNodes?.find((node) => node.role === "RootWebArea");
+      assert.equal(axRoot?.name, "Example Domain");
+
+      const hiddenFixture = await p.filesystem(a.providerRef, {
+        operation: "list",
+        path: "/home/user/flok/.flok",
+      });
+      assert.equal(hiddenFixture.ok, true);
+      assert.equal(
+        Array.isArray(hiddenFixture.data) && hiddenFixture.data.includes("fixture.html"),
+        false,
+        "customer .flok must not contain fixture.html",
+      );
+
+      const wroteFixture = await p.filesystem(a.providerRef, {
+        operation: "write",
+        path: FIXTURE_WORKSPACE,
+        content: FIXTURE_HTML,
+      });
+      assert.equal(wroteFixture.ok, true, "test-only fixture write failed");
+
+      const opened = await p.act(a.providerRef, {
+        actions: [{ type: "open_url", url: `file://${FIXTURE_WORKSPACE}` }],
+      });
+      assert.equal(opened.ok, true, `open_url fixture: ${JSON.stringify(opened.results)}`);
+      assert.match(opened.results[0]?.finalUrl ?? "", /c3b-fixture\.html/);
 
       await awaitChromeReady(p, a.providerRef, "chrome ready after open_url");
 
@@ -292,7 +340,7 @@ describe("Runloop C3B live interactive Devbox", { skip: !LIVE }, () => {
       assert.match(openbox2.stdout, /openbox/i, "graphical stack after resume: Openbox missing");
 
       const relaunch = await p.act(a.providerRef, {
-        actions: [{ type: "open_url", url: `file://${FIXTURE_PATH}` }],
+        actions: [{ type: "open_url", url: `file://${FIXTURE_WORKSPACE}` }],
       });
       assert.equal(relaunch.ok, true, `open_url relaunch accepted: ${JSON.stringify(relaunch.results)}`);
 

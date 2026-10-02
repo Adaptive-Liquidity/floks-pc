@@ -215,6 +215,7 @@ describe("L2 operator console domain", () => {
   });
 
   it("summarizeAccessibility reads CDP source and node count without storing the tree", () => {
+    // The C3B HTML fixture is test-only. Customer computers do not receive that file.
     const cdp = summarizeAccessibility({
       source: "cdp",
       nodes: [

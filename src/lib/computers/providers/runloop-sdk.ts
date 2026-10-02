@@ -12,8 +12,6 @@ import {
   BROWSER_PROFILE_DIR,
   ENSURE_INTERACTIVE_SH,
   ENSURE_SCRIPT_PATH,
-  FIXTURE_HTML,
-  FIXTURE_PATH,
   FLOK_DISPLAY,
   FLOK_UI_USER,
   INTERACTIVE_DIR,
@@ -22,19 +20,33 @@ import {
   pngDimensions,
   uniqueObsShotPath,
   CHROME_LOG_PATH,
+  CHROME_READY_PROBE_PY,
   CDP_AX_HELPER_JS,
   CDP_HELPER_PATH,
   CDP_NODE_BIN,
   CdpAxDumpSchema,
+  classifyChromeReadiness,
+  formatChromeReadyFailure,
   logCdpAxObserve,
   parseCdpAxHelperStdout,
+  parseChromeReadyEvidence,
   sanitizeCdpAxHint,
 } from "./runloop-interactive.js";
+import { CDP_NAV_HELPER_JS, CDP_NAV_HELPER_PATH } from "./runloop-cdp.js";
+import {
+  BROWSER_START_URL,
+  BrowserNotReady,
+  bringManagedBrowserToFront,
+  ensureManagedBrowser,
+  navigateManagedPage,
+  parseNavHelperStdout,
+} from "./runloop-browser.js";
 import {
   assertNoControlPlaneSecrets,
   LIVE_KEEP_ALIVE_SECONDS,
   RUNLOOP_WORKSPACE_ROOT,
   isIdempotentShutdownError,
+  logRunloopLaunch,
   runloopLaunchParameters,
   parseRunloopOnIdle,
   type RunloopControlPlane,
@@ -134,6 +146,7 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
   async create(params: RunloopCreateParams): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
     const launch = runloopLaunchParameters(params, this.keepAliveSeconds, this.onIdle);
+    logRunloopLaunch("create", launch);
     const created = (await this.sdk.devbox.createFromBlueprintName(this.blueprint, {
       name: `flok-${params.birdId}`.slice(0, 48),
       metadata: params.labels,
@@ -173,6 +186,7 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
   ): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
     const launch = runloopLaunchParameters(params, this.keepAliveSeconds, this.onIdle);
+    logRunloopLaunch("restore", launch);
     const created = (await this.sdk.devbox.createFromSnapshot(snapshotRef, {
       name: `flok-restore-${params.birdId}`.slice(0, 48),
       metadata: params.labels,
@@ -421,9 +435,12 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     return snap.id;
   }
 
-  async ensureInteractiveStack(): Promise<void> {
+  async ensureInteractiveStack(opts?: { browser?: "strict" | "best-effort" }): Promise<void> {
     if (this.interactiveStackUp) {
-      if (!this.graphicalStack || (await this.xvfbAlive())) return;
+      if (!this.graphicalStack || (await this.xvfbAlive())) {
+        await this.finishBrowser(opts);
+        return;
+      }
       this.interactiveStackUp = false;
     }
     this.requireFs(
@@ -437,12 +454,12 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       "ensureInteractiveStack write script",
     );
     this.requireFs(
-      await this.fsWrite(FIXTURE_PATH, Buffer.from(FIXTURE_HTML, "utf8")),
-      "ensureInteractiveStack write fixture",
-    );
-    this.requireFs(
       await this.fsWrite(CDP_HELPER_PATH, Buffer.from(CDP_AX_HELPER_JS, "utf8")),
       "ensureInteractiveStack write cdp helper",
+    );
+    this.requireFs(
+      await this.fsWrite(CDP_NAV_HELPER_PATH, Buffer.from(CDP_NAV_HELPER_JS, "utf8")),
+      "ensureInteractiveStack write cdp nav",
     );
     this.requireFs(await this.fsMkdir(BROWSER_PROFILE_DIR), "ensureInteractiveStack mkdir profile");
     await this.lockRootExecutedAssets();
@@ -473,6 +490,20 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     }
     this.interactiveGuest = this.graphicalStack && chromeOk;
     this.interactiveStackUp = true;
+    await this.finishBrowser(opts);
+  }
+
+  private async finishBrowser(opts?: { browser?: "strict" | "best-effort" }): Promise<void> {
+    const budgetMs = opts?.browser === "best-effort" ? 5_000 : 20_000;
+    try {
+      await this.ensureBrowser(budgetMs);
+    } catch (err) {
+      if (opts?.browser === "best-effort") {
+        process.stderr.write("flok-browser ensure failed\n");
+        return;
+      }
+      throw err;
+    }
   }
 
   async screenshot(): Promise<{
@@ -484,7 +515,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const shotPath = uniqueObsShotPath();
     this.requireFs(await this.fsMkdir(pathPosix.dirname(shotPath)), "screenshot dir");
     const shot = await this.exec({
-      argv: argvAsUiUser(["import", "-display", FLOK_DISPLAY, "-window", "root", shotPath]),
+      argv: argvAsUiUser(["import", "-display", FLOK_DISPLAY, "-window", "root", `PNG24:${shotPath}`]),
       cwd: RUNLOOP_WORKSPACE_ROOT,
       env: { DISPLAY: FLOK_DISPLAY },
       timeoutMs: 15_000,
@@ -569,57 +600,83 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     return r;
   }
 
-  private async launchChromeForCdp(): Promise<void> {
-    logCdpAxObserve("chrome-launch", { via: "observe" });
-    const r = await this.exec({
-      argv: this.chromePopenArgv(`file://${FIXTURE_PATH}`),
+  private async execGuest(argv: string[], timeoutMs: number): Promise<RunloopExecResult> {
+    let r = await this.exec({
+      argv,
       cwd: RUNLOOP_WORKSPACE_ROOT,
       env: { DISPLAY: FLOK_DISPLAY },
-      timeoutMs: 20_000,
+      timeoutMs,
     });
-    if (r.exitCode !== 0) {
-      throw new ProviderUnavailable("runloop", "chrome launch failed");
+    if (r.exitCode === 127 && argv[0] === "node") {
+      r = await this.exec({
+        argv: [CDP_NODE_BIN, ...argv.slice(1)],
+        cwd: RUNLOOP_WORKSPACE_ROOT,
+        env: { DISPLAY: FLOK_DISPLAY },
+        timeoutMs,
+      });
+    }
+    return r;
+  }
+
+  /** One flok-ui Chrome at about:blank. A fixture process on 9222 is killed first. */
+  private async ensureBrowser(budgetMs = 20_000): Promise<void> {
+    if (!this.interactiveGuest) return;
+    try {
+      await ensureManagedBrowser({
+        timeoutMs: budgetMs,
+        exec: async (argv) => {
+          const isLaunch = argv.includes("python3") && argv.join(" ").includes("Popen");
+          const commandBudget = isLaunch ? 20_000 : 8_000;
+          const r = await this.execGuest(argv, Math.min(commandBudget, budgetMs));
+          return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+        },
+        launchArgv: this.chromePopenArgv(BROWSER_START_URL),
+      });
+    } catch (err) {
+      if (budgetMs < 20_000) throw err;
+      if (err instanceof BrowserNotReady) {
+        throw new ProviderUnavailable("runloop", await this.chromeReadyFailure());
+      }
+      if (err instanceof ProviderUnavailable) throw err;
+      throw new ProviderUnavailable(
+        "runloop",
+        err instanceof Error ? err.message : "chrome launch failed",
+      );
     }
   }
 
-  private async waitForCdp(): Promise<boolean> {
-    const py = [
-      "import urllib.request,time,sys",
-      "deadline=time.time()+20",
-      "while time.time()<deadline:",
-      "  try:",
-      "    urllib.request.urlopen('http://127.0.0.1:9222/json/version', timeout=1)",
-      "    print('cdp-ready')",
-      "    sys.exit(0)",
-      "  except Exception:",
-      "    time.sleep(1)",
-      "print('cdp-down')",
-      "sys.exit(1)",
-      "",
-    ].join("\n");
-    const r = await this.exec({
-      argv: ["python3", "-c", py],
-      cwd: RUNLOOP_WORKSPACE_ROOT,
-      timeoutMs: 25_000,
-    });
-    logCdpAxObserve("cdp-wait", { ready: r.exitCode === 0 });
-    return r.exitCode === 0;
+  private async chromeReadyFailure(): Promise<string> {
+    try {
+      const probe = await this.exec({
+        argv: ["python3", "-c", CHROME_READY_PROBE_PY],
+        cwd: RUNLOOP_WORKSPACE_ROOT,
+        timeoutMs: 15_000,
+      });
+      const evidence = parseChromeReadyEvidence(probe.stdout);
+      return formatChromeReadyFailure(classifyChromeReadiness(evidence, { timedOut: true }), evidence);
+    } catch {
+      return "chrome did not answer on 127.0.0.1:9222";
+    }
   }
 
-  async cdpAxDump(): Promise<{ nodes: unknown[] }> {
-    await this.ensureInteractiveStack();
-    // Same argv the live tester proved via computer_exec: node /home/user/flok/.flok/cdp-ax.mjs
+  async browserUrl(): Promise<string | undefined> {
+    if (!this.interactiveGuest) return undefined;
+    const r = await this.execGuest(["node", CDP_NAV_HELPER_PATH, "--href"], 10_000);
+    if (r.exitCode !== 0) return undefined;
+    const parsed = parseNavHelperStdout(r.stdout);
+    if (!parsed?.ok || !parsed.href) return undefined;
+    return parsed.href;
+  }
+
+  async cdpAxDump(): Promise<{
+    nodes: unknown[];
+    viewportOrigin?: { x: number; y: number };
+    devicePixelRatio?: number;
+  }> {
     let r = await this.runCdpHelper();
     const refused = /ECONNREFUSED|9222/.test(r.stderr);
     if (r.exitCode !== 0 && refused) {
-      await this.launchChromeForCdp();
-      const ready = await this.waitForCdp();
-      if (!ready) {
-        throw new ProviderUnavailable(
-          "runloop",
-          "cdp ax helper failed (connect ECONNREFUSED 127.0.0.1:9222)",
-        );
-      }
+      await this.ensureBrowser();
       r = await this.runCdpHelper();
     }
     if (r.exitCode !== 0) {
@@ -640,10 +697,40 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     if (!checked.success) {
       throw new ProviderUnavailable("runloop", "cdp ax helper dump invalid");
     }
-    return { nodes: checked.data.nodes };
+    const dump: {
+      nodes: unknown[];
+      viewportOrigin?: { x: number; y: number };
+      devicePixelRatio?: number;
+    } = { nodes: checked.data.nodes };
+    if (checked.data.viewportOrigin) dump.viewportOrigin = checked.data.viewportOrigin;
+    if (checked.data.devicePixelRatio !== undefined) dump.devicePixelRatio = checked.data.devicePixelRatio;
+    return dump;
   }
 
-  async uiAction(action: Action): Promise<void> {
+  async uiAction(action: Action): Promise<{ finalUrl?: string } | void> {
+    if (action.type === "open_url") {
+      const url = action.url ?? "";
+      return navigateManagedPage({
+        url,
+        ensureBrowser: () => this.ensureBrowser(),
+        navArgv: ["node", CDP_NAV_HELPER_PATH, url],
+        exec: async (argv) => {
+          const r = await this.execGuest(argv, 20_000);
+          return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+        },
+      });
+    }
+    if (action.type === "launch_application") {
+      await bringManagedBrowserToFront({
+        ensureBrowser: () => this.ensureBrowser(),
+        frontArgv: ["node", CDP_NAV_HELPER_PATH, "--front"],
+        exec: async (argv) => {
+          const r = await this.execGuest(argv, 15_000);
+          return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+        },
+      });
+      return;
+    }
     const env = { DISPLAY: FLOK_DISPLAY };
     let argv: string[];
     switch (action.type) {
@@ -679,16 +766,6 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       case "wait":
         argv = ["sleep", String((action.durationMs ?? 100) / 1000)];
         break;
-      case "open_url":
-      case "launch_application": {
-        const url =
-          action.type === "open_url"
-            ? (action.url ?? `file://${FIXTURE_PATH}`)
-            : `file://${FIXTURE_PATH}`;
-        // Detach so exec returning does not SIGHUP Chrome. No --no-sandbox.
-        argv = this.chromePopenArgv(url);
-        break;
-      }
       default:
         throw new Error(`unsupported action ${action.type}`);
     }
@@ -698,16 +775,6 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       env,
       timeoutMs: 20_000,
     });
-    if (action.type === "open_url" || action.type === "launch_application") {
-      // Python Popen returns immediately; non-zero means spawn failed (missing binary, etc.).
-      if (r.exitCode !== 0) {
-        throw new ProviderUnavailable(
-          "runloop",
-          r.stderr || r.stdout || "chrome launch failed",
-        );
-      }
-      return;
-    }
     if (r.exitCode !== 0 && !r.timedOut) {
       throw new ProviderUnavailable("runloop", r.stderr || `uiAction ${action.type} failed`);
     }
@@ -741,16 +808,16 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const dir = shellSingle(INTERACTIVE_DIR);
     const execvp = shellSingle(EXECVP_PATH);
     const script = shellSingle(ENSURE_SCRIPT_PATH);
-    const fixture = shellSingle(FIXTURE_PATH);
     const cdpHelper = shellSingle(CDP_HELPER_PATH);
+    const cdpNav = shellSingle(CDP_NAV_HELPER_PATH);
     const lock = await this.box.cmd.exec(
       [
         `chown root:root ${dir}`,
         `chmod 755 ${dir}`,
         `if [ -f ${execvp} ]; then chown root:root ${execvp} && chmod 755 ${execvp}; fi`,
         `if [ -f ${script} ]; then chown root:root ${script} && chmod 755 ${script}; fi`,
-        `if [ -f ${fixture} ]; then chown root:root ${fixture} && chmod 644 ${fixture}; fi`,
         `if [ -f ${cdpHelper} ]; then chown root:root ${cdpHelper} && chmod 755 ${cdpHelper}; fi`,
+        `if [ -f ${cdpNav} ]; then chown root:root ${cdpNav} && chmod 755 ${cdpNav}; fi`,
       ].join(" && "),
     );
     if ((lock.exitCode ?? 1) !== 0) {
