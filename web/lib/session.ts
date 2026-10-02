@@ -146,6 +146,7 @@ function parseDesk(raw: unknown): DeskRecord | null {
     hoursIncluded: asNumber(deskRaw.hoursIncluded) ?? asNumber(deskRaw.hours_included),
     computerId: asString(deskRaw.computerId) ?? asString(deskRaw.computer_id),
     botName: asString(deskRaw.botName) ?? asString(deskRaw.bot_name),
+    lastUsedLabel: asString(deskRaw.lastUsedLabel) ?? asString(deskRaw.last_used_label),
   };
 }
 
