@@ -230,9 +230,22 @@ export function getOauthStore(): OauthStore {
   return globalOauth.__staxOauth;
 }
 
+const CURSOR_REDIRECTS = new Set([
+  "cursor://anysphere.cursor-mcp/oauth/callback",
+  "https://www.cursor.com/agents/mcp/oauth/callback",
+]);
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
+}
+
 export function redirectHostAllowed(uri: string): boolean {
+  if (CURSOR_REDIRECTS.has(uri)) return true;
   try {
     const url = new URL(uri);
+    if (url.hash || url.username || url.password) return false;
+    if (url.protocol === "http:") return isLoopbackHost(url.hostname);
     if (url.protocol !== "https:") return false;
     const host = url.hostname.toLowerCase();
     return host === "grok.com" || host.endsWith(".grok.com") || host === "x.ai" || host.endsWith(".x.ai");
@@ -258,8 +271,27 @@ export function registerClient(redirectUris: string[]): OauthClient {
   return client;
 }
 
+function loopbackRedirectMatch(registered: string, requested: string): boolean {
+  try {
+    const saved = new URL(registered);
+    const next = new URL(requested);
+    if (saved.protocol !== "http:" || next.protocol !== "http:") return false;
+    if (!isLoopbackHost(saved.hostname) || !isLoopbackHost(next.hostname)) return false;
+    if (saved.username || saved.password || next.username || next.password) return false;
+    if (saved.hash || next.hash) return false;
+    return (
+      saved.hostname.toLowerCase() === next.hostname.toLowerCase() &&
+      saved.pathname === next.pathname &&
+      saved.search === next.search
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function redirectAllowed(client: OauthClient, redirectUri: string): boolean {
-  return client.redirectUris.includes(redirectUri);
+  if (client.redirectUris.includes(redirectUri)) return true;
+  return client.redirectUris.some((registered) => loopbackRedirectMatch(registered, redirectUri));
 }
 
 export function authorizationServerMetadata(origin: string): Record<string, unknown> {
@@ -271,6 +303,7 @@ export function authorizationServerMetadata(origin: string): Record<string, unkn
     code_challenge_methods_supported: ["S256"],
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
+    token_endpoint_auth_methods_supported: ["none"],
   };
 }
 
