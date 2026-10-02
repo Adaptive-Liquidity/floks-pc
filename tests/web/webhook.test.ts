@@ -127,6 +127,7 @@ describe("stripe webhook entitlements", () => {
     } as unknown as Stripe.Event);
     assert.equal(created?.agentQuantity, 2);
     assert.equal(created?.maxComputers, 2);
+    assert.equal(created?.hoursIncluded, 60);
     const paid = await applyStripeEvent({
       type: "invoice.paid",
       data: {

@@ -1,6 +1,7 @@
 import { HonestyStrip } from "@/components/HonestyStrip";
 import { KitMark } from "@/components/KitMark";
 import { PlanGrid } from "@/components/studio/PlanGrid";
+import { SUPPORT_EMAIL } from "@/lib/config";
 import { readAuthFromCookies } from "@/lib/setup-server";
 import {
   CREATE_ACCOUNT,
@@ -43,7 +44,7 @@ export default async function PricingPage({
           ) : null}
           {query.checkout === "error" ? (
             <p className="font-body-lg text-body-lg text-on-surface-variant max-w-2xl mx-auto">
-              Checkout did not start. No charge was made. Try again, or write to contact@asentxia.com.
+              Checkout did not start. No charge was made. Try again, or write to {SUPPORT_EMAIL}.
             </p>
           ) : null}
           {signedIn ? (
