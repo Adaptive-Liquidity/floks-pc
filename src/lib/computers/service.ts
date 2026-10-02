@@ -140,6 +140,18 @@ function identityKey(identity: NodeIdentity): string {
   return `${identity.birdId}\n${identity.flockId}`;
 }
 
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function mergeChanged<T extends object>(remote: T, base: T, local: T): T {
+  const merged = { ...remote };
+  for (const key of Object.keys(local) as Array<keyof T>) {
+    if (!sameJson(local[key], base[key])) merged[key] = local[key];
+  }
+  return merged;
+}
+
 export class ComputerService {
   private computers = new Map<string, Computer>();
   private byBird = new Map<string, string>(); // birdId → computerId
@@ -155,6 +167,7 @@ export class ComputerService {
   private readonly workspaceId: string | null;
   private persistChain: Promise<void> = Promise.resolve();
   private revision = 0;
+  private committed: ControlPlaneSnapshot | null = null;
   private operatorEvents: OperatorEvent[] = [];
   private destroyChains = new Map<string, Promise<unknown>>();
   private axByComputer = new Map<string, AxClickCache>();
@@ -185,8 +198,12 @@ export class ComputerService {
     if (!this.store) return;
     if (this.store.currentRevision) this.revision = await this.store.currentRevision();
     const snap = await this.store.load();
-    if (!snap) return;
+    if (!snap) {
+      this.committed = this.toSnapshot();
+      return;
+    }
     this.applySnapshot(snap);
+    this.committed = this.toSnapshot();
   }
 
   private toSnapshot(): ControlPlaneSnapshot {
@@ -235,18 +252,60 @@ export class ComputerService {
     }
   }
 
-  private overlay(mine: ControlPlaneSnapshot): void {
-    for (const computer of computersFromSnapshot(mine)) {
-      this.computers.set(computer.id, computer);
-      if (computer.state !== "deleted") this.byBird.set(computer.birdId, computer.id);
+  private overlay(mine: ControlPlaneSnapshot, base: ControlPlaneSnapshot | null): void {
+    this.overlayRecords(
+      computersFromSnapshot(mine),
+      new Map((base?.computers ?? []).map((row) => [row.id, row])),
+      (row) => this.computers.get(row.id),
+      (row) => {
+        this.computers.set(row.id, row);
+        if (row.state !== "deleted") this.byBird.set(row.birdId, row.id);
+      },
+    );
+    this.overlayRecords(
+      pairCodesFromSnapshot(mine),
+      new Map((base?.pairCodes ?? []).map((row) => [row.id, row])),
+      (row) => this.pairCodes.get(row.id),
+      (row) => {
+        this.pairCodes.set(row.id, row);
+        this.pairCodesByDigest.set(row.codeDigest, row.id);
+      },
+    );
+    this.overlayRecords(
+      capabilitiesFromSnapshot(mine),
+      new Map((base?.capabilities ?? []).map((row) => [row.id, row])),
+      (row) => this.capabilities.get(row.id),
+      (row) => {
+        this.capabilities.set(row.id, row);
+        this.capabilitiesByDigest.set(row.tokenDigest, row.id);
+      },
+    );
+    const baseExtras = base?.pairIssueExtras ?? {};
+    for (const [id, extras] of Object.entries(mine.pairIssueExtras)) {
+      if (!sameJson(extras, baseExtras[id])) {
+        this.pairIssueExtras.set(id, { scopes: extras.scopes, capabilityTtlMs: extras.capabilityTtlMs });
+      }
     }
-    for (const pair of pairCodesFromSnapshot(mine)) {
-      this.pairCodes.set(pair.id, pair);
-      this.pairCodesByDigest.set(pair.codeDigest, pair.id);
+    const baseFailures = base?.pairFailuresByIdentity ?? {};
+    for (const [id, win] of Object.entries(mine.pairFailuresByIdentity)) {
+      if (!sameJson(win, baseFailures[id])) this.pairFailuresByIdentity.set(id, win);
     }
-    for (const cap of capabilitiesFromSnapshot(mine)) {
-      this.capabilities.set(cap.id, cap);
-      this.capabilitiesByDigest.set(cap.tokenDigest, cap.id);
+  }
+
+  private overlayRecords<T extends { id: string }>(
+    localRows: T[],
+    baseRows: Map<string, T>,
+    remoteOf: (row: T) => T | undefined,
+    write: (row: T) => void,
+  ): void {
+    for (const local of localRows) {
+      const remote = remoteOf(local);
+      const prior = baseRows.get(local.id);
+      if (!remote) {
+        write(local);
+        continue;
+      }
+      if (prior && !sameJson(prior, local)) write(mergeChanged(remote, prior, local));
     }
   }
 
@@ -262,11 +321,13 @@ export class ComputerService {
         const mine = this.toSnapshot();
         try {
           this.revision = await store.compareAndSave(mine, this.revision);
+          this.committed = structuredClone(mine);
           return;
         } catch (err) {
           if (!(err instanceof StaleControlPlane) || attempt === 7) throw err;
+          const base = this.committed;
           await this.hydrate();
-          this.overlay(mine);
+          this.overlay(mine, base);
         }
       }
     };

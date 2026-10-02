@@ -44,7 +44,7 @@ export function SetupDesk({
   const [code, setCode] = useState(session.revealedPairCode ?? first?.userCode ?? "");
   const [busy, setBusy] = useState<"approve" | "deny" | "pair" | "revoke" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState(session.revealedPairCode);
+  const [revealed, setRevealed] = useState(session.revealedPairCode ?? first?.userCode ?? null);
 
   useEffect(() => {
     setAuthed(true);
@@ -120,10 +120,10 @@ export function SetupDesk({
                 Hours {desk.hoursUsed} / {desk.hoursIncluded}
               </p>
             ) : null}
-            {revealed ? (
+            {desk.userCode || (desk.id === first?.id && revealed) ? (
               <div>
                 <p className="kicker">{USER_CODE_LABEL}</p>
-                <p className="user-code">{revealed}</p>
+                <p className="user-code">{desk.userCode ?? revealed}</p>
                 <p className="note">{PAIR_REVEAL_ONCE}</p>
               </div>
             ) : null}

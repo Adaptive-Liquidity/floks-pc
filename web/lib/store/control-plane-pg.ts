@@ -74,12 +74,16 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         await client.query("ROLLBACK");
         throw new StaleControlPlane();
       }
-      await client.query(
+      const updated = await client.query(
         `UPDATE control_plane_snapshots
          SET snapshot = $2::jsonb, revision = revision + 1, updated_at = NOW()
          WHERE id = $1 AND revision = $3`,
         [this.id, JSON.stringify(parsed), expectedRevision],
       );
+      if (updated.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        throw new StaleControlPlane();
+      }
       await client.query("COMMIT");
       return expectedRevision + 1;
     } catch (err) {

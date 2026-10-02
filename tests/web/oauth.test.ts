@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { POST as registerPost } from "../../web/app/oauth/register/route.ts";
 import { POST as tokenPost } from "../../web/app/oauth/token/route.ts";
-import { POST as mcpPost, toolNames } from "../../web/app/mcp/route.ts";
+import { POST as mcpPost } from "../../web/app/mcp/route.ts";
+import { MCP_TOOL_NAMES } from "../../src/lib/mcp/tools.ts";
 import { flockIdForEmail } from "../../web/lib/desks/runtime.ts";
 import { bindPairFlock } from "../../web/lib/mcp-flock.ts";
 import {
@@ -100,9 +101,9 @@ describe("oauth and mcp", () => {
     const raw = (await listed.json()) as { result?: { tools?: Array<{ name: string }> } };
     assert.deepEqual(
       raw.result?.tools?.map((tool) => tool.name),
-      [...toolNames()],
+      [...MCP_TOOL_NAMES],
     );
-    assert.equal(toolNames().length, 8);
+    assert.equal(MCP_TOOL_NAMES.length, 8);
 
     const mismatched = await mcpPost(
       new Request("https://staxions-preview.vercel.app/mcp", {

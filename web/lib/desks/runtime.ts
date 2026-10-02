@@ -36,7 +36,7 @@ export function useRunloop(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 export function isProductionRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.NODE_ENV === "production";
+  return env.NODE_ENV === "production" || env.VERCEL_ENV === "production";
 }
 
 async function createProvider(): Promise<ComputerProvider> {
@@ -148,7 +148,7 @@ async function liveReveal(
   const revealed = await getRevealStore().get(seatId);
   if (!revealed) return null;
   const match = codes.find((rec) => rec.id === revealed.pairCodeId);
-  if (match && match.expiresAt.getTime() <= Date.now()) {
+  if (!match || match.usedAt !== null || match.expiresAt.getTime() <= Date.now()) {
     await getRevealStore().delete(seatId);
     return null;
   }
