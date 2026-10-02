@@ -93,6 +93,7 @@ export {
   ObserveRetryable,
   PathEscape,
   ComputerAsleep,
+  ComputerRebuilt,
   ComputerStarting,
   ProviderNeedsReplacement,
   ProviderUnavailable,

@@ -53,6 +53,7 @@ import {
   CapabilityRevoked,
   ComputerAsleep,
   ComputerNotFound,
+  ComputerRebuilt,
   ComputerStarting,
   InsufficientScope,
   CheckpointRequired,
@@ -1064,7 +1065,15 @@ export class ComputerService {
       } catch (err) {
         if (err instanceof ComputerStarting || !this.shouldReplaceDevbox(err)) throw err;
         computer = await this.replaceDevbox(computer);
-        liveRef = computer.providerRef ?? liveRef;
+        this.recordOperatorEvent({
+          computerId: computer.id,
+          birdId: computer.birdId,
+          kind: "cleanup",
+          operation: "rebuild",
+          success: false,
+          errorCode: "COMPUTER_REBUILT",
+        });
+        throw new ComputerRebuilt();
       }
     }
     await this.withinDeadline(this.pollUntilUp(liveRef, deadline), deadline);

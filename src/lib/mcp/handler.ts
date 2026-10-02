@@ -4,7 +4,13 @@
  */
 
 import { capabilityAuth, sharedAccountAuth } from "../computers/capabilities.js";
-import { CapabilityMissing, ComputerAsleep, ComputerStarting, PairCodeInvalid } from "../computers/errors.js";
+import {
+  CapabilityMissing,
+  ComputerAsleep,
+  ComputerRebuilt,
+  ComputerStarting,
+  PairCodeInvalid,
+} from "../computers/errors.js";
 import type { ComputerService } from "../computers/service.js";
 import type {
   Action,
@@ -463,6 +469,9 @@ export class McpGateway {
   }
 
   private toolFailure(err: unknown): ToolErr {
+    if (err instanceof ComputerRebuilt) {
+      this.logger.warn("mcp.computer_rebuilt", {});
+    }
     const pub = publicErrorFromUnknown(err);
     if (pub.code === "INTERNAL") {
       this.logger.error("mcp.tool_internal", {});
