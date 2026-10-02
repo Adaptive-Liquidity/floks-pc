@@ -212,7 +212,10 @@ describe("public site lock", () => {
     assert.doesNotMatch(text, /Get Started/);
     assert.doesNotMatch(read("app/setup/page.tsx"), /\bAllow\b/);
     const footer = `${read("components/LegalFooter.tsx")}\n${read("lib/legal.ts")}\n${read("lib/copy.ts")}`;
-    assert.match(footer, /Asentxia Systems/);
+    const legalSeller = `${read("components/LegalFooter.tsx")}\n${read("lib/legal.ts")}`;
+    assert.match(legalSeller, /Asentxia Inc\./);
+    assert.doesNotMatch(legalSeller, /Adaptive Liquidity, Inc\./);
+    assert.doesNotMatch(legalSeller, /Asentxia Systems/);
     assert.match(footer, /FOOTER_MARK/);
     assert.match(footer, /FOOTER_NAV/);
     assert.match(footer, /label: "Terms"/);
