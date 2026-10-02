@@ -270,8 +270,9 @@ describe("public site lock", () => {
     assert.match(config, /scope: "mcp"/);
     assert.match(config, /\/oauth\/authorize/);
     assert.match(config, /\/oauth\/token/);
-    assert.match(config, /\/api\/setup\/approve/);
-    assert.match(config, /\/api\/setup\/deny/);
+    assert.match(config, /\/api\/setup\/disconnect/);
+    assert.doesNotMatch(config, /\/api\/setup\/approve/);
+    assert.doesNotMatch(config, /\/api\/setup\/deny/);
     assert.match(read("lib/legal.ts"), /WorkOS AuthKit/);
     assert.match(read("lib/legal.ts"), /Vercel/);
     assert.doesNotMatch(read("lib/legal.ts"), /GCP — the floks-pc.com host/);
@@ -322,8 +323,9 @@ describe("public site lock", () => {
     }
     assert.equal((kit.match(/"#/g) ?? []).length, 11);
     const desk = read("components/SetupDesk.tsx");
-    assert.match(desk, /<details className="fallback">/);
-    assert.ok(desk.indexOf("APPROVE_LABEL") < desk.indexOf("PASTE_FALLBACK"));
+    assert.match(desk, /Disconnect/);
+    assert.match(desk, /Computer /);
+    assert.doesNotMatch(desk, /APPROVE_LABEL|PASTE_FALLBACK|mint/);
   });
 
   it("does not treat session_id as a login cookie", () => {

@@ -1,6 +1,5 @@
 import { MCP_PREFERRED_PROTOCOL, MCP_SUPPORTED_PROTOCOLS } from "../../../src/lib/mcp/config";
 import { jsonRpcResult } from "../../../src/lib/mcp/protocol";
-import { getComputerService } from "../desks/runtime";
 import type { OauthAccess } from "../oauth";
 import { activeComputerIdsForFlock } from "./pending-binds";
 import {
@@ -71,7 +70,9 @@ export async function purchaseToolResult(
 ): Promise<Record<string, unknown> | null> {
   const call = toolCall(body);
   if (!call) return null;
-  if (access.computerId) return boundTool(call, access, protocolVersion);
+  if (access.computerId) return null;
+  const presented = call.args.capability_token;
+  if (typeof presented === "string" && presented.length > 0) return null;
   const owned = await activeComputerIdsForFlock(access.flock);
   if (owned.length > 0) {
     return rpc(call.id, protocolVersion, true, { message: RECONNECT_COMPUTER_MESSAGE });
@@ -106,29 +107,4 @@ export async function purchaseToolResult(
     console.error("[bot.checkout]", err instanceof Error ? err.message : "checkout link failed");
     return rpc(call.id, protocolVersion, true, { message: "Checkout is not configured." });
   }
-}
-
-async function boundTool(
-  call: ToolCall,
-  access: OauthAccess,
-  protocolVersion: string,
-): Promise<Record<string, unknown> | null> {
-  if (call.name !== "computer_pair" && call.name !== "computer_status") return null;
-  const computerId = access.computerId;
-  if (!computerId) return null;
-  const service = await getComputerService();
-  let computer;
-  try {
-    computer = await service.get(computerId);
-  } catch {
-    return rpc(call.id, protocolVersion, true, { message: RECONNECT_COMPUTER_MESSAGE });
-  }
-  if (computer.flockId !== access.flock) {
-    return rpc(call.id, protocolVersion, true, { message: RECONNECT_COMPUTER_MESSAGE });
-  }
-  return rpc(call.id, protocolVersion, false, {
-    connected: true,
-    computer_handle: computer.id,
-    state: computer.state,
-  });
 }

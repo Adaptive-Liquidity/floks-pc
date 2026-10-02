@@ -65,6 +65,8 @@ export interface McpRequestContext {
   mcpNameHeader?: string;
   /** Present but never used as Bot identity or authorization. */
   mcpSessionId?: string;
+  /** Set when the OAuth token is already bound to one computer. */
+  bound?: { capabilityId: string; flockId: string };
 }
 
 export interface McpGatewayOptions {
@@ -228,15 +230,15 @@ export class McpGateway {
         case "computer_pair":
           return await this.computerPair(args, ctx);
         case "computer_status":
-          return await this.computerStatus(args);
+          return await this.computerStatus(args, ctx);
         case "computer_exec":
-          return await this.computerExec(args);
+          return await this.computerExec(args, ctx);
         case "computer_fs":
-          return await this.computerFs(args);
+          return await this.computerFs(args, ctx);
         case "computer_observe":
-          return await this.computerObserve(args);
+          return await this.computerObserve(args, ctx);
         case "computer_act":
-          return await this.computerAct(args);
+          return await this.computerAct(args, ctx);
         case "handoff_send":
         case "handoff_receive": {
           const parsed = HandoffArgsSchema.parse(args ?? {});
@@ -264,6 +266,27 @@ export class McpGateway {
 
   private async computerPair(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerPairArgsSchema.parse(args ?? {});
+    if (ctx.bound) {
+      const status = await this.service.status(
+        { kind: "bound", capabilityId: ctx.bound.capabilityId, flockId: ctx.bound.flockId },
+        "",
+      );
+      const viewed = this.service.getCapability(ctx.bound.capabilityId);
+      return {
+        isError: false,
+        payload: {
+          connected: true,
+          computer_handle: viewed.computerId,
+          state: status.state,
+        },
+      };
+    }
+    if (!parsed.pair_code || !parsed.bird_id || !parsed.flock_id) {
+      return {
+        isError: true,
+        payload: { code: "PAIR_CODE_INVALID", message: "pair code required" },
+      };
+    }
     const identity = { birdId: parsed.bird_id, flockId: parsed.flock_id };
     const conn = this.connectionIdentity(ctx);
     try {
@@ -305,18 +328,20 @@ export class McpGateway {
     }
   }
 
-  private async computerStatus(args: unknown): Promise<ToolOutcome> {
+  private async computerStatus(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerStatusArgsSchema.parse(args ?? {});
-    const status = await this.service.status(
-      cap(requireToken(parsed.capability_token)),
-      parsed.computer_handle,
-    );
+    const op = operationAuth(ctx, parsed.capability_token, parsed.computer_handle);
+    const status = await this.service.status(op.auth, op.computerId);
     const payload: Record<string, unknown> = { state: status.state };
     if (status.lastActiveAt) payload.last_active_at = status.lastActiveAt.toISOString();
+    if (ctx.bound) {
+      payload.connected = true;
+      payload.computer_handle = this.service.getCapability(ctx.bound.capabilityId).computerId;
+    }
     return { isError: false, payload };
   }
 
-  private async computerExec(args: unknown): Promise<ToolOutcome> {
+  private async computerExec(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerExecArgsSchema.parse(args ?? {});
     if (parsed.env && Object.keys(parsed.env).length > MCP_MAX_ENV_KEYS) {
       return {
@@ -329,11 +354,8 @@ export class McpGateway {
     if (parsed.env !== undefined) request.env = parsed.env;
     if (parsed.timeout_ms !== undefined) request.timeoutMs = parsed.timeout_ms;
     if (parsed.mode !== undefined) request.mode = parsed.mode;
-    const result = await this.service.exec(
-      cap(requireToken(parsed.capability_token)),
-      parsed.computer_handle,
-      request,
-    );
+    const op = operationAuth(ctx, parsed.capability_token, parsed.computer_handle);
+    const result = await this.service.exec(op.auth, op.computerId, request);
     const stdout = clip(result.stdout);
     const stderr = clip(result.stderr);
     return {
@@ -349,7 +371,7 @@ export class McpGateway {
     };
   }
 
-  private async computerFs(args: unknown): Promise<ToolOutcome> {
+  private async computerFs(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerFsArgsSchema.parse(args ?? {});
     const request: FsRequest = {
       operation: parsed.operation,
@@ -358,11 +380,8 @@ export class McpGateway {
     if (parsed.content !== undefined) request.content = parsed.content;
     if (parsed.destination !== undefined) request.destination = parsed.destination;
     if (parsed.encoding !== undefined) request.encoding = parsed.encoding;
-    const result = await this.service.filesystem(
-      cap(requireToken(parsed.capability_token)),
-      parsed.computer_handle,
-      request,
-    );
+    const op = operationAuth(ctx, parsed.capability_token, parsed.computer_handle);
+    const result = await this.service.filesystem(op.auth, op.computerId, request);
     if (!result.ok) {
       return {
         isError: true,
@@ -377,16 +396,13 @@ export class McpGateway {
     return { isError: false, payload };
   }
 
-  private async computerObserve(args: unknown): Promise<ToolOutcome> {
+  private async computerObserve(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerObserveArgsSchema.parse(args ?? {});
     const request: ObserveRequest = {};
     if (parsed.include_screenshot === true) request.includeScreenshot = true;
     if (parsed.include_accessibility === true) request.includeAccessibility = true;
-    const observation = await this.service.observe(
-      cap(requireToken(parsed.capability_token)),
-      parsed.computer_handle,
-      request,
-    );
+    const op = operationAuth(ctx, parsed.capability_token, parsed.computer_handle);
+    const observation = await this.service.observe(op.auth, op.computerId, request);
     const payload: Record<string, unknown> = {
       screen_width: observation.screenWidth,
       screen_height: observation.screenHeight,
@@ -410,13 +426,12 @@ export class McpGateway {
     return outcome;
   }
 
-  private async computerAct(args: unknown): Promise<ToolOutcome> {
+  private async computerAct(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerActArgsSchema.parse(args ?? {});
-    const result = await this.service.act(
-      cap(requireToken(parsed.capability_token)),
-      parsed.computer_handle,
-      { actions: parsed.actions.map(toAction) },
-    );
+    const op = operationAuth(ctx, parsed.capability_token, parsed.computer_handle);
+    const result = await this.service.act(op.auth, op.computerId, {
+      actions: parsed.actions.map(toAction),
+    });
     return {
       isError: false,
       payload: {
@@ -448,6 +463,21 @@ export class McpGateway {
 
 function cap(token: string): ComputerOperationAuth {
   return capabilityAuth(token);
+}
+
+function operationAuth(
+  ctx: McpRequestContext,
+  token: string | undefined,
+  handle: string | undefined,
+): { auth: ComputerOperationAuth; computerId: string } {
+  if (ctx.bound) {
+    return {
+      auth: { kind: "bound", capabilityId: ctx.bound.capabilityId, flockId: ctx.bound.flockId },
+      computerId: "",
+    };
+  }
+  if (!handle) throw new CapabilityMissing("missing computer");
+  return { auth: cap(requireToken(token)), computerId: handle };
 }
 
 function requireToken(token: string | undefined): string {

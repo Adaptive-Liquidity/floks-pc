@@ -67,7 +67,7 @@ describe("oauth and mcp", { concurrency: 1 }, () => {
     assert.ok("token" in ok && "refresh" in ok);
     if (!("token" in ok)) return;
     const claims = await accessClaims(ok.token);
-    assert.deepEqual(claims, { subject: SUBJECT, flock });
+    assert.deepEqual(claims, { subject: SUBJECT, flock, computerId: null, capabilityId: null });
     const replay = await exchangeCode({
       code,
       verifier,
@@ -80,7 +80,11 @@ describe("oauth and mcp", { concurrency: 1 }, () => {
       new Request("https://staxions-preview.vercel.app/oauth/token", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ grant_type: "refresh_token", refresh_token: ok.refresh }),
+        body: JSON.stringify({
+          grant_type: "refresh_token",
+          refresh_token: ok.refresh,
+          client_id: client.id,
+        }),
       }),
     );
     assert.equal(refreshed.status, 200);
@@ -134,7 +138,7 @@ describe("oauth and mcp", { concurrency: 1 }, () => {
     );
     const mismatchBody = (await mismatched.json()) as { error?: { message?: string } };
     assert.match(mismatchBody.error?.message ?? "", /flock does not match/);
-    const afterHour = await refreshAccess(next.refresh_token, Date.now() + 2 * 60 * 60_000);
+    const afterHour = await refreshAccess(next.refresh_token, client.id, Date.now() + 2 * 60 * 60_000);
     assert.ok("token" in afterHour);
 
     const batch = [

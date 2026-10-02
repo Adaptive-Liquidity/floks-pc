@@ -12,7 +12,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "invalid_client_metadata" }, { status: 400 });
   }
-  const record = body && typeof body === "object" ? (body as { redirect_uris?: unknown }) : {};
+  const record =
+    body && typeof body === "object" ? (body as { redirect_uris?: unknown; client_name?: unknown }) : {};
   const redirectUris = Array.isArray(record.redirect_uris)
     ? record.redirect_uris.filter((item): item is string => typeof item === "string")
     : [];
@@ -20,7 +21,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (allowed.length === 0) {
     return NextResponse.json({ error: "invalid_client_metadata" }, { status: 400 });
   }
-  const client = registerClient(allowed);
+  const clientName = typeof record.client_name === "string" ? record.client_name : null;
+  const client = registerClient(allowed, clientName);
   await getOauthStore().saveClient(client);
   const hosts = allowed.map((uri) => new URL(uri).host);
   console.info(JSON.stringify({ event: "oauth.register", client_id: client.id, hosts }));

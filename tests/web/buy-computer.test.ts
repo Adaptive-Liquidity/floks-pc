@@ -4,7 +4,9 @@ import { describe, it } from "node:test";
 import type Stripe from "stripe";
 import { ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.ts";
 import { MCP_TOOL_NAMES } from "../../src/lib/mcp/tools.ts";
-import { GET as buyGet } from "../../web/app/buy/route.ts";
+import { GET as buyGet, POST as buyPost } from "../../web/app/buy/route.ts";
+import { POST as disconnectPost } from "../../web/app/api/setup/disconnect/route.ts";
+import { middleware } from "../../web/middleware.ts";
 import { POST as mcpPost } from "../../web/app/mcp/route.ts";
 import { GET as authorizeGet, POST as authorizePost } from "../../web/app/oauth/authorize/route.ts";
 import { resetStripeForTests } from "../../web/lib/billing/stripe.ts";
@@ -15,7 +17,8 @@ import {
   createBuyLink,
   readBuyToken,
 } from "../../web/lib/billing/buy-link.ts";
-import { provisionSeatComputers } from "../../web/lib/billing/lifecycle.ts";
+import { provisionSeatComputers, shutdownSeatComputers } from "../../web/lib/billing/lifecycle.ts";
+import { openBuyToken } from "../../web/lib/billing/buy-link.ts";
 import { MemoryPendingBindStore, getPendingBindStore, setPendingBindStoreForTests } from "../../web/lib/billing/pending-binds.ts";
 import { applyStripeEvent } from "../../web/lib/billing/stripe.ts";
 import { createSeat, getSeatStore, resetSeatStoreForTests } from "../../web/lib/billing/seats.ts";
@@ -28,6 +31,7 @@ import {
   hashToken,
   issueCode,
   pkceS256,
+  refreshAccess,
   registerClient,
   setOauthStoreForTests,
 } from "../../web/lib/oauth.ts";
@@ -99,7 +103,7 @@ async function callTool(
   name: string,
   args: Record<string, unknown>,
   id = 1,
-): Promise<{ isError: boolean; structuredContent: Record<string, unknown> }> {
+): Promise<{ status: number; isError: boolean; structuredContent: Record<string, unknown> }> {
   const res = await mcpPost(
     new Request(`${ORIGIN}/mcp`, {
       method: "POST",
@@ -115,6 +119,7 @@ async function callTool(
     result?: { isError?: boolean; structuredContent?: Record<string, unknown> };
   };
   return {
+    status: res.status,
     isError: json.result?.isError === true,
     structuredContent: json.result?.structuredContent ?? {},
   };
@@ -202,13 +207,19 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
     resetRateLimitsForTests();
     resetSeatStoreForTests();
     setOauthStoreForTests(new MemoryOauthStore());
+    const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
+    setComputerServiceForTests(service);
+    const computer = await service.requestComputer({
+      birdId: "seat:picker",
+      flockId: flockIdForEmail(EMAIL),
+    });
     await getSeatStore().upsert(
       createSeat({
         email: EMAIL,
         plan: "personal",
         stripeCustomerId: "cus_picker",
-        computerId: "cmp_picker",
-        computerIds: ["cmp_picker"],
+        computerId: computer.id,
+        computerIds: [computer.id],
       }),
     );
     const client = registerClient(["https://grok.com/callback"]);
@@ -227,18 +238,20 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
         },
       ),
     );
-    const listed = (await preflight.json()) as { computers?: Array<{ id: string }> };
-    assert.deepEqual(listed.computers, [{ id: "cmp_picker" }]);
-    const missing = await allowForm({
+    const listed = (await preflight.json()) as { computers?: Array<{ id: string; label?: string }> };
+    assert.equal(listed.computers?.[0]?.id, computer.id);
+    assert.equal(listed.computers?.[0]?.label, "Computer 1");
+    const tampered = await allowForm({
       clientId: client.id,
       redirect,
       challenge,
       email: EMAIL,
       subject: SUBJECT,
       ip: "203.0.113.23",
+      computerId: "cmp_other",
     });
-    assert.equal(missing.status, 303);
-    assert.match(missing.headers.get("location") ?? "", /\/oauth\/consent/);
+    assert.equal(tampered.status, 303);
+    assert.match(tampered.headers.get("location") ?? "", /\/oauth\/consent/);
     const picked = await allowForm({
       clientId: client.id,
       redirect,
@@ -246,7 +259,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
       email: EMAIL,
       subject: SUBJECT,
       ip: "203.0.113.24",
-      computerId: "cmp_picker",
+      computerId: computer.id,
     });
     const code = new URL(picked.headers.get("location") ?? "").searchParams.get("code");
     const exchanged = await exchangeCode({
@@ -257,7 +270,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
     });
     assert.ok("token" in exchanged);
     if (!("token" in exchanged)) return;
-    assert.equal((await getOauthStore().getAccess(hashToken(exchanged.token)))?.computerId, "cmp_picker");
+    assert.equal((await getOauthStore().getAccess(hashToken(exchanged.token)))?.computerId, computer.id);
   });
 
   it("returns a checkout link from computer_pair and changes it with plan", async () => {
@@ -350,11 +363,29 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
         clientId: "stax_client",
         plan: "team",
       });
-      const first = await buyGet(new Request(fresh.url));
-      assert.equal(first.status, 503);
-      const second = await buyGet(new Request(fresh.url));
-      assert.equal(second.status, 400);
-      assert.equal(((await second.json()) as { error?: string }).error, "used");
+      const preview = await buyGet(new Request(fresh.url));
+      assert.equal(preview.status, 200);
+      assert.match(await preview.text(), /Confirm purchase/);
+      const again = await buyGet(new Request(fresh.url));
+      assert.equal(again.status, 200);
+      const token = new URL(fresh.url).searchParams.get("t") ?? "";
+      const posted = await buyPost(
+        new Request(fresh.url, {
+          method: "POST",
+          headers: { origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ t: token }),
+        }),
+      );
+      assert.equal(posted.status, 503);
+      const reused = await buyPost(
+        new Request(fresh.url, {
+          method: "POST",
+          headers: { origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ t: token }),
+        }),
+      );
+      assert.equal(reused.status, 400);
+      assert.equal(((await reused.json()) as { error?: string }).error, "used");
     } finally {
       if (previousKey === undefined) delete process.env.STRIPE_SECRET_KEY;
       else process.env.STRIPE_SECRET_KEY = previousKey;
@@ -463,4 +494,285 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
       setComputerServiceForTests(null);
     }
   });
+
+  it("drives a bound computer with only the OAuth bearer", async () => {
+    process.env.NODE_ENV = "test";
+    process.env.STAX_TEST_AUTH = "1";
+    useBindKey();
+    resetSeatStoreForTests();
+    setOauthStoreForTests(new MemoryOauthStore());
+    setPendingBindStoreForTests(new MemoryPendingBindStore());
+    const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
+    setComputerServiceForTests(service);
+    const flock = flockIdForEmail(EMAIL);
+    const computer = await service.requestComputer({ birdId: "seat:picker", flockId: flock });
+    await getSeatStore().upsert(
+      createSeat({
+        email: EMAIL,
+        plan: "personal",
+        stripeCustomerId: "cus_drive",
+        computerId: computer.id,
+        computerIds: [computer.id],
+      }),
+    );
+    const client = registerClient(["https://grok.com/callback"], "Grok");
+    await getOauthStore().saveClient(client);
+    const redirect = client.redirectUris[0] ?? "";
+    const verifier = "verifier-value-which-is-long-enough";
+    const allowed = await allowForm({
+      clientId: client.id,
+      redirect,
+      challenge: pkceS256(verifier),
+      email: EMAIL,
+      subject: SUBJECT,
+      ip: "203.0.113.40",
+    });
+    const code = new URL(allowed.headers.get("location") ?? "").searchParams.get("code") ?? "";
+    const exchanged = await exchangeCode({ code, verifier, clientId: client.id, redirectUri: redirect });
+    assert.ok("token" in exchanged);
+    if (!("token" in exchanged)) return;
+    await drive(exchanged.token);
+    const wrongHandle = await callTool(exchanged.token, "computer_exec", {
+      argv: ["uname", "-s"],
+      computer_handle: "computer_other",
+      capability_token: "not-the-bound-secret",
+    });
+    assert.equal(wrongHandle.isError, false);
+
+    const other = registerClient(["https://grok.com/callback"], "Other Bot");
+    await getOauthStore().saveClient(other);
+    const otherRedirect = other.redirectUris[0] ?? "";
+    const taken = await allowForm({
+      clientId: other.id,
+      redirect: otherRedirect,
+      challenge: pkceS256(verifier),
+      email: EMAIL,
+      subject: SUBJECT,
+      ip: "203.0.113.41",
+      computerId: computer.id,
+    });
+    const takenCode = new URL(taken.headers.get("location") ?? "").searchParams.get("code") ?? "";
+    const second = await exchangeCode({
+      code: takenCode,
+      verifier,
+      clientId: other.id,
+      redirectUri: otherRedirect,
+    });
+    assert.ok("token" in second);
+    if (!("token" in second)) return;
+    const firstExec = await callTool(exchanged.token, "computer_exec", { argv: ["uname", "-s"] });
+    assert.equal(firstExec.status === 401 || firstExec.isError, true);
+    await drive(second.token);
+
+    const refreshed = await refreshAccess(second.refresh, other.id);
+    assert.ok("token" in refreshed);
+    if (!("token" in refreshed)) return;
+    assert.equal((await getOauthStore().getAccess(hashToken(refreshed.token)))?.computerId, computer.id);
+    const wrongClient = await refreshAccess(refreshed.refresh, client.id);
+    assert.deepEqual(wrongClient, { error: "invalid_grant" });
+    await service.revokeCapability((await getOauthStore().getAccess(hashToken(refreshed.token)))?.capabilityId ?? "");
+    const dead = await refreshAccess(refreshed.refresh, other.id);
+    assert.deepEqual(dead, { error: "invalid_grant" });
+  });
+
+  it("runs the purchased computer from the OAuth bearer and keeps a slow checkout", async () => {
+    process.env.NODE_ENV = "test";
+    process.env.STRIPE_PRICE_PERSONAL = "price_personal_test";
+    useBindKey();
+    resetSeatStoreForTests();
+    setOauthStoreForTests(new MemoryOauthStore());
+    setPendingBindStoreForTests(new MemoryPendingBindStore());
+    const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
+    setComputerServiceForTests(service);
+    const { token, clientId, flock } = await freshToken("paid@example.com", "user_paid");
+    const started = Date.now() - 40 * 60 * 1000;
+    const link = await createBuyLink({
+      origin: ORIGIN,
+      email: "paid@example.com",
+      subject: "user_paid",
+      flock,
+      clientId,
+      plan: "personal",
+      now: started,
+    });
+    const signed = new URL(link.url).searchParams.get("t") ?? "";
+    const opened = await openBuyToken(signed, started + 60_000);
+    assert.equal(opened.ok, true);
+    const event = checkoutEvent("cs_slow", "paid@example.com", {
+      oauth_client_id: clientId,
+      subject: "user_paid",
+      flock,
+      bind_nonce: link.nonce,
+    });
+    const seat = await applyStripeEvent(event);
+    assert.ok(seat);
+    const computers = await provisionSeatComputers(seat);
+    assert.equal(await bindPurchasedComputer(event, seat, computers), true);
+    await drive(token);
+    const preview = await buyGet(new Request(link.url));
+    assert.equal(preview.status, 400);
+  });
+
+  it("keeps an old capability token working and frames oauth and setup", async () => {
+    process.env.NODE_ENV = "test";
+    useBindKey();
+    resetSeatStoreForTests();
+    setOauthStoreForTests(new MemoryOauthStore());
+    const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
+    setComputerServiceForTests(service);
+    const flock = flockIdForEmail("old@example.com");
+    const computer = await service.requestComputer({ birdId: "seat:old", flockId: flock });
+    const issued = await service.issueBoundCapability(computer.id, flock);
+    const { token } = await freshToken("old@example.com", "user_old");
+    const exec = await callTool(token, "computer_exec", {
+      capability_token: issued.token,
+      computer_handle: computer.id,
+      argv: ["uname", "-s"],
+    });
+    assert.equal(exec.isError, false);
+    for (const path of ["/oauth/authorize", "/oauth/consent", "/setup"]) {
+      const response = middleware({ nextUrl: { pathname: path } });
+      assert.equal(response.headers.get("x-frame-options"), "DENY", path);
+      assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/, path);
+    }
+  });
+
+  it("rejects another account and disconnects only the chosen computer", async () => {
+    process.env.NODE_ENV = "test";
+    process.env.STAX_TEST_AUTH = "1";
+    resetRateLimitsForTests();
+    resetSeatStoreForTests();
+    setOauthStoreForTests(new MemoryOauthStore());
+    const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
+    setComputerServiceForTests(service);
+    const owner = flockIdForEmail(EMAIL);
+    const mine = await service.requestComputer({ birdId: "seat:mine", flockId: owner });
+    const spare = await service.requestComputer({ birdId: "seat:spare", flockId: owner });
+    await getSeatStore().upsert(
+      createSeat({
+        email: EMAIL,
+        plan: "pro",
+        stripeCustomerId: "cus_multi",
+        computerId: mine.id,
+        computerIds: [mine.id, spare.id],
+        maxComputers: 2,
+      }),
+    );
+    const holder = registerClient(["https://grok.com/callback"], "Holder");
+    await getOauthStore().saveClient(holder);
+    await getOauthStore().saveAccess({
+      tokenHash: hashToken("holder-token"),
+      refreshHash: hashToken("holder-refresh"),
+      subject: "user_other_account",
+      flock: owner,
+      clientId: holder.id,
+      email: EMAIL,
+      computerId: mine.id,
+      capabilityId: "cap_holder",
+      expiresAt: Date.now() + 60_000,
+      refreshExpiresAt: Date.now() + 60_000,
+      revoked: false,
+    });
+    const client = registerClient(["https://grok.com/callback"], "Mine");
+    await getOauthStore().saveClient(client);
+    const redirect = client.redirectUris[0] ?? "";
+    const held = await allowForm({
+      clientId: client.id,
+      redirect,
+      challenge: pkceS256("verifier-value-which-is-long-enough"),
+      email: EMAIL,
+      subject: SUBJECT,
+      ip: "203.0.113.50",
+      computerId: mine.id,
+    });
+    assert.match(held.headers.get("location") ?? "", /\/oauth\/consent/);
+    const foreign = await allowForm({
+      clientId: client.id,
+      redirect,
+      challenge: pkceS256("verifier-value-which-is-long-enough"),
+      email: EMAIL,
+      subject: SUBJECT,
+      ip: "203.0.113.51",
+      computerId: "not-on-this-account",
+    });
+    assert.match(foreign.headers.get("location") ?? "", /\/oauth\/consent/);
+
+    await getOauthStore().revokeComputerTokens(mine.id);
+    const allowed = await allowForm({
+      clientId: client.id,
+      redirect,
+      challenge: pkceS256("verifier-value-which-is-long-enough"),
+      email: EMAIL,
+      subject: SUBJECT,
+      ip: "203.0.113.52",
+      computerId: spare.id,
+    });
+    const code = new URL(allowed.headers.get("location") ?? "").searchParams.get("code") ?? "";
+    const exchanged = await exchangeCode({
+      code,
+      verifier: "verifier-value-which-is-long-enough",
+      clientId: client.id,
+      redirectUri: redirect,
+    });
+    assert.ok("token" in exchanged);
+    if (!("token" in exchanged)) return;
+    const cut = await disconnectPost(
+      new Request(`${ORIGIN}/api/setup/disconnect`, {
+        method: "POST",
+        headers: {
+          origin: ORIGIN,
+          "content-type": "application/x-www-form-urlencoded",
+          "x-stax-test-user": userHeader(SUBJECT, EMAIL),
+        },
+        body: new URLSearchParams({ computer_id: spare.id }),
+      }),
+    );
+    assert.equal(cut.status, 200);
+    const after = await callTool(exchanged.token, "computer_exec", { argv: ["uname", "-s"] });
+    assert.equal(after.status === 401 || after.isError, true);
+
+    const keptFlock = flockIdForEmail("kept@example.com");
+    const kept = await service.requestComputer({ birdId: "seat:kept", flockId: keptFlock });
+    const keptSeat = await getSeatStore().upsert(
+      createSeat({
+        email: "kept@example.com",
+        plan: "personal",
+        stripeCustomerId: "cus_kept",
+        computerId: kept.id,
+        computerIds: [kept.id],
+      }),
+    );
+    const keptIssued = await service.issueBoundCapability(kept.id, keptFlock);
+    const { token: keptToken, clientId: keptClient } = await freshToken("kept@example.com", "user_kept");
+    await getOauthStore().bindLiveTokens({
+      clientId: keptClient,
+      subject: "user_kept",
+      computerId: kept.id,
+      capabilityId: keptIssued.capabilityId,
+    });
+    const canceledSeat = await getSeatStore().upsert(
+      createSeat({
+        email: EMAIL,
+        plan: "personal",
+        stripeCustomerId: "cus_cancel_only",
+        computerId: spare.id,
+        computerIds: [spare.id],
+      }),
+    );
+    await shutdownSeatComputers({ ...canceledSeat, status: "canceled" }, "stop");
+    const keptCall = await callTool(keptToken, "computer_exec", { argv: ["uname", "-s"] });
+    assert.equal(keptCall.isError, false, JSON.stringify(keptCall.structuredContent));
+    void keptSeat;
+  });
 });
+
+async function drive(token: string): Promise<void> {
+  const exec = await callTool(token, "computer_exec", { argv: ["uname", "-s"] });
+  assert.equal(exec.isError, false, JSON.stringify(exec.structuredContent));
+  const fs = await callTool(token, "computer_fs", { operation: "write", path: "note.txt", content: "ok" });
+  assert.equal(fs.isError, false, JSON.stringify(fs.structuredContent));
+  const observe = await callTool(token, "computer_observe", {});
+  assert.equal(observe.isError, false, JSON.stringify(observe.structuredContent));
+  const act = await callTool(token, "computer_act", { actions: [{ type: "wait", durationMs: 10 }] });
+  assert.equal(act.isError, false, JSON.stringify(act.structuredContent));
+}

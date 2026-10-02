@@ -32,12 +32,17 @@ const capabilityToken = z
   .max(256)
   .optional()
   .describe("Capability secret from computer_pair. Never log it.");
-const handle = z.string().min(1).max(128).describe("computer_handle from computer_pair.");
+const handle = z
+  .string()
+  .min(1)
+  .max(128)
+  .optional()
+  .describe("computer_handle from computer_pair. Ignored when this Bot is already bound.");
 
 export const ComputerPairArgsSchema = z.object({
-  pair_code: z.string().min(1).max(32).describe("One-time pair code (ABCD-EFGH-JK)."),
-  bird_id: z.string().min(1).max(128),
-  flock_id: z.string().min(1).max(128),
+  pair_code: z.string().min(1).max(32).optional().describe("One-time pair code (ABCD-EFGH-JK)."),
+  bird_id: z.string().min(1).max(128).optional(),
+  flock_id: z.string().min(1).max(128).optional(),
   account_id: z
     .string()
     .min(1)
@@ -133,7 +138,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "computer_status",
     description: "Return computer lifecycle state. Requires a valid capability with status scope.",
-    inputSchema: advertisedSchema(ComputerStatusArgsSchema, ["capability_token", "computer_handle"]),
+    inputSchema: advertisedSchema(ComputerStatusArgsSchema, []),
   },
   {
     name: "computer_exec",
@@ -141,7 +146,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
       "Run argv[] on the computer. Default mode is argv. mode=shell requires the shell scope (not granted by default pairing).",
     inputSchema: advertisedSchema(
       ComputerExecArgsSchema,
-      ["capability_token", "computer_handle", "argv"],
+      ["argv"],
       (schema) => {
         const props = objectProperties(schema);
         const env = props?.env;
@@ -155,40 +160,31 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: "computer_fs",
     description:
       "Filesystem operation inside the workspace jail (stat/list/read/write/mkdir/move/copy/delete). Path escape is rejected.",
-    inputSchema: advertisedSchema(ComputerFsArgsSchema, [
-      "capability_token",
-      "computer_handle",
-      "operation",
-      "path",
-    ]),
+    inputSchema: advertisedSchema(ComputerFsArgsSchema, ["operation", "path"]),
   },
   {
     name: "computer_observe",
     description:
       "Observe the computer display. Set include_screenshot true to see the screen as an image. Set include_accessibility true for AX node ids (required before click_element). Accessibility is never fabricated as live CDP.",
-    inputSchema: advertisedSchema(ComputerObserveArgsSchema, ["capability_token", "computer_handle"]),
+    inputSchema: advertisedSchema(ComputerObserveArgsSchema, []),
   },
   {
     name: "computer_act",
     description:
       "Apply a bounded action batch. For clicks: computer_observe({ include_accessibility: true }) then click_element with an AX node id from that tree (15s). Guessed/offscreen clicks fail closed. Also open_url/type/key/scroll/wait. No public VNC/takeover.",
-    inputSchema: advertisedSchema(ComputerActArgsSchema, [
-      "capability_token",
-      "computer_handle",
-      "actions",
-    ]),
+    inputSchema: advertisedSchema(ComputerActArgsSchema, ["actions"]),
   },
   {
     name: "handoff_send",
     description:
       "Send an explicit file handoff to another Node. Not implemented in C5 (Gate C9). Fails closed.",
-    inputSchema: advertisedSchema(HandoffArgsSchema, ["capability_token", "computer_handle"]),
+    inputSchema: advertisedSchema(HandoffArgsSchema, []),
   },
   {
     name: "handoff_receive",
     description:
       "Receive an explicit file handoff. Not implemented in C5 (Gate C9). Fails closed.",
-    inputSchema: advertisedSchema(HandoffArgsSchema, ["capability_token", "computer_handle"]),
+    inputSchema: advertisedSchema(HandoffArgsSchema, []),
   },
 ];
 

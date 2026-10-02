@@ -36,10 +36,7 @@ export const BRAND_NAME = BRAND.name;
 
 /** Same-origin setup actions. Do not POST to a foreign live host. */
 export const SETUP_ACTIONS = {
-  approve: "/api/setup/approve",
-  deny: "/api/setup/deny",
-  pair: "/api/setup/pair",
-  revoke: "/api/setup/revoke",
+  disconnect: "/api/setup/disconnect",
   portal: "/api/setup/portal",
   billing: "/api/setup/portal",
   checkout: "/api/checkout",

@@ -35,7 +35,9 @@ export async function bindPurchasedComputer(
   const flock = meta.flock?.trim() ?? "";
   const clientId = meta.oauth_client_id?.trim() ?? "";
   const pending = await getPendingBindStore().get(nonce);
-  if (!pending || pending.usedAt !== null || pending.expiresAt <= Date.now()) return false;
+  if (!pending || pending.usedAt !== null) return false;
+  if (pending.openedAt !== null && pending.openedAt > pending.expiresAt) return false;
+  if (pending.openedAt === null && pending.expiresAt <= Date.now()) return false;
   if (pending.subject !== subject || pending.flock !== flock || pending.clientId !== clientId) return false;
   if (pending.flock !== flockIdForEmail(seat.email)) return false;
   const computer = computers.find((row) => row.flockId === pending.flock);

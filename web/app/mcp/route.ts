@@ -69,7 +69,11 @@ export async function POST(request: Request): Promise<Response> {
   }
   const protocol = request.headers.get("mcp-protocol-version") ?? undefined;
   const access = token ? await getOauthStore().getAccess(hashToken(token)) : null;
-  if (access && !access.revoked && access.expiresAt > Date.now()) {
+  const bound =
+    access && access.computerId && access.capabilityId
+      ? { capabilityId: access.capabilityId, flockId: access.flock }
+      : undefined;
+  if (access && !access.revoked && access.expiresAt > Date.now() && !bound) {
     const purchased = await purchaseToolResult(body, access, origin, protocolForPurchase(protocol));
     if (purchased) {
       return NextResponse.json(purchased, {
@@ -80,6 +84,7 @@ export async function POST(request: Request): Promise<Response> {
   const result = await (await sharedGateway()).handleJsonRpc(body, {
     authorization: `Bearer oauth:${claims.subject}`,
     ...(protocol ? { protocolVersionHeader: protocol } : {}),
+    ...(bound ? { bound } : {}),
   });
   if (result === null) return new Response(null, { status: 202 });
   return NextResponse.json(result, {

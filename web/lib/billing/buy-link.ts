@@ -37,10 +37,12 @@ export function parseCheckoutPlan(value: unknown): CheckoutPlanId | null {
 
 function bindSecret(): string | null {
   const dedicated = process.env.STAXIONS_BIND_SECRET?.trim() ?? "";
+  if (process.env.NODE_ENV === "production") {
+    return dedicated.length >= 32 ? dedicated : null;
+  }
   if (dedicated.length >= 32) return dedicated;
   const cookie = process.env.WORKOS_COOKIE_PASSWORD?.trim() ?? "";
-  if (cookie.length >= 32) return cookie;
-  return null;
+  return cookie.length >= 32 ? cookie : null;
 }
 
 function sign(body: string, material: string): string {
@@ -76,7 +78,7 @@ export function readBuyToken(token: string, now = Date.now()): BuyPayload | null
     ) {
       return null;
     }
-    if (parsed.exp <= now) return null;
+    void now;
     return {
       v: 1,
       email: parsed.email,
@@ -114,7 +116,7 @@ export async function createBuyLink(input: {
   now?: number;
 }): Promise<{ url: string; nonce: string; exp: number }> {
   const material = bindSecret();
-  if (!material) throw new Error("STAXIONS_BIND_SECRET or WORKOS_COOKIE_PASSWORD is required to sign checkout");
+  if (!material) throw new Error("STAXIONS_BIND_SECRET is required to sign checkout");
   const now = input.now ?? Date.now();
   const exp = now + BUY_LINK_TTL_MS;
   const nonce = randomBytes(16).toString("base64url");
@@ -147,49 +149,22 @@ export async function createBuyLink(input: {
   return { url: url.toString(), nonce, exp };
 }
 
-export async function openBuyToken(token: string, now = Date.now()): Promise<OpenBuyResult> {
-  const material = bindSecret();
-  if (!material) return { ok: false, reason: "invalid" };
-  const dot = token.lastIndexOf(".");
-  if (dot <= 0) return { ok: false, reason: "invalid" };
-  const body = token.slice(0, dot);
-  const mac = token.slice(dot + 1);
-  if (!signaturesMatch(sign(body, material), mac)) return { ok: false, reason: "invalid" };
-  let parsed: Partial<BuyPayload>;
-  try {
-    parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Partial<BuyPayload>;
-  } catch {
-    return { ok: false, reason: "invalid" };
-  }
-  const plan = parseCheckoutPlan(parsed.plan);
-  if (
-    parsed.v !== 1 ||
-    !plan ||
-    typeof parsed.email !== "string" ||
-    typeof parsed.subject !== "string" ||
-    typeof parsed.flock !== "string" ||
-    typeof parsed.clientId !== "string" ||
-    typeof parsed.nonce !== "string" ||
-    typeof parsed.exp !== "number"
-  ) {
-    return { ok: false, reason: "invalid" };
-  }
-  const payload: BuyPayload = {
-    v: 1,
-    email: parsed.email,
-    subject: parsed.subject,
-    flock: parsed.flock,
-    clientId: parsed.clientId,
-    plan,
-    nonce: parsed.nonce,
-    exp: parsed.exp,
-  };
+export async function peekBuyToken(token: string, now = Date.now()): Promise<OpenBuyResult> {
+  const payload = readBuyToken(token, now);
+  if (!payload) return { ok: false, reason: "invalid" };
   if (payload.exp <= now) return { ok: false, reason: "expired" };
   const row = await getPendingBindStore().get(payload.nonce);
   if (!row || !payloadMatches(row, payload)) return { ok: false, reason: "invalid" };
+  if (row.usedAt !== null || row.openedAt !== null) return { ok: false, reason: "used" };
   if (row.expiresAt <= now) return { ok: false, reason: "expired" };
-  const claim = await getPendingBindStore().claimOpen(payload.nonce, now);
-  if (claim === "ok") return { ok: true, payload };
+  return { ok: true, payload };
+}
+
+export async function openBuyToken(token: string, now = Date.now()): Promise<OpenBuyResult> {
+  const peeked = await peekBuyToken(token, now);
+  if (!peeked.ok) return peeked;
+  const claim = await getPendingBindStore().claimOpen(peeked.payload.nonce, now);
+  if (claim === "ok") return peeked;
   if (claim === "expired") return { ok: false, reason: "expired" };
   if (claim === "used") return { ok: false, reason: "used" };
   return { ok: false, reason: "invalid" };

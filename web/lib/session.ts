@@ -56,6 +56,7 @@ function deskRecord(state: DeskState, pending: boolean): DeskRecord {
     hoursUsed: 4,
     hoursIncluded: 25,
     computerId: "preview-computer",
+    botName: null,
   };
 }
 
@@ -143,6 +144,7 @@ function parseDesk(raw: unknown): DeskRecord | null {
     hoursUsed: asNumber(deskRaw.hoursUsed) ?? asNumber(deskRaw.hours_used),
     hoursIncluded: asNumber(deskRaw.hoursIncluded) ?? asNumber(deskRaw.hours_included),
     computerId: asString(deskRaw.computerId) ?? asString(deskRaw.computer_id),
+    botName: asString(deskRaw.botName) ?? asString(deskRaw.bot_name),
   };
 }
 

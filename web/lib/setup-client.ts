@@ -17,7 +17,7 @@ async function postForm(
     redirect: "follow",
   });
   if (res.status === 409) {
-    return { ok: false, conflict: true, message: "That desk is already bound to a different request." };
+    return { ok: false, conflict: true, message: "That computer is already connected to a different Bot." };
   }
   if (res.ok || res.status === 204) {
     let revealedPairCode: string | null = null;
@@ -37,22 +37,6 @@ async function postForm(
     };
   }
   return { ok: false, conflict: false, message: "The request did not complete." };
-}
-
-export function approvePair(userCode: string): Promise<ActionResult> {
-  return postForm(SETUP_ACTIONS.approve, { user_code: userCode });
-}
-
-export function denyPair(userCode: string): Promise<ActionResult> {
-  return postForm(SETUP_ACTIONS.deny, { user_code: userCode });
-}
-
-export function createPairKey(seatId?: string): Promise<ActionResult> {
-  return postForm(SETUP_ACTIONS.pair, seatId ? { seat_id: seatId } : {});
-}
-
-export function revokePairKey(seatId?: string): Promise<ActionResult> {
-  return postForm(SETUP_ACTIONS.revoke, seatId ? { seat_id: seatId } : {});
 }
 
 export function resendMagicLink(): Promise<ActionResult> {

@@ -119,6 +119,7 @@ function toDesk(
     hoursUsed: seat.hoursUsed,
     hoursIncluded: seat.hoursIncluded,
     computerId: computer?.id ?? seat.computerId,
+    botName: null,
   };
 }
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { csrfOk, requestOrigin } from "../../../lib/auth/cookies";
 import { userFromRequest } from "../../../lib/auth/request-session";
-import { activeComputerIdsForEmail } from "../../../lib/billing/pending-binds";
+import { listAllowComputers } from "../../../lib/billing/allow-computers";
 import { flockIdForEmail } from "../../../lib/desks/runtime";
 import { getOauthStore, issueCode, redirectAllowed } from "../../../lib/oauth";
 import { clientKey, rateLimitedBody, takeRateLimit } from "../../../lib/rate-limit";
@@ -27,11 +27,11 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!redirectAllowed(client, redirectUri)) return NextResponse.json({ error: "invalid_client" });
   const { user } = await userFromRequest(request);
   if (!user) return NextResponse.json({ status: "signed_out" });
-  const computers = await activeComputerIdsForEmail(user.email);
+  const computers = await listAllowComputers(user.email);
   if (computers.length > 0) {
-    return NextResponse.json({ status: "ready", computers: computers.map((id) => ({ id })) });
+    return NextResponse.json({ status: "ready", client_name: client.clientName, computers });
   }
-  return NextResponse.json({ status: "ready", needs_computer: true });
+  return NextResponse.json({ status: "ready", needs_computer: true, client_name: client.clientName });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -54,17 +54,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     back.searchParams.set("return", `${new URL(request.url).pathname}${new URL(request.url).search}`);
     return NextResponse.redirect(back, { status: 303 });
   }
-  const computers = await activeComputerIdsForEmail(user.email);
+  const computers = await listAllowComputers(user.email);
   const picked = String(form.get("computer_id") ?? "");
   let computerId: string | null = null;
   if (computers.length > 0) {
-    if (!computers.includes(picked)) {
+    const chosen = picked || (computers.length === 1 ? computers[0]?.id ?? "" : "");
+    if (!chosen || !computers.some((row) => row.id === chosen)) {
       return NextResponse.redirect(consentUrl(request), { status: 303 });
     }
-    if (await getOauthStore().computerHeldByOtherSubject(picked, user.id)) {
+    if (await getOauthStore().computerHeldByOtherSubject(chosen, user.id)) {
       return NextResponse.redirect(consentUrl(request), { status: 303 });
     }
-    computerId = picked;
+    computerId = chosen;
   }
   const code = await issueCode({
     clientId,

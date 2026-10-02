@@ -10,7 +10,6 @@ import { getSeatStore, type SeatRecord } from "./seats";
 import { withSeatProvisionLock } from "./provision-lock";
 import {
   ensureComputersForSeat,
-  flockIdForEmail,
   getComputerService,
   paidProviderForbiddenMessage,
   pauseComputer,
@@ -61,7 +60,15 @@ export async function shutdownSeatComputers(
   mode: "stop" | "destroy" = "stop",
 ): Promise<number> {
   if (seat.status === "canceled") {
-    await getOauthStore().revokeSubject(flockIdForEmail(seat.email));
+    const ids = uniqueComputerIds(seat);
+    for (const id of ids) {
+      try {
+        await (await getComputerService()).revokeBoundComputer(id);
+      } catch (err) {
+        console.error("[seat.cancel]", err instanceof Error ? err.message : err);
+      }
+      await getOauthStore().revokeComputerTokens(id);
+    }
     await revokeSeatPairing(seat);
   }
   const ids = uniqueComputerIds(seat);

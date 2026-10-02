@@ -61,6 +61,11 @@ export const SharedAccountAuthSchema = z.object({
 
 export const ComputerOperationAuthSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("capability"), token: z.string().min(1) }),
+  z.object({
+    kind: z.literal("bound"),
+    capabilityId: z.string().min(1),
+    flockId: z.string().min(1),
+  }),
   z.object({ kind: z.literal("shared"), accountId: z.string().min(1) }),
   z.object({ kind: z.literal("none") }),
 ]);

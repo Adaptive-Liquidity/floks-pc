@@ -7,6 +7,9 @@ ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS email TEXT;
 ALTER TABLE oauth_access_tokens ADD COLUMN IF NOT EXISTS computer_id TEXT;
 ALTER TABLE oauth_access_tokens ADD COLUMN IF NOT EXISTS capability_id TEXT;
 ALTER TABLE oauth_access_tokens ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE oauth_access_tokens ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS client_name TEXT;
+CREATE INDEX IF NOT EXISTS oauth_access_tokens_computer_id_idx ON oauth_access_tokens (computer_id);
 
 CREATE TABLE IF NOT EXISTS pending_binds (
   nonce       TEXT PRIMARY KEY,
