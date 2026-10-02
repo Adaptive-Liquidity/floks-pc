@@ -286,7 +286,11 @@ describe("public site lock", () => {
   it("keeps AUP at /legal/aup and legal substance", () => {
     const legal = read("lib/legal.ts");
     assert.match(legal, /path: "\/legal\/aup"/);
-    assert.match(read("lib/config.ts"), /Adaptive Liquidity, Inc\./);
+    assert.match(read("lib/config.ts"), /Asentxia Inc\./);
+    assert.doesNotMatch(read("lib/config.ts"), /Adaptive Liquidity, Inc\./);
+    assert.match(read("lib/billing/catalog.ts"), /seller: "Asentxia Inc\."/);
+    assert.doesNotMatch(read("lib/billing/catalog.ts"), /Adaptive Liquidity, Inc\./);
+    assert.doesNotMatch(read("lib/billing/catalog.ts"), /Asentxia Systems/);
     assert.match(read("lib/config.ts"), /contact@asentxia\.com/);
     assert.match(legal, /SUPPORT_EMAIL/);
     assert.match(legal, /initializing, running, suspending, or resuming/);
