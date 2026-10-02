@@ -39,6 +39,7 @@ import {
   type RunloopControlPlane,
   type RunloopCreateParams,
   type RunloopDevboxSession,
+  mapRunloopDevboxStatus,
   type RunloopDevboxState,
   type RunloopExecResult,
   type RunloopFsResult,
@@ -135,8 +136,10 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
     const box = this.sdk.devbox.fromId(id) as unknown as SdkDevbox;
     let birdId = "unknown";
     let flockId = "unknown";
+    let reported = "";
     try {
       const info = await box.getInfo();
+      reported = info.status;
       const meta = info.metadata ?? {};
       const bird = meta.bird_id || meta["flok.bird_id"];
       const flock = meta.flock_id || meta["flok.flock_id"];
@@ -146,7 +149,9 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
       // metadata is diagnostic only
     }
     const session = new SdkRunloopDevbox(box, birdId, flockId);
-    await session.ensureWorkspace();
+    if (mapRunloopDevboxStatus(reported) === "running") {
+      await session.ensureWorkspace();
+    }
     return session;
   }
 
@@ -797,25 +802,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
 }
 
 function mapStatus(status: string): RunloopDevboxState {
-  switch (status) {
-    case "running":
-      return "running";
-    case "suspended":
-    case "suspending":
-      return "paused";
-    case "shutdown":
-      return "stopped";
-    case "failure":
-      return "error";
-    case "provisioning":
-    case "initializing":
-    case "queued":
-    case "scheduled":
-    case "resuming":
-      return "provisioning";
-    default:
-      return "error";
-  }
+  return mapRunloopDevboxStatus(status);
 }
 
 function classifyFs(err: unknown): string {

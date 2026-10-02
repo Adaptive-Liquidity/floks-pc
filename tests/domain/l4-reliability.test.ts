@@ -213,29 +213,24 @@ describe("L4 reliability / recovery", () => {
     assert.equal(events[0]?.kind, "cleanup");
   });
 
-  it("pause then wake re-probes before ready; observe while paused is retry-safe", async () => {
+  it("pause then observe wakes the computer; operator observe stays retryable", async () => {
     const service = new ComputerService(provider, { store: new MemoryControlPlaneStore() });
     const computer = await service.requestComputer({ birdId: "bird-obs", flockId: "flock-a" });
     const pair = await service.issuePairCode(computer.id);
     const cap = await service.pair(pair.code, { birdId: "bird-obs", flockId: "flock-a" });
     await service.pauseThisComputer(computer.id);
     await assert.rejects(
-      () =>
-        service.observe(capabilityAuth(cap.token), computer.id, {
-          includeAccessibility: true,
-        }),
-      (err: unknown) => err instanceof ObserveRetryable,
-    );
-    await assert.rejects(
       () => service.operatorObserve(computer.id, { includeAccessibility: true }),
       (err: unknown) => err instanceof ObserveRetryable,
     );
-    const woken = await service.wakeThisComputer(computer.id);
-    assert.equal(woken.state, "ready");
     const observation = await service.observe(capabilityAuth(cap.token), computer.id, {
       includeAccessibility: true,
     });
     assert.ok(observation.screenWidth > 0);
+    assert.equal((await service.get(computer.id)).state, "ready");
+    await service.pauseThisComputer(computer.id);
+    const woken = await service.wakeThisComputer(computer.id);
+    assert.equal(woken.state, "ready");
   });
 
   it("wake health-probe failure marks recovery_failed", async () => {
