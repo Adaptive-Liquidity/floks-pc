@@ -349,6 +349,12 @@ export interface ObserveRequest {
 export interface Observation {
   screenWidth: number;
   screenHeight: number;
+  /** click_coordinates use these full-size pixels. A client may scale the image. */
+  coordinateSpace?: "screen_pixels";
+  /** Selected page href when CDP is up. */
+  browserUrl?: string;
+  /** True when the screenshot samples as one colour. */
+  screenBlank?: boolean;
   activeWindow?: string;
   screenshotBase64?: string;
   accessibilitySummary?: unknown;
@@ -384,7 +390,13 @@ export interface ActionBatch {
 
 export interface ActionResult {
   ok: boolean;
-  results: Array<{ action: Action; success: boolean; error?: string }>;
+  results: Array<{
+    action: Action;
+    success: boolean;
+    error?: string;
+    code?: string;
+    finalUrl?: string;
+  }>;
 }
 
 export interface TakeoverGrant {

@@ -32,7 +32,6 @@ export const DISPLAY_HEIGHT = 900;
 export const DISPLAY_DEPTH = 24;
 export const BROWSER_PROFILE_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser/profile`;
 export const INTERACTIVE_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.flok`;
-export const FIXTURE_PATH = `${INTERACTIVE_DIR}/fixture.html`;
 /** Unique PNG path under the flok-ui-writable browser dir (not root-locked .flok). */
 export const OBS_SHOT_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser`;
 export function uniqueObsShotPath(): string {
@@ -691,13 +690,14 @@ if [ -f /home/user/flok/.flok/ensure-interactive.sh ]; then
   chown root:root /home/user/flok/.flok/ensure-interactive.sh
   chmod 755 /home/user/flok/.flok/ensure-interactive.sh
 fi
-if [ -f /home/user/flok/.flok/fixture.html ]; then
-  chown root:root /home/user/flok/.flok/fixture.html
-  chmod 644 /home/user/flok/.flok/fixture.html
-fi
+rm -f /home/user/flok/.flok/fixture.html
 if [ -f /home/user/flok/.flok/cdp-ax.mjs ]; then
   chown root:root /home/user/flok/.flok/cdp-ax.mjs
   chmod 755 /home/user/flok/.flok/cdp-ax.mjs
+fi
+if [ -f /home/user/flok/.flok/cdp-nav.mjs ]; then
+  chown root:root /home/user/flok/.flok/cdp-nav.mjs
+  chmod 755 /home/user/flok/.flok/cdp-nav.mjs
 fi
 chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser
 chmod 700 /home/user/flok/.browser
@@ -762,6 +762,9 @@ fi
 if ! alive "$RUNDIR/openbox.pid"; then
   start_ui openbox openbox
 fi
+if command -v xsetroot >/dev/null 2>&1; then
+  runuser -u "$UI_USER" -- env DISPLAY="$DISPLAY" HOME="$UI_HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" xsetroot -solid '#1f2933' || true
+fi
 if command -v x11vnc >/dev/null 2>&1 && ! alive "$RUNDIR/x11vnc.pid"; then
   start_ui x11vnc x11vnc -display "$DISPLAY" -localhost -nopw -forever -shared -rfbport 5900
 fi
@@ -775,30 +778,4 @@ if command -v websockify >/dev/null 2>&1 && ! alive "$RUNDIR/novnc.pid"; then
   fi
 fi
 echo "ok display=$DISPLAY profile=$PROFILE ui=$UI_USER"
-`;
-
-export const FIXTURE_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <title>FLOKS C3B fixture</title>
-  <style>
-    html, body { margin: 0; width: 1440px; height: 900px; background: #102a43; color: #fff; font: 24px sans-serif; }
-    #target { position: absolute; left: 160px; top: 80px; width: 400px; height: 200px; background: #2cb1bc; }
-    #out { position: absolute; left: 160px; top: 300px; }
-  </style>
-</head>
-<body>
-  <div id="target">click-me</div>
-  <div id="out">idle</div>
-  <script>
-    document.getElementById('target').addEventListener('click', function () {
-      document.getElementById('out').textContent = 'clicked';
-    });
-    document.addEventListener('keydown', function (e) {
-      document.getElementById('out').textContent = 'key:' + e.key;
-    });
-  </script>
-</body>
-</html>
 `;

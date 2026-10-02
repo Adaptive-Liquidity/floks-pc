@@ -134,4 +134,37 @@ describe("runloop launch parameters", () => {
     );
     assert.equal("keep_alive_time_seconds" in keep && keep.keep_alive_time_seconds, 900);
   });
+
+  it("logs runloop.launch mode for create and restore without secrets", async () => {
+    const lines: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      lines.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const keep = await planeFor({});
+      await keep.plane.create(PARAMS);
+      await keep.plane.restore("snap-log", PARAMS);
+      const suspended = await planeFor({ FLOK_RUNLOOP_ON_IDLE: "suspend" });
+      await suspended.plane.create({ ...PARAMS, idleTimeSeconds: 1800 });
+      await suspended.plane.restore("snap-log-suspend", { ...PARAMS, idleTimeSeconds: 2700 });
+    } finally {
+      process.stderr.write = original;
+    }
+    const launch = lines.filter((line) => line.startsWith("runloop.launch "));
+    assert.deepEqual(
+      launch.map((line) => line.trim()),
+      [
+        'runloop.launch {"op":"create","mode":"keep_alive","keep_alive_s":3600}',
+        'runloop.launch {"op":"restore","mode":"keep_alive","keep_alive_s":3600}',
+        'runloop.launch {"op":"create","mode":"suspend","idle_s":1800}',
+        'runloop.launch {"op":"restore","mode":"suspend","idle_s":2700}',
+      ],
+    );
+    const text = launch.join("\n");
+    assert.equal(text.includes("not-sent"), false);
+    assert.equal(text.includes("bird-launch"), false);
+    assert.equal(text.includes("devbox"), false);
+  });
 });

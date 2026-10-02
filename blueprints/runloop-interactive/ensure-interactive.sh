@@ -49,13 +49,14 @@ if [ -f /home/user/flok/.flok/ensure-interactive.sh ]; then
   chown root:root /home/user/flok/.flok/ensure-interactive.sh
   chmod 755 /home/user/flok/.flok/ensure-interactive.sh
 fi
-if [ -f /home/user/flok/.flok/fixture.html ]; then
-  chown root:root /home/user/flok/.flok/fixture.html
-  chmod 644 /home/user/flok/.flok/fixture.html
-fi
+rm -f /home/user/flok/.flok/fixture.html
 if [ -f /home/user/flok/.flok/cdp-ax.mjs ]; then
   chown root:root /home/user/flok/.flok/cdp-ax.mjs
   chmod 755 /home/user/flok/.flok/cdp-ax.mjs
+fi
+if [ -f /home/user/flok/.flok/cdp-nav.mjs ]; then
+  chown root:root /home/user/flok/.flok/cdp-nav.mjs
+  chmod 755 /home/user/flok/.flok/cdp-nav.mjs
 fi
 chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser
 chmod 700 /home/user/flok/.browser
@@ -119,6 +120,9 @@ if ! alive "$RUNDIR/xvfb.pid"; then
 fi
 if ! alive "$RUNDIR/openbox.pid"; then
   start_ui openbox openbox
+fi
+if command -v xsetroot >/dev/null 2>&1; then
+  runuser -u "$UI_USER" -- env DISPLAY="$DISPLAY" HOME="$UI_HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" xsetroot -solid '#1f2933' || true
 fi
 if command -v x11vnc >/dev/null 2>&1 && ! alive "$RUNDIR/x11vnc.pid"; then
   start_ui x11vnc x11vnc -display "$DISPLAY" -localhost -nopw -forever -shared -rfbport 5900

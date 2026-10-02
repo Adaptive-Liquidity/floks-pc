@@ -321,7 +321,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     throw new Error("guest Chrome CDP is not available on the memory plane");
   }
 
-  async uiAction(action: Action): Promise<void> {
+  async uiAction(action: Action): Promise<{ finalUrl?: string } | void> {
     this.assertRunning();
     if (!this.stackUp) await this.ensureInteractiveStack();
     if (action.type === "click_element") {
