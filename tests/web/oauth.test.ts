@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { GET as protectedResourceGet } from "../../web/app/.well-known/oauth-protected-resource/route.ts";
 import { GET as authorizeGet } from "../../web/app/oauth/authorize/route.ts";
 import { POST as registerPost } from "../../web/app/oauth/register/route.ts";
 import { POST as tokenPost } from "../../web/app/oauth/token/route.ts";
@@ -179,6 +180,38 @@ describe("oauth and mcp", { concurrency: 1 }, () => {
     assert.equal(accepted.status, 201);
     const metadata = authorizationServerMetadata("https://staxions-preview.vercel.app");
     assert.deepEqual(metadata.token_endpoint_auth_methods_supported, ["none"]);
+  });
+
+  it("serves protected resource metadata at the URL the MCP 401 advertises", async () => {
+    const origin = "https://staxions-preview.vercel.app";
+    const saved = {
+      APP_URL: process.env.APP_URL,
+      NEXT_PUBLIC_SITE_ORIGIN: process.env.NEXT_PUBLIC_SITE_ORIGIN,
+      WORKOS_REDIRECT_URI: process.env.WORKOS_REDIRECT_URI,
+    };
+    delete process.env.APP_URL;
+    delete process.env.NEXT_PUBLIC_SITE_ORIGIN;
+    delete process.env.WORKOS_REDIRECT_URI;
+    try {
+      const res = await protectedResourceGet(
+        new Request(`${origin}/.well-known/oauth-protected-resource`),
+      );
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get("content-type")?.includes("application/json"), true);
+      const body = (await res.json()) as {
+        resource: string;
+        authorization_servers: string[];
+        scopes_supported: string[];
+      };
+      assert.equal(body.resource, `${origin}/mcp`);
+      assert.deepEqual(body.authorization_servers, [origin]);
+      assert.deepEqual(body.scopes_supported, ["mcp"]);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   it("registers Grok Bot's redirect list and loopback clients", async () => {
