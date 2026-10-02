@@ -6,6 +6,7 @@
  * RUNLOOP_API_KEY must never appear in create env, exec env, or guest files.
  */
 
+import { z } from "zod";
 import type { Action } from "../types.js";
 
 export const RUNLOOP_WORKSPACE_ROOT = "/home/user/flok";
@@ -63,9 +64,57 @@ export interface RunloopCreateParams {
   blueprint: string;
   architecture: "x86_64" | "arm64";
   keepAliveSeconds: number;
+  /** Used as after_idle.idle_time_seconds when FLOK_RUNLOOP_ON_IDLE=suspend. */
+  idleTimeSeconds?: number;
   labels: Record<string, string>;
   /** Guest environment. Must not contain control-plane secrets. */
   envVars: Record<string, string>;
+}
+
+export type RunloopLaunchParameters =
+  | {
+      architecture: "x86_64" | "arm64";
+      keep_alive_time_seconds: number;
+    }
+  | {
+      architecture: "x86_64" | "arm64";
+      lifecycle: { after_idle: { idle_time_seconds: number; on_idle: "suspend" } };
+    };
+
+const RunloopOnIdleSchema = z.enum(["suspend"]).optional();
+
+/** Empty and unset keep today's keep-alive. Any other value is a bad config. */
+export function parseRunloopOnIdle(env: NodeJS.ProcessEnv = process.env): "suspend" | undefined {
+  const trimmed = env.FLOK_RUNLOOP_ON_IDLE?.trim() ?? "";
+  const parsed = RunloopOnIdleSchema.safeParse(trimmed === "" ? undefined : trimmed);
+  if (!parsed.success) {
+    throw new Error('FLOK_RUNLOOP_ON_IDLE must be unset or "suspend"');
+  }
+  return parsed.data;
+}
+
+/** Suspend-on-idle omits keep_alive. Runloop ignores keep_alive when after_idle is set. */
+export function runloopLaunchParameters(
+  params: RunloopCreateParams,
+  fallbackKeepAlive: number,
+  onIdle?: "suspend",
+): RunloopLaunchParameters {
+  const architecture = params.architecture || DEFAULT_RUNLOOP_ARCH;
+  if (onIdle === "suspend") {
+    return {
+      architecture,
+      lifecycle: {
+        after_idle: {
+          idle_time_seconds: params.idleTimeSeconds ?? (params.keepAliveSeconds || fallbackKeepAlive),
+          on_idle: "suspend",
+        },
+      },
+    };
+  }
+  return {
+    architecture,
+    keep_alive_time_seconds: params.keepAliveSeconds || fallbackKeepAlive,
+  };
 }
 
 export interface RunloopExecResult {

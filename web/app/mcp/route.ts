@@ -6,6 +6,7 @@ import { publicOriginFromRequest } from "../../lib/auth/callback";
 import { protocolForPurchase, purchaseToolResult } from "../../lib/billing/bot-purchase";
 import { getComputerService } from "../../lib/desks/runtime";
 import { bindPairFlock } from "../../lib/mcp-flock";
+import { MCP_INSTANCE_ID, vercelMcpLogger } from "../../lib/mcp-log";
 import { accessClaims, getOauthStore, hashToken } from "../../lib/oauth";
 
 export const runtime = "nodejs";
@@ -18,7 +19,7 @@ let gatewayService: ComputerService | null = null;
 async function sharedGateway(): Promise<McpGateway> {
   const service = await getComputerService();
   if (!gateway || gatewayService !== service) {
-    gateway = new McpGateway(service);
+    gateway = new McpGateway(service, { logger: vercelMcpLogger(), instanceId: MCP_INSTANCE_ID });
     gatewayService = service;
   }
   return gateway;

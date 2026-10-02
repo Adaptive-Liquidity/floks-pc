@@ -24,7 +24,10 @@ export async function POST(
   const claim = await service.getBotClaim(claimId);
   if (!claim || claim.flockId !== flock) return NextResponse.json({ ok: false }, { status: 404 });
   const botLabel = String(form.get("bot_name") ?? "").trim();
-  if (botLabel.length < 1 || botLabel.length > 40 || claim.status !== "pending") {
+  if (botLabel.length < 1 || botLabel.length > 40) {
+    return NextResponse.redirect(new URL(`/connect-bot/${claimId}?error=bot_name`, origin), { status: 303 });
+  }
+  if (claim.status !== "pending") {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
   const plan = normalizePlanId(String(form.get("plan") ?? "personal")) ?? "personal";

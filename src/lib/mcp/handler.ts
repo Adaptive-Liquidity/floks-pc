@@ -9,6 +9,7 @@ import {
   CapabilityInvalid,
   CapabilityMissing,
   ComputerAsleep,
+  ComputerError,
   ComputerRebuilt,
   ComputerStarting,
   PairCodeInvalid,
@@ -82,6 +83,8 @@ export interface McpRequestContext {
 
 export interface McpGatewayOptions {
   logger?: McpLogger;
+  /** Per-boot id. Logged with tool calls. Not a secret. */
+  instanceId?: string;
 }
 
 interface ToolOk {
@@ -99,6 +102,7 @@ type ToolOutcome = ToolOk | ToolErr;
 
 export class McpGateway {
   private readonly logger: McpLogger;
+  private readonly instanceId: string;
   private readonly pairThrottle = new PairConnectionThrottle();
 
   constructor(
@@ -106,6 +110,7 @@ export class McpGateway {
     opts: McpGatewayOptions = {},
   ) {
     this.logger = opts.logger ?? silentLogger;
+    this.instanceId = opts.instanceId ?? "";
   }
 
   /** Test helper. */
@@ -220,11 +225,23 @@ export class McpGateway {
     void protocolVersion;
     const name = toolNameFromParams(params);
     const args = argsFromParams(params);
-    this.logger.info("mcp.tools_call", { name });
     if (!name || !isKnownTool(name)) {
+      this.logger.info("mcp.tools_call", {
+        name,
+        instance: this.instanceId,
+        revision: this.service.controlPlaneRevision(),
+        code: "UNKNOWN_TOOL",
+      });
       return toolEnvelope(true, { code: "UNKNOWN_TOOL", message: "unknown tool" });
     }
     const outcome = await this.invokeTool(name, args, ctx);
+    const fields: Record<string, unknown> = {
+      name,
+      instance: this.instanceId,
+      revision: this.service.controlPlaneRevision(),
+    };
+    if (outcome.isError && typeof outcome.payload.code === "string") fields.code = outcome.payload.code;
+    this.logger.info("mcp.tools_call", fields);
     if (outcome.isError === false && outcome.images && outcome.images.length > 0) {
       return toolEnvelope(false, outcome.payload, outcome.images);
     }
@@ -260,7 +277,7 @@ export class McpGateway {
               code: "PHASE_NOT_STARTED",
               phase: "C9",
               message:
-                "Handoffs are not implemented. Explicit Node file sharing is Gate C9. Browser profiles, cookies, keys, .env, and capability tokens are never transferred.",
+                "Handoffs are not available yet. No files, browser profiles, cookies, keys, .env or capability tokens are transferred.",
             },
           };
         }
@@ -347,7 +364,7 @@ export class McpGateway {
     const account = ctx.account;
     if (!account) throw new BotKeyRequired();
     if (parsed.capability_token) {
-      const op = operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
+      const op = await operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
       const status = await this.service.status(op.auth, op.computerId);
       const cap = this.service.capabilityForToken(parsed.capability_token);
       return {
@@ -418,7 +435,7 @@ export class McpGateway {
 
   private async computerStatus(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerStatusArgsSchema.parse(args ?? {});
-    const op = operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
+    const op = await operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
     try {
       const status = await this.service.status(op.auth, op.computerId);
       const payload: Record<string, unknown> = { state: publicToolState(status.state) };
@@ -459,7 +476,7 @@ export class McpGateway {
     if (parsed.env !== undefined) request.env = parsed.env;
     if (parsed.timeout_ms !== undefined) request.timeoutMs = parsed.timeout_ms;
     if (parsed.mode !== undefined) request.mode = parsed.mode;
-    const op = operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
+    const op = await operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
     const result = await this.service.exec(op.auth, op.computerId, request);
     const stdout = clip(result.stdout);
     const stderr = clip(result.stderr);
@@ -484,7 +501,7 @@ export class McpGateway {
     if (parsed.content !== undefined) request.content = parsed.content;
     if (parsed.destination !== undefined) request.destination = parsed.destination;
     if (parsed.encoding !== undefined) request.encoding = parsed.encoding;
-    const op = operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
+    const op = await operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
     const result = await this.service.filesystem(op.auth, op.computerId, request);
     if (!result.ok) {
       return {
@@ -506,7 +523,7 @@ export class McpGateway {
     const request: ObserveRequest = {};
     if (parsed.include_screenshot === true) request.includeScreenshot = true;
     if (parsed.include_accessibility === true) request.includeAccessibility = true;
-    const op = operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
+    const op = await operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
     const observation = await this.service.observe(op.auth, op.computerId, request);
     const payload: Record<string, unknown> = {
       screen_width: observation.screenWidth,
@@ -537,7 +554,7 @@ export class McpGateway {
 
   private async computerAct(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerActArgsSchema.parse(args ?? {});
-    const op = operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
+    const op = await operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
     const result = await this.service.act(op.auth, op.computerId, {
       actions: parsed.actions.map(toAction),
     });
@@ -586,16 +603,23 @@ function cap(token: string): ComputerOperationAuth {
   return capabilityAuth(token);
 }
 
-function operationAuth(
-  service: { capabilityForToken(token: string): { computerId: string; botLabel?: string | null } | null },
+const UNRECOGNISED_KEY =
+  "This key is not recognised. Call computer_pair with no arguments to get a new one.";
+
+async function operationAuth(
+  service: {
+    findCapabilityForToken(
+      token: string,
+    ): Promise<{ computerId: string; botLabel?: string | null } | null>;
+  },
   ctx: McpRequestContext,
   token: string | undefined,
   handle: string | undefined,
-): { auth: ComputerOperationAuth; computerId: string } {
+): Promise<{ auth: ComputerOperationAuth; computerId: string }> {
   if (ctx.perBotKeys) {
     if (!token) throw new BotKeyRequired();
-    const found = service.capabilityForToken(token);
-    if (!found) throw new CapabilityInvalid("mismatch");
+    const found = await service.findCapabilityForToken(token);
+    if (!found) throw new ComputerError("CAPABILITY_INVALID", UNRECOGNISED_KEY);
     if (handle && handle !== found.computerId) throw new CapabilityInvalid("computer");
     return { auth: cap(token), computerId: found.computerId };
   }

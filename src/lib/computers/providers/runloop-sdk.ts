@@ -32,10 +32,11 @@ import {
 } from "./runloop-interactive.js";
 import {
   assertNoControlPlaneSecrets,
-  DEFAULT_RUNLOOP_ARCH,
   LIVE_KEEP_ALIVE_SECONDS,
   RUNLOOP_WORKSPACE_ROOT,
   isIdempotentShutdownError,
+  runloopLaunchParameters,
+  parseRunloopOnIdle,
   type RunloopControlPlane,
   type RunloopCreateParams,
   type RunloopDevboxSession,
@@ -96,32 +97,43 @@ type SdkDevbox = {
   snapshotDisk(params?: { name?: string }): Promise<{ id: string }>;
 };
 
+type DevboxLauncher = {
+  devbox: {
+    createFromBlueprintName(blueprint: string, body: Record<string, unknown>): Promise<SdkDevbox>;
+    createFromSnapshot(snapshotRef: string, body: Record<string, unknown>): Promise<SdkDevbox>;
+    fromId(id: string): SdkDevbox;
+  };
+};
+
 export async function createSdkRunloopPlane(opts: {
   apiKey: string;
   blueprint: string;
   keepAliveSeconds?: number;
+  /** Test stub. Production uses RunloopSDK. */
+  sdk?: DevboxLauncher;
+  env?: NodeJS.ProcessEnv;
 }): Promise<RunloopControlPlane> {
-  const sdk = new RunloopSDK({ bearerToken: opts.apiKey });
+  const onIdle = parseRunloopOnIdle(opts.env ?? process.env);
+  const sdk = opts.sdk ?? (new RunloopSDK({ bearerToken: opts.apiKey }) as unknown as DevboxLauncher);
   return new SdkRunloopControlPlane(
     sdk,
     opts.blueprint,
     opts.keepAliveSeconds ?? LIVE_KEEP_ALIVE_SECONDS,
+    onIdle,
   );
 }
 
 class SdkRunloopControlPlane implements RunloopControlPlane {
   constructor(
-    private readonly sdk: RunloopSDK,
+    private readonly sdk: DevboxLauncher,
     private readonly blueprint: string,
     private readonly keepAliveSeconds: number,
+    private readonly onIdle?: "suspend",
   ) {}
 
   async create(params: RunloopCreateParams): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
-    const launch = {
-      architecture: params.architecture || DEFAULT_RUNLOOP_ARCH,
-      keep_alive_time_seconds: params.keepAliveSeconds || this.keepAliveSeconds,
-    };
+    const launch = runloopLaunchParameters(params, this.keepAliveSeconds, this.onIdle);
     const created = (await this.sdk.devbox.createFromBlueprintName(this.blueprint, {
       name: `flok-${params.birdId}`.slice(0, 48),
       metadata: params.labels,
@@ -160,10 +172,7 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
     params: RunloopCreateParams,
   ): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
-    const launch = {
-      architecture: params.architecture || DEFAULT_RUNLOOP_ARCH,
-      keep_alive_time_seconds: params.keepAliveSeconds || this.keepAliveSeconds,
-    };
+    const launch = runloopLaunchParameters(params, this.keepAliveSeconds, this.onIdle);
     const created = (await this.sdk.devbox.createFromSnapshot(snapshotRef, {
       name: `flok-restore-${params.birdId}`.slice(0, 48),
       metadata: params.labels,
