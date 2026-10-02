@@ -78,7 +78,6 @@ describe("public site lock", () => {
       "pair",
       "docs",
       "help",
-      "buy",
       "architecture",
       "systems",
       "research",
@@ -93,6 +92,9 @@ describe("public site lock", () => {
     for (const name of forbidden) {
       assert.equal(existsSync(join(WEB, "app", name)), false, name);
     }
+    assert.equal(existsSync(join(WEB, "app", "buy", "route.ts")), true);
+    assert.match(read("app/buy/route.ts"), /openBuyToken/);
+    assert.doesNotMatch(read("app/buy/route.ts"), /<h1|PlanGrid/);
   });
 
   it("keeps locked claim-safe copy and kills mock lines", () => {

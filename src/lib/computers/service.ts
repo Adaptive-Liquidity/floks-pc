@@ -916,6 +916,44 @@ export class ComputerService {
     };
   }
 
+  /**
+   * Owner path after checkout. Mints a capability for a computer that already
+   * belongs to this flock. Does not redeem a pair code. The raw token is
+   * returned once and is not stored.
+   */
+  async issueBoundCapability(computerId: string, flockId: string): Promise<PairResult> {
+    await this.reloadIfRevisionChanged();
+    const computer = await this.get(computerId);
+    if (computer.state === "deleted") throw new ComputerNotFound(computerId);
+    if (computer.flockId !== flockId) throw new CapabilityInvalid("flock mismatch");
+    const scopes = copyScopes(parseScopes(DEFAULT_PAIR_SCOPES));
+    const minted = issueCapability(DEFAULT_CAPABILITY_TTL_MS);
+    const cap: ComputerCapability = {
+      id: newId(),
+      computerId: computer.id,
+      birdId: computer.birdId,
+      flockId: computer.flockId,
+      tokenDigest: minted.digest,
+      scopes,
+      issuedAt: minted.issuedAt,
+      expiresAt: minted.expiresAt,
+      revokedAt: null,
+      lastUsedAt: null,
+    };
+    this.capabilities.set(cap.id, cap);
+    this.capabilitiesByDigest.set(cap.tokenDigest, cap.id);
+    await this.persist();
+    return {
+      token: minted.token,
+      capabilityId: cap.id,
+      computerHandle: computer.id,
+      nodeHandle: computer.birdId,
+      flockId: computer.flockId,
+      scopes: copyScopes(scopes),
+      expiresAt: cap.expiresAt,
+    };
+  }
+
   async revokeCapability(capabilityId: string): Promise<void> {
     const cap = this.capabilities.get(capabilityId);
     if (!cap) throw new CapabilityInvalid("not found");

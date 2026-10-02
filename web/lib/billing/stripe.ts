@@ -387,6 +387,7 @@ export async function createCheckoutSession(input: {
   plan: string;
   email: string;
   quantity?: number;
+  bindMetadata?: Record<string, string>;
 }): Promise<{ url: string }> {
   if (!isCheckoutPlanId(input.plan)) {
     throw new CheckoutNotConfigured("That plan is not available for self-serve checkout.");
@@ -414,12 +415,14 @@ export async function createCheckoutSession(input: {
       plan: input.plan,
       price_id: priceId,
       agent_quantity: String(quantity),
+      ...input.bindMetadata,
     },
     subscription_data: {
       metadata: {
         plan: input.plan,
         price_id: priceId,
         agent_quantity: String(quantity),
+        ...input.bindMetadata,
       },
     },
   });

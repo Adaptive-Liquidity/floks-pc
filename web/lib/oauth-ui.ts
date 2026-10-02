@@ -1,10 +1,33 @@
-export function parseAuthorizePreflightBody(text: string): { status?: string; error?: string; ok?: boolean } | null {
+export type AuthorizeComputer = { id: string };
+
+export function parseAuthorizePreflightBody(text: string): {
+  status?: string;
+  error?: string;
+  ok?: boolean;
+  needsComputer?: boolean;
+  computers?: AuthorizeComputer[];
+} | null {
   try {
-    const raw = JSON.parse(text) as { status?: unknown; error?: unknown; ok?: unknown };
+    const raw = JSON.parse(text) as {
+      status?: unknown;
+      error?: unknown;
+      ok?: unknown;
+      needs_computer?: unknown;
+      computers?: unknown;
+    };
+    const computers = Array.isArray(raw.computers)
+      ? raw.computers.flatMap((item) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+          const id = (item as { id?: unknown }).id;
+          return typeof id === "string" && id ? [{ id }] : [];
+        })
+      : [];
     return {
       ...(typeof raw.status === "string" ? { status: raw.status } : {}),
       ...(typeof raw.error === "string" ? { error: raw.error } : {}),
       ...(typeof raw.ok === "boolean" ? { ok: raw.ok } : {}),
+      ...(raw.needs_computer === true ? { needsComputer: true } : {}),
+      ...(computers.length > 0 ? { computers } : {}),
     };
   } catch {
     return null;

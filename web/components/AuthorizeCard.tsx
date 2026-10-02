@@ -8,6 +8,7 @@ import {
   OAUTH_ERROR,
   OAUTH_INVALID,
   OAUTH_LOADING,
+  OAUTH_NO_COMPUTER,
   OAUTH_TITLE,
 } from "@/lib/copy";
 import { CONNECTOR } from "@/lib/config";
@@ -28,6 +29,8 @@ export function AuthorizeCard() {
   const params = new URLSearchParams(query);
   const [state, setState] = useState<OauthUiState>("loading");
   const [detail, setDetail] = useState<string | null>(null);
+  const [needsComputer, setNeedsComputer] = useState(false);
+  const [computers, setComputers] = useState<Array<{ id: string }>>([]);
 
   useEffect(() => {
     const next = new URLSearchParams(query);
@@ -43,6 +46,8 @@ export function AuthorizeCard() {
         const raw = parseAuthorizePreflightBody(text);
         const nextState = oauthUiFromPreflight(res.ok, raw);
         setDetail(nextState.detail);
+        setNeedsComputer(raw?.needsComputer === true);
+        setComputers(raw?.computers ?? []);
         setState(nextState.state);
       })
       .catch(() => {
@@ -85,6 +90,19 @@ export function AuthorizeCard() {
             {Array.from(params.entries()).map(([key, value]) => (
               <input key={key} type="hidden" name={key} value={value} />
             ))}
+            {computers.length > 0 ? (
+              <label className="note">
+                Computer
+                <select name="computer_id" defaultValue={computers[0]?.id} required>
+                  {computers.map((computer) => (
+                    <option key={computer.id} value={computer.id}>
+                      {computer.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {needsComputer && computers.length === 0 ? <p className="note">{OAUTH_NO_COMPUTER}</p> : null}
             <button className="key wide" type="submit" name="allow" value="1">
               Allow
             </button>

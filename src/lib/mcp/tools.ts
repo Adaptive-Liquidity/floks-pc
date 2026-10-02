@@ -44,6 +44,10 @@ export const ComputerPairArgsSchema = z.object({
     .max(128)
     .optional()
     .describe("Optional shared-account metadata. Never sufficient for access."),
+  plan: z
+    .enum(["personal", "pro", "team"])
+    .optional()
+    .describe("Checkout plan when this Bot has no computer yet. Defaults to personal."),
 });
 
 export const ComputerStatusArgsSchema = z.object({
@@ -123,7 +127,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "computer_pair",
     description:
-      "Redeem a one-time pair code for a capability token bound to this Bot's computer/bird/flock. Account/MCP auth does not authorize pairing.",
+      "Redeem a one-time pair code for a capability token bound to this Bot's computer/bird/flock. Account/MCP auth does not authorize pairing. If this Bot has no computer yet, call with an optional plan (personal, pro, or team) to get a checkout link.",
     inputSchema: advertisedSchema(ComputerPairArgsSchema, ["pair_code", "bird_id", "flock_id"]),
   },
   {
