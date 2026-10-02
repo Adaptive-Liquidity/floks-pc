@@ -200,8 +200,7 @@ async function handleMcpHttpInner(
     res.end();
     return;
   }
-  const negotiated =
-    protocolFromRpc(result) ?? supportedRequestProtocol(protocol) ?? MCP_PREFERRED_PROTOCOL;
+  const negotiated = mcpNegotiatedProtocol(result, protocol);
 
   res.statusCode = 200;
   res.setHeader("content-type", "application/json");
@@ -226,13 +225,22 @@ function isJsonRpcNotificationShape(parsed: unknown): boolean {
   return !("id" in parsed) || (parsed as { id?: unknown }).id === undefined;
 }
 
+export function mcpNegotiatedProtocol(
+  result: Record<string, unknown> | Record<string, unknown>[],
+  presented: string | undefined,
+): string {
+  return protocolFromRpc(result) ?? supportedRequestProtocol(presented) ?? MCP_PREFERRED_PROTOCOL;
+}
+
 function protocolFromRpc(
   result: Record<string, unknown> | Record<string, unknown>[],
 ): string | undefined {
   const recs = Array.isArray(result) ? result : [result];
   for (const rec of recs) {
     if (!rec || typeof rec !== "object") continue;
-    const meta = rec._meta;
+    const inner = rec.result;
+    if (!inner || typeof inner !== "object" || Array.isArray(inner)) continue;
+    const meta = (inner as Record<string, unknown>)._meta;
     if (!meta || typeof meta !== "object" || Array.isArray(meta)) continue;
     const version = (meta as Record<string, unknown>)["io.modelcontextprotocol/protocolVersion"];
     if (typeof version === "string" && version.length > 0) return version;

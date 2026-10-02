@@ -135,14 +135,18 @@ export function jsonRpcResult(
   result: unknown,
   protocolVersion: string,
 ): Record<string, unknown> {
+  const meta = {
+    "io.modelcontextprotocol/serverInfo": { ...MCP_SERVER_INFO },
+    "io.modelcontextprotocol/protocolVersion": protocolVersion,
+  };
+  const body =
+    result !== null && typeof result === "object" && !Array.isArray(result)
+      ? { ...(result as Record<string, unknown>), _meta: meta }
+      : result;
   return {
     jsonrpc: "2.0",
     id,
-    result,
-    _meta: {
-      "io.modelcontextprotocol/serverInfo": { ...MCP_SERVER_INFO },
-      "io.modelcontextprotocol/protocolVersion": protocolVersion,
-    },
+    result: body,
   };
 }
 

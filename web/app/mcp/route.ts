@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { McpGateway } from "../../../src/lib/mcp/handler";
+import { mcpNegotiatedProtocol } from "../../../src/lib/mcp/http";
 import { publicOriginFromRequest } from "../../lib/auth/callback";
 import { getComputerService } from "../../lib/desks/runtime";
 import { bindPairFlock } from "../../lib/mcp-flock";
@@ -25,7 +26,7 @@ function rpcId(body: unknown): unknown {
   return "id" in body ? body.id : null;
 }
 
-export async function POST(request: Request): Promise<NextResponse> {
+export async function POST(request: Request): Promise<Response> {
   const origin = publicOriginFromRequest(request);
   const token = bearer(request);
   const claims = token ? await accessClaims(token) : null;
@@ -40,7 +41,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       },
     );
   }
-  const body: unknown = await request.json();
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      { jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } },
+      { status: 400 },
+    );
+  }
   if (!bindPairFlock(body, claims.flock)) {
     return NextResponse.json(
       {
@@ -56,5 +65,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     authorization: `Bearer oauth:${claims.subject}`,
     ...(protocol ? { protocolVersionHeader: protocol } : {}),
   });
-  return NextResponse.json(result ?? { ok: true });
+  if (result === null) return new Response(null, { status: 202 });
+  return NextResponse.json(result, {
+    headers: { "Mcp-Protocol-Version": mcpNegotiatedProtocol(result, protocol) },
+  });
 }
