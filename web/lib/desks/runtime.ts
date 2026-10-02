@@ -146,7 +146,7 @@ async function liveReveal(
   const revealed = await getRevealStore().get(seatId);
   if (!revealed) return null;
   const match = codes.find((rec) => rec.id === revealed.pairCodeId);
-  if (match && match.expiresAt.getTime() <= Date.now()) {
+  if (!match || match.usedAt !== null || match.expiresAt.getTime() <= Date.now()) {
     await getRevealStore().delete(seatId);
     return null;
   }
