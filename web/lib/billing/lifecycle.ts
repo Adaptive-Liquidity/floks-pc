@@ -5,13 +5,17 @@ import {
   decideMetering,
   hoursFromSeconds,
 } from "./metering";
+import { getOauthStore } from "../oauth";
 import { getSeatStore, type SeatRecord } from "./seats";
+import { withSeatProvisionLock } from "./provision-lock";
 import {
   ensureComputersForSeat,
+  flockIdForEmail,
   getComputerService,
   paidProviderForbiddenMessage,
   pauseComputer,
   pingKeepAlive,
+  revokeSeatPairing,
   shutdownComputer,
   webProviderName,
 } from "../desks/runtime";
@@ -44,14 +48,22 @@ export function assertPaidProviderAllowed(
 
 export async function provisionSeatComputers(seat: SeatRecord): Promise<Computer[]> {
   if (seat.status !== "active") return [];
-  assertPaidProviderAllowed(seat);
-  return ensureComputersForSeat(seat);
+  return withSeatProvisionLock(seat.id, async () => {
+    const fresh = (await getSeatStore().getById(seat.id)) ?? seat;
+    if (fresh.status !== "active") return [];
+    assertPaidProviderAllowed(fresh);
+    return ensureComputersForSeat(fresh);
+  });
 }
 
 export async function shutdownSeatComputers(
   seat: SeatRecord,
   mode: "stop" | "destroy" = "stop",
 ): Promise<number> {
+  if (seat.status === "canceled") {
+    await getOauthStore().revokeSubject(flockIdForEmail(seat.email));
+    await revokeSeatPairing(seat);
+  }
   const ids = uniqueComputerIds(seat);
   let n = 0;
   for (const id of ids) {

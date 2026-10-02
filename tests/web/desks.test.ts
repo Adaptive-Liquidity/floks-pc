@@ -3,12 +3,17 @@ import { describe, it, beforeEach } from "node:test";
 import { mapComputerState } from "../../web/lib/desks/map-state.ts";
 import { ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.js";
 import { createSeat, resetSeatStoreForTests, getSeatStore } from "../../web/lib/billing/seats.ts";
+import { provisionSeatComputers, shutdownSeatComputers } from "../../web/lib/billing/lifecycle.ts";
+import { claimStripeEvent, releaseStripeEvent, resetStripeEventsForTests } from "../../web/lib/billing/stripe-events.ts";
 import {
   approvePairCode,
   birdIdForSeat,
+  consumeRevealedCode,
   desksForSeats,
   ensureComputer,
+  ensureComputersForSeat,
   flockIdForEmail,
+  getComputerService,
   issuePairKey,
   resetDeskRuntimeForTests,
   revokePairKey,
@@ -16,6 +21,7 @@ import {
   setPairRevealStoreForTests,
   webProviderName,
 } from "../../web/lib/desks/runtime.ts";
+import { MemoryOauthStore, getOauthStore, setOauthStoreForTests } from "../../web/lib/oauth.ts";
 import { MemoryPairRevealStore } from "../../web/lib/desks/reveal-store.ts";
 
 describe("desk state mapping", () => {
@@ -226,5 +232,81 @@ describe("pair keys on FakeProvider", () => {
       assert.equal(cleared[0]?.userCode, null);
       setPairRevealStoreForTests(writer);
     }
+  });
+
+  it("provisions one computer when two setup calls overlap", async () => {
+    resetSeatStoreForTests();
+    resetDeskRuntimeForTests();
+    const seat = await getSeatStore().upsert(
+      createSeat({
+        email: "lock@example.com",
+        plan: "personal",
+        stripeCustomerId: "cus_lock",
+        status: "active",
+      }),
+    );
+    const [first, second] = await Promise.all([provisionSeatComputers(seat), provisionSeatComputers(seat)]);
+    const ids = new Set([...first, ...second].map((computer) => computer.id));
+    assert.equal(ids.size, 1);
+    assert.equal(first[0]?.id, second[0]?.id);
+  });
+
+  it("revokes the owner token, pair code, and reveal before destroy", async () => {
+    resetSeatStoreForTests();
+    resetDeskRuntimeForTests();
+    resetStripeEventsForTests();
+    setOauthStoreForTests(new MemoryOauthStore());
+    const seat = await getSeatStore().upsert(
+      createSeat({
+        email: "cancel@example.com",
+        plan: "personal",
+        stripeCustomerId: "cus_cancel",
+        status: "active",
+      }),
+    );
+    const created = await provisionSeatComputers(seat);
+    assert.equal(created.length, 1);
+    const computerId = created[0]?.id ?? "";
+    const issued = await issuePairKey({ ...seat, computerId, computerIds: [computerId] });
+    await getOauthStore().saveAccess({
+      tokenHash: "hash-cancel",
+      refreshHash: "refresh-cancel",
+      subject: "user_01JCANCEL",
+      flock: flockIdForEmail(seat.email),
+      clientId: "stax_test",
+      expiresAt: Date.now() + 60_000,
+      refreshExpiresAt: Date.now() + 86_400_000,
+      revoked: false,
+    });
+    await shutdownSeatComputers({ ...seat, status: "canceled", computerId, computerIds: [computerId] });
+    assert.equal((await getOauthStore().getAccess("hash-cancel"))?.revoked, true);
+    assert.equal(await consumeRevealedCode(seat.id), null);
+    const service = await getComputerService();
+    const open = service.listPairCodes(computerId).filter((code) => code.usedAt === null);
+    assert.equal(open.length, 0);
+    assert.equal(issued.code.length > 0, true);
+    assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "new");
+    assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "duplicate");
+    await releaseStripeEvent("evt_retry");
+    assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "new");
+  });
+
+  it("keeps extra computer ids when the paid maximum drops", async () => {
+    const seat = await getSeatStore().upsert(
+      createSeat({
+        email: "downgrade@example.com",
+        plan: "team",
+        stripeCustomerId: "cus_down",
+        status: "active",
+        maxComputers: 2,
+        agentQuantity: 2,
+        computerId: "comp-a",
+        computerIds: ["comp-a", "comp-b", "comp-c", "comp-d"],
+      }),
+    );
+    await ensureComputersForSeat(seat);
+    const fresh = await getSeatStore().getById(seat.id);
+    assert.equal(fresh?.computerIds.includes("comp-c"), true);
+    assert.equal(fresh?.computerIds.includes("comp-d"), true);
   });
 });

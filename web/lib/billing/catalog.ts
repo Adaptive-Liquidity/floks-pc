@@ -175,6 +175,11 @@ export function planFromStripePriceId(
   return null;
 }
 
+export function recordedAgentQuantity(raw: number): number {
+  if (!Number.isFinite(raw) || raw < 1) return 1;
+  return Math.floor(raw);
+}
+
 export function clampAgentQuantity(plan: CheckoutPlanId, raw: number): number {
   const entry = PLAN_CATALOG[plan];
   if (!Number.isFinite(raw) || raw < 1) return entry.minAgents;
