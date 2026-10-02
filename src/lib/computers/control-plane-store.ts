@@ -37,18 +37,38 @@ export const ControlPlaneSnapshotSchema = z.object({
 
 export type ControlPlaneSnapshot = z.infer<typeof ControlPlaneSnapshotSchema>;
 
+export class StaleControlPlane extends Error {
+  constructor() {
+    super("control plane revision changed");
+    this.name = "StaleControlPlane";
+  }
+}
+
 export interface ControlPlaneStore {
   load(): Promise<ControlPlaneSnapshot | null>;
   save(snapshot: ControlPlaneSnapshot): Promise<void>;
+  currentRevision?(): Promise<number>;
+  compareAndSave?(snapshot: ControlPlaneSnapshot, expectedRevision: number): Promise<number>;
 }
 
 export class MemoryControlPlaneStore implements ControlPlaneStore {
   private snapshot: ControlPlaneSnapshot | null = null;
+  private revision = 0;
   async load(): Promise<ControlPlaneSnapshot | null> {
-    return this.snapshot;
+    return this.snapshot ? structuredClone(this.snapshot) : null;
+  }
+  async currentRevision(): Promise<number> {
+    return this.revision;
   }
   async save(snapshot: ControlPlaneSnapshot): Promise<void> {
     this.snapshot = structuredClone(snapshot);
+    this.revision += 1;
+  }
+  async compareAndSave(snapshot: ControlPlaneSnapshot, expectedRevision: number): Promise<number> {
+    if (expectedRevision !== this.revision) throw new StaleControlPlane();
+    this.snapshot = structuredClone(snapshot);
+    this.revision += 1;
+    return this.revision;
   }
 }
 

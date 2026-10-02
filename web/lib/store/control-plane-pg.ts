@@ -1,5 +1,6 @@
 import {
   ControlPlaneSnapshotSchema,
+  StaleControlPlane,
   assertSnapshotHasNoRawSecrets,
   type ControlPlaneSnapshot,
   type ControlPlaneStore,
@@ -33,6 +34,68 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const raw = rows[0]?.snapshot;
     if (!raw) return null;
     return ControlPlaneSnapshotSchema.parse(raw);
+  }
+
+  async currentRevision(): Promise<number> {
+    const rows = await this.query<{ revision: number }>(
+      `SELECT revision FROM control_plane_snapshots WHERE id = $1`,
+      [this.id],
+    );
+    return Number(rows[0]?.revision ?? 0);
+  }
+
+  async compareAndSave(snapshot: ControlPlaneSnapshot, expectedRevision: number): Promise<number> {
+    const parsed = ControlPlaneSnapshotSchema.parse(snapshot);
+    assertSnapshotHasNoRawSecrets(parsed);
+    const pg = await import("pg");
+    const client = new pg.default.Client({ connectionString: this.databaseUrl });
+    await client.connect();
+    try {
+      await client.query("BEGIN");
+      const locked = await client.query<{ revision: string }>(
+        `SELECT revision FROM control_plane_snapshots WHERE id = $1 FOR UPDATE`,
+        [this.id],
+      );
+      if (locked.rows.length === 0) {
+        if (expectedRevision !== 0) {
+          await client.query("ROLLBACK");
+          throw new StaleControlPlane();
+        }
+        await client.query(
+          `INSERT INTO control_plane_snapshots (id, snapshot, revision, updated_at)
+           VALUES ($1, $2::jsonb, 1, NOW())`,
+          [this.id, JSON.stringify(parsed)],
+        );
+        await client.query("COMMIT");
+        return 1;
+      }
+      const current = Number(locked.rows[0]?.revision ?? 0);
+      if (current !== expectedRevision) {
+        await client.query("ROLLBACK");
+        throw new StaleControlPlane();
+      }
+      const updated = await client.query(
+        `UPDATE control_plane_snapshots
+         SET snapshot = $2::jsonb, revision = revision + 1, updated_at = NOW()
+         WHERE id = $1 AND revision = $3`,
+        [this.id, JSON.stringify(parsed), expectedRevision],
+      );
+      if (updated.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        throw new StaleControlPlane();
+      }
+      await client.query("COMMIT");
+      return expectedRevision + 1;
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        /* already closed */
+      }
+      throw err;
+    } finally {
+      await client.end();
+    }
   }
 
   async save(snapshot: ControlPlaneSnapshot): Promise<void> {

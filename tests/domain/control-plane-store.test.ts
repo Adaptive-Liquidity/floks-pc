@@ -57,6 +57,39 @@ describe("L1 control-plane durability", () => {
     assert.throws(() => jailedControlPlanePath("/etc/passwd", cwd));
   });
 
+  it("keeps concurrent creates from two services on one versioned store", async () => {
+    const store = new MemoryControlPlaneStore();
+    const left = new ComputerService(new FakeProvider(), { store });
+    const right = new ComputerService(new FakeProvider(), { store });
+    const [a, b] = await Promise.all([
+      left.requestComputer({ birdId: "bird-left", flockId: "flock" }),
+      right.requestComputer({ birdId: "bird-right", flockId: "flock" }),
+    ]);
+    const reader = new ComputerService(new FakeProvider(), { store });
+    await reader.hydrate();
+    assert.equal((await reader.getByBird("bird-left"))?.id, a.id);
+    assert.equal((await reader.getByBird("bird-right"))?.id, b.id);
+  });
+
+  it("keeps a pause and a new pair code on the same computer", async () => {
+    const store = new MemoryControlPlaneStore();
+    const provider = new FakeProvider();
+    const seed = new ComputerService(provider, { store });
+    const computer = await seed.requestComputer({ birdId: "bird-same", flockId: "flock" });
+    const left = new ComputerService(provider, { store });
+    const right = new ComputerService(provider, { store });
+    await left.hydrate();
+    await right.hydrate();
+    const [issued, paused] = await Promise.all([
+      left.issuePairCode(computer.id),
+      right.pauseThisComputer(computer.id),
+    ]);
+    const reader = new ComputerService(provider, { store });
+    await reader.hydrate();
+    assert.equal((await reader.get(computer.id)).state, paused.state);
+    assert.equal(reader.listPairCodes(computer.id).some((code) => code.id === issued.id), true);
+  });
+
   it("recovers the persist queue after a failed save", async () => {
     class FlakyStore implements ControlPlaneStore {
       snapshot: ControlPlaneSnapshot | null = null;

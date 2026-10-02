@@ -111,7 +111,7 @@ import {
   canonicalizeWorkspacePath,
   workspaceRootForProvider,
 } from "./path.js";
-import type { ControlPlaneStore, ControlPlaneSnapshot } from "./control-plane-store.js";
+import { StaleControlPlane, type ControlPlaneStore, type ControlPlaneSnapshot } from "./control-plane-store.js";
 import {
   capabilitiesFromSnapshot,
   computersFromSnapshot,
@@ -140,6 +140,18 @@ function identityKey(identity: NodeIdentity): string {
   return `${identity.birdId}\n${identity.flockId}`;
 }
 
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function mergeChanged<T extends object>(remote: T, base: T, local: T): T {
+  const merged = { ...remote };
+  for (const key of Object.keys(local) as Array<keyof T>) {
+    if (!sameJson(local[key], base[key])) merged[key] = local[key];
+  }
+  return merged;
+}
+
 export class ComputerService {
   private computers = new Map<string, Computer>();
   private byBird = new Map<string, string>(); // birdId → computerId
@@ -154,6 +166,8 @@ export class ComputerService {
   private readonly ownerId: string | null;
   private readonly workspaceId: string | null;
   private persistChain: Promise<void> = Promise.resolve();
+  private revision = 0;
+  private committed: ControlPlaneSnapshot | null = null;
   private operatorEvents: OperatorEvent[] = [];
   private destroyChains = new Map<string, Promise<unknown>>();
   private axByComputer = new Map<string, AxClickCache>();
@@ -182,9 +196,21 @@ export class ComputerService {
 
   async hydrate(): Promise<void> {
     if (!this.store) return;
+    if (this.store.currentRevision) this.revision = await this.store.currentRevision();
     const snap = await this.store.load();
-    if (!snap) return;
+    if (!snap) {
+      this.committed = this.toSnapshot();
+      return;
+    }
     this.applySnapshot(snap);
+    this.committed = this.toSnapshot();
+  }
+
+  /** Reload when another instance has saved the shared control plane. */
+  async reloadIfRevisionChanged(): Promise<void> {
+    if (!this.store?.currentRevision) return;
+    const latest = await this.store.currentRevision();
+    if (latest !== this.revision) await this.hydrate();
   }
 
   private toSnapshot(): ControlPlaneSnapshot {
@@ -233,12 +259,86 @@ export class ComputerService {
     }
   }
 
+  private overlay(mine: ControlPlaneSnapshot, base: ControlPlaneSnapshot | null): void {
+    this.overlayRecords(
+      computersFromSnapshot(mine),
+      new Map((base?.computers ?? []).map((row) => [row.id, row])),
+      (row) => this.computers.get(row.id),
+      (row) => {
+        this.computers.set(row.id, row);
+        if (row.state !== "deleted") this.byBird.set(row.birdId, row.id);
+      },
+    );
+    this.overlayRecords(
+      pairCodesFromSnapshot(mine),
+      new Map((base?.pairCodes ?? []).map((row) => [row.id, row])),
+      (row) => this.pairCodes.get(row.id),
+      (row) => {
+        this.pairCodes.set(row.id, row);
+        this.pairCodesByDigest.set(row.codeDigest, row.id);
+      },
+    );
+    this.overlayRecords(
+      capabilitiesFromSnapshot(mine),
+      new Map((base?.capabilities ?? []).map((row) => [row.id, row])),
+      (row) => this.capabilities.get(row.id),
+      (row) => {
+        this.capabilities.set(row.id, row);
+        this.capabilitiesByDigest.set(row.tokenDigest, row.id);
+      },
+    );
+    const baseExtras = base?.pairIssueExtras ?? {};
+    for (const [id, extras] of Object.entries(mine.pairIssueExtras)) {
+      if (!sameJson(extras, baseExtras[id])) {
+        this.pairIssueExtras.set(id, { scopes: extras.scopes, capabilityTtlMs: extras.capabilityTtlMs });
+      }
+    }
+    const baseFailures = base?.pairFailuresByIdentity ?? {};
+    for (const [id, win] of Object.entries(mine.pairFailuresByIdentity)) {
+      if (!sameJson(win, baseFailures[id])) this.pairFailuresByIdentity.set(id, win);
+    }
+  }
+
+  private overlayRecords<T extends { id: string }>(
+    localRows: T[],
+    baseRows: Map<string, T>,
+    remoteOf: (row: T) => T | undefined,
+    write: (row: T) => void,
+  ): void {
+    for (const local of localRows) {
+      const remote = remoteOf(local);
+      const prior = baseRows.get(local.id);
+      if (!remote) {
+        write(local);
+        continue;
+      }
+      if (prior && !sameJson(prior, local)) write(mergeChanged(remote, prior, local));
+    }
+  }
+
   private async persist(): Promise<void> {
     const store = this.store;
     if (!store) return;
-    this.persistChain = this.persistChain
-      .catch(() => undefined)
-      .then(() => store.save(this.toSnapshot()));
+    const write = async (): Promise<void> => {
+      if (!store.compareAndSave) {
+        await store.save(this.toSnapshot());
+        return;
+      }
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const mine = this.toSnapshot();
+        try {
+          this.revision = await store.compareAndSave(mine, this.revision);
+          this.committed = structuredClone(mine);
+          return;
+        } catch (err) {
+          if (!(err instanceof StaleControlPlane) || attempt === 7) throw err;
+          const base = this.committed;
+          await this.hydrate();
+          this.overlay(mine, base);
+        }
+      }
+    };
+    this.persistChain = this.persistChain.catch(() => undefined).then(write);
     await this.persistChain;
   }
 
@@ -264,6 +364,7 @@ export class ComputerService {
    * Control-plane: does not issue a Bot capability. Pairing does that.
    */
   async requestComputer(spec: ComputerSpec): Promise<Computer> {
+    await this.hydrate();
     await this.sweepIdle();
     this.assertBetaMayProvision();
     if (this.byBird.has(spec.birdId)) {
@@ -725,6 +826,7 @@ export class ComputerService {
     // C5 may pass verified MCP auth later. C4 must not treat caller-supplied
     // accountId as a limiter (bypass + shared-account DoS).
     void sharedAuth;
+    await this.reloadIfRevisionChanged();
 
     this.sweepPairState();
     this.assertPairRateLimit(identity);
@@ -841,6 +943,7 @@ export class ComputerService {
   }
 
   async status(auth: ComputerOperationAuth, computerId: string): Promise<ComputerStatus> {
+    await this.reloadIfRevisionChanged();
     const { computer } = this.authorize(auth, computerId, "status");
     const result: ComputerStatus = { state: computer.state };
     if (computer.lastActiveAt !== null) {
@@ -871,6 +974,7 @@ export class ComputerService {
     computerId: string,
     request: ExecRequest,
   ): Promise<ExecResult> {
+    await this.reloadIfRevisionChanged();
     // Validate request at service boundary (schema-level enforcement)
     const validatedRequest = ExecRequestSchema.parse(request) as ExecRequest;
 
@@ -924,6 +1028,7 @@ export class ComputerService {
     computerId: string,
     request: FsRequest,
   ): Promise<FsResult> {
+    await this.reloadIfRevisionChanged();
     const validatedRequest = FsRequestSchema.parse(request) as FsRequest;
     const { computer } = this.authorize(auth, computerId, "fs");
     const ref = this.requireProviderRef(computer);
@@ -970,6 +1075,7 @@ export class ComputerService {
     computerId: string,
     request: ObserveRequest,
   ): Promise<Observation> {
+    await this.reloadIfRevisionChanged();
     const { computer } = this.authorize(auth, computerId, "observe");
     this.assertObserveAvailable(computer);
     const ref = this.requireProviderRef(computer);
@@ -996,6 +1102,7 @@ export class ComputerService {
     computerId: string,
     request: ActionBatch,
   ): Promise<ActionResult> {
+    await this.reloadIfRevisionChanged();
     const { computer } = this.authorize(auth, computerId, "act");
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
@@ -1035,11 +1142,13 @@ export class ComputerService {
   }
 
   async wake(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
     this.authorize(auth, computerId, "lifecycle");
     return this.wakeThisComputer(computerId);
   }
 
   async pause(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
     this.authorize(auth, computerId, "lifecycle");
     return this.pauseThisComputer(computerId);
   }
@@ -1347,6 +1456,7 @@ export class ComputerService {
   }
 
   async stop(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
     this.authorize(auth, computerId, "lifecycle");
     return this.transition(computerId, "stopped");
   }

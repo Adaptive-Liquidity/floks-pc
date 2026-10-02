@@ -1,16 +1,22 @@
 import assert from "node:assert/strict";
 import { describe, it, beforeEach } from "node:test";
 import { mapComputerState } from "../../web/lib/desks/map-state.ts";
-import { ComputerService, FakeProvider } from "../../src/lib/computers/index.js";
+import { ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.js";
 import { createSeat, resetSeatStoreForTests, getSeatStore } from "../../web/lib/billing/seats.ts";
 import {
   approvePairCode,
+  birdIdForSeat,
   desksForSeats,
+  ensureComputer,
+  flockIdForEmail,
   issuePairKey,
   resetDeskRuntimeForTests,
   revokePairKey,
+  setComputerServiceForTests,
+  setPairRevealStoreForTests,
   webProviderName,
 } from "../../web/lib/desks/runtime.ts";
+import { MemoryPairRevealStore } from "../../web/lib/desks/reveal-store.ts";
 
 describe("desk state mapping", () => {
   it("maps domain computer states onto the public desk language", () => {
@@ -100,6 +106,7 @@ describe("desk state mapping", () => {
 describe("pair keys on FakeProvider", () => {
   beforeEach(() => {
     resetSeatStoreForTests();
+    setPairRevealStoreForTests(null);
     resetDeskRuntimeForTests();
   });
 
@@ -146,5 +153,78 @@ describe("pair keys on FakeProvider", () => {
     await issuePairKey(seat);
     assert.equal(await approvePairCode(seat, "XXXX-XXXX-XX"), "mismatch");
     assert.equal(webProviderName(), "fake");
+  });
+
+  it("shows the same pair code on a second instance", async () => {
+    const shared = new Map<string, { code: string; pairCodeId: string }>();
+    const first = new MemoryPairRevealStore(shared);
+    const second = new MemoryPairRevealStore(shared);
+    setPairRevealStoreForTests(first);
+    const store = getSeatStore();
+    const seat = await store.upsert(
+      createSeat({
+        email: "two@example.com",
+        plan: "personal",
+        stripeCustomerId: "cus_two",
+      }),
+    );
+    const issued = await issuePairKey(seat);
+    resetDeskRuntimeForTests();
+    setPairRevealStoreForTests(second);
+    const desks = await desksForSeats([seat]);
+    assert.equal(desks[0]?.userCode, issued.code);
+  });
+
+  it("lets a warm instance pair a code issued later and show it on setup", async () => {
+    const store = new MemoryControlPlaneStore();
+    const provider = new FakeProvider();
+    const issuer = new ComputerService(provider, { store });
+    const warm = new ComputerService(provider, { store });
+    setComputerServiceForTests(issuer);
+    const seat = await getSeatStore().upsert(
+      createSeat({
+        email: "warm@example.com",
+        plan: "personal",
+        stripeCustomerId: "cus_warm",
+      }),
+    );
+    await ensureComputer(seat);
+    await warm.hydrate();
+    const issued = await issuePairKey(seat);
+    setComputerServiceForTests(warm);
+    const desks = await desksForSeats([seat]);
+    assert.equal(desks[0]?.userCode, issued.code);
+    const paired = await warm.pair(issued.code, {
+      birdId: birdIdForSeat(seat),
+      flockId: flockIdForEmail(seat.email),
+    });
+    assert.equal(paired.flockId, flockIdForEmail(seat.email));
+  });
+
+  it("keeps each seat's reveal across 50 issue and revoke cycles", async () => {
+    const shared = new Map<string, { code: string; pairCodeId: string }>();
+    const writer = new MemoryPairRevealStore(shared);
+    const reader = new MemoryPairRevealStore(shared);
+    setPairRevealStoreForTests(writer);
+    const store = getSeatStore();
+    for (let i = 0; i < 50; i++) {
+      const seat = await store.upsert(
+        createSeat({
+          email: `cycle-${i}@example.com`,
+          plan: "personal",
+          stripeCustomerId: `cus_cycle_${i}`,
+        }),
+      );
+      const issued = await issuePairKey(seat);
+      setPairRevealStoreForTests(reader);
+      const seen = await desksForSeats([seat]);
+      assert.equal(seen[0]?.userCode, issued.code);
+      setPairRevealStoreForTests(writer);
+      await revokePairKey(seat);
+      setPairRevealStoreForTests(reader);
+      const cleared = await desksForSeats([seat]);
+      assert.equal(cleared[0]?.userCode, null);
+      setPairRevealStoreForTests(writer);
+    }
   });
 });
