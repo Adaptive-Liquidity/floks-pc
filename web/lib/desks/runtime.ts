@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   ComputerService,
   FakeProvider,
+  MemoryControlPlaneStore,
   controlPlaneStoreFromEnv,
   hashPairCode,
 } from "../../../src/lib/computers/index";
@@ -21,6 +22,12 @@ const globalDesk = globalThis as typeof globalThis & {
   __staxReveal?: PairRevealStore | null;
   __staxRevealInjected?: PairRevealStore | null;
 };
+let memoryPlane: MemoryControlPlaneStore | null = null;
+
+function sharedMemoryPlane(): MemoryControlPlaneStore {
+  if (!memoryPlane) memoryPlane = new MemoryControlPlaneStore();
+  return memoryPlane;
+}
 
 function getRevealStore(): PairRevealStore {
   if (globalDesk.__staxReveal) return globalDesk.__staxReveal;
@@ -36,7 +43,7 @@ export function useRunloop(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 export function isProductionRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.NODE_ENV === "production" || env.VERCEL_ENV === "production";
+  return env.NODE_ENV === "production";
 }
 
 async function createProvider(): Promise<ComputerProvider> {
@@ -53,8 +60,9 @@ export async function getComputerService(): Promise<ComputerService> {
       const provider = await createProvider();
       const store =
         webControlPlaneStore(process.env, provider.name) ??
-        controlPlaneStoreFromEnv(process.env, provider.name);
-      const service = new ComputerService(provider, store ? { store } : undefined);
+        controlPlaneStoreFromEnv(process.env, provider.name) ??
+        sharedMemoryPlane();
+      const service = new ComputerService(provider, { store });
       await service.hydrate();
       return service;
     })();
@@ -65,6 +73,10 @@ export async function getComputerService(): Promise<ComputerService> {
 export function setPairRevealStoreForTests(store: PairRevealStore | null): void {
   globalDesk.__staxRevealInjected = store;
   globalDesk.__staxReveal = store;
+}
+
+export function setComputerServiceForTests(service: ComputerService | null): void {
+  globalDesk.__staxDeskService = service ? Promise.resolve(service) : null;
 }
 
 export function resetDeskRuntimeForTests(): void {
@@ -112,6 +124,7 @@ function toDesk(
 
 export async function desksForSeats(seats: SeatRecord[]): Promise<DeskRecord[]> {
   const service = await getComputerService();
+  await service.reloadIfRevisionChanged();
   const out: DeskRecord[] = [];
   for (const seat of seats) {
     const slots = Math.max(1, seat.maxComputers || 1);
@@ -186,15 +199,20 @@ export async function ensureComputersForSeat(seat: SeatRecord): Promise<Computer
     });
     computers.push(created);
   }
-  const nextIds = computers.map((row) => row.id);
-  const changed =
-    nextIds.join("\0") !== seat.computerIds.join("\0") || seat.computerId !== (nextIds[0] ?? null);
+  const ensured = computers.map((row) => row.id);
+  const store = getSeatStore();
+  const fresh = (await store.getById(seat.id)) ?? seat;
+  const computerIds = [...ensured];
+  for (const id of fresh.computerIds) {
+    if (id && !computerIds.includes(id)) computerIds.push(id);
+  }
+  const computerId = computerIds[0] ?? fresh.computerId ?? null;
+  const changed = computerIds.join("\0") !== fresh.computerIds.join("\0") || computerId !== fresh.computerId;
   if (changed) {
-    const store = getSeatStore();
     await store.upsert({
-      ...seat,
-      computerId: nextIds[0] ?? null,
-      computerIds: nextIds,
+      ...fresh,
+      computerId,
+      computerIds,
     });
   }
   return computers;
@@ -208,6 +226,7 @@ export async function ensureComputer(seat: SeatRecord): Promise<Computer> {
 
 export async function issuePairKey(seat: SeatRecord): Promise<{ code: string; expiresAt: Date; computerId: string }> {
   const service = await getComputerService();
+  await service.reloadIfRevisionChanged();
   const computer = await ensureComputer(seat);
   const issued = await service.issuePairCode(computer.id);
   await getRevealStore().put(seat.id, { code: issued.code, pairCodeId: issued.id });
@@ -216,6 +235,7 @@ export async function issuePairKey(seat: SeatRecord): Promise<{ code: string; ex
 
 export async function revokeSeatPairing(seat: SeatRecord): Promise<void> {
   const service = await getComputerService();
+  await service.reloadIfRevisionChanged();
   await getRevealStore().delete(seat.id);
   const ids = new Set<string>(seat.computerIds.filter(Boolean));
   if (seat.computerId) ids.add(seat.computerId);
@@ -231,6 +251,7 @@ export async function revokeSeatPairing(seat: SeatRecord): Promise<void> {
 
 export async function revokePairKey(seat: SeatRecord): Promise<number> {
   const service = await getComputerService();
+  await service.reloadIfRevisionChanged();
   const computer =
     (seat.computerId ? await safeGet(service, seat.computerId) : null) ??
     (await service.getByBird(birdIdForSeat(seat)));
@@ -241,6 +262,7 @@ export async function revokePairKey(seat: SeatRecord): Promise<number> {
 
 export async function approvePairCode(seat: SeatRecord, presented: string): Promise<"ok" | "mismatch"> {
   const service = await getComputerService();
+  await service.reloadIfRevisionChanged();
   const computer =
     (seat.computerId ? await safeGet(service, seat.computerId) : null) ??
     (await service.getByBird(birdIdForSeat(seat)));
