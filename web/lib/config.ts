@@ -31,7 +31,7 @@ export function publicConnector(origin = configuredAppUrl() ?? ""): {
 
 export const SUPPORT_EMAIL =
   process.env.SUPPORT_EMAIL?.trim() || process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim() || "contact@asentxia.com";
-export const SELLER = process.env.NEXT_PUBLIC_SELLER?.trim() || "Adaptive Liquidity, Inc.";
+export const SELLER = process.env.NEXT_PUBLIC_SELLER?.trim() || "Asentxia Inc.";
 export const BRAND_NAME = BRAND.name;
 
 /** Same-origin setup actions. Do not POST to a foreign live host. */

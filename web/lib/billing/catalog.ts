@@ -6,8 +6,8 @@
 
 export const BRAND = {
   name: "Staxions",
-  seller: "Adaptive Liquidity, Inc.",
-  org: "Asentxia Systems",
+  seller: "Asentxia Inc.",
+  org: "Asentxia Inc.",
 } as const;
 
 export const CHECKOUT_PLAN_IDS = ["personal", "pro", "team"] as const;
