@@ -218,10 +218,12 @@ export function ComputerScreen({
 
   function onFrameClick(event: MouseEvent<HTMLDivElement>): void {
     if (mode !== "control") return;
-    const box = frameRef.current?.getBoundingClientRect();
+    const img = frameRef.current?.querySelector("img");
+    const box = img?.getBoundingClientRect() ?? frameRef.current?.getBoundingClientRect();
     if (!box || box.width <= 0 || box.height <= 0) return;
     const x = Math.floor(((event.clientX - box.left) / box.width) * screenWidth);
     const y = Math.floor(((event.clientY - box.top) / box.height) * screenHeight);
+    if (x < 0 || y < 0 || x >= screenWidth || y >= screenHeight) return;
     void sendActions([{ type: "click_coordinates", x, y }]);
   }
 
