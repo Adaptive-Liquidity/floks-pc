@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   ComputerService,
   FakeProvider,
+  MemoryControlPlaneStore,
   controlPlaneStoreFromEnv,
   hashPairCode,
 } from "../../../src/lib/computers/index";
@@ -17,6 +18,12 @@ export function paidProviderForbiddenMessage(): string {
 }
 
 let servicePromise: Promise<ComputerService> | null = null;
+let memoryPlane: MemoryControlPlaneStore | null = null;
+
+function sharedMemoryPlane(): MemoryControlPlaneStore {
+  if (!memoryPlane) memoryPlane = new MemoryControlPlaneStore();
+  return memoryPlane;
+}
 let revealStore: PairRevealStore | null = null;
 let injectedRevealStore: PairRevealStore | null = null;
 
@@ -34,7 +41,7 @@ export function useRunloop(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 export function isProductionRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.NODE_ENV === "production" || env.VERCEL_ENV === "production";
+  return env.NODE_ENV === "production";
 }
 
 async function createProvider(): Promise<ComputerProvider> {
@@ -51,8 +58,9 @@ export async function getComputerService(): Promise<ComputerService> {
       const provider = await createProvider();
       const store =
         webControlPlaneStore(process.env, provider.name) ??
-        controlPlaneStoreFromEnv(process.env, provider.name);
-      const service = new ComputerService(provider, store ? { store } : undefined);
+        controlPlaneStoreFromEnv(process.env, provider.name) ??
+        sharedMemoryPlane();
+      const service = new ComputerService(provider, { store });
       await service.hydrate();
       return service;
     })();
@@ -63,6 +71,10 @@ export async function getComputerService(): Promise<ComputerService> {
 export function setPairRevealStoreForTests(store: PairRevealStore | null): void {
   injectedRevealStore = store;
   revealStore = store;
+}
+
+export function setComputerServiceForTests(service: ComputerService | null): void {
+  servicePromise = service ? Promise.resolve(service) : null;
 }
 
 export function resetDeskRuntimeForTests(): void {
@@ -110,6 +122,7 @@ function toDesk(
 
 export async function desksForSeats(seats: SeatRecord[]): Promise<DeskRecord[]> {
   const service = await getComputerService();
+  await service.reloadIfRevisionChanged();
   const out: DeskRecord[] = [];
   for (const seat of seats) {
     const slots = Math.max(1, seat.maxComputers || 1);
@@ -206,6 +219,7 @@ export async function ensureComputer(seat: SeatRecord): Promise<Computer> {
 
 export async function issuePairKey(seat: SeatRecord): Promise<{ code: string; expiresAt: Date; computerId: string }> {
   const service = await getComputerService();
+  await service.reloadIfRevisionChanged();
   const computer = await ensureComputer(seat);
   const issued = await service.issuePairCode(computer.id);
   await getRevealStore().put(seat.id, { code: issued.code, pairCodeId: issued.id });
@@ -214,6 +228,7 @@ export async function issuePairKey(seat: SeatRecord): Promise<{ code: string; ex
 
 export async function revokePairKey(seat: SeatRecord): Promise<number> {
   const service = await getComputerService();
+  await service.reloadIfRevisionChanged();
   const computer =
     (seat.computerId ? await safeGet(service, seat.computerId) : null) ??
     (await service.getByBird(birdIdForSeat(seat)));
@@ -224,6 +239,7 @@ export async function revokePairKey(seat: SeatRecord): Promise<number> {
 
 export async function approvePairCode(seat: SeatRecord, presented: string): Promise<"ok" | "mismatch"> {
   const service = await getComputerService();
+  await service.reloadIfRevisionChanged();
   const computer =
     (seat.computerId ? await safeGet(service, seat.computerId) : null) ??
     (await service.getByBird(birdIdForSeat(seat)));
