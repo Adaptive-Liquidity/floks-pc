@@ -1,6 +1,6 @@
 "use client";
 
-import { REBUILD_WARNING, RESTART_NOTE, type DashboardStatus } from "@/lib/computers/owner";
+import { REBUILD_WARNING, RESTART_NOTE, type DashboardStatus } from "@/lib/computers/dashboard";
 
 export function ComputerLifecyclePanel({
   status,

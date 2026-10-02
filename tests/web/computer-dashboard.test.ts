@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describe, it, beforeEach } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   ComputerService,
   FakeProvider,
@@ -31,6 +34,7 @@ import {
 import { resetRateLimitsForTests } from "../../web/lib/rate-limit.ts";
 
 const ORIGIN = "https://staxions-preview.vercel.app";
+const WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../web");
 
 let testIp = "198.51.100.1";
 let testIpN = 0;
@@ -123,6 +127,22 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
 
   it("keeps exactly eight MCP tools", () => {
     assert.equal(MCP_TOOL_NAMES.length, 8);
+  });
+
+  it("keeps client dashboard modules free of server owner/pg imports", () => {
+    const files = [
+      "components/SetupDesk.tsx",
+      "components/computer/ComputerManageSection.tsx",
+      "components/computer/ComputerLifecyclePanel.tsx",
+      "components/computer/ComputerActivityLog.tsx",
+      "lib/computers/dashboard.ts",
+    ];
+    for (const rel of files) {
+      const text = readFileSync(join(WEB_ROOT, rel), "utf8");
+      assert.doesNotMatch(text, /computers\/owner/, rel);
+      assert.doesNotMatch(text, /from ["'].*billing\/seats/, rel);
+      assert.doesNotMatch(text, /from ["']pg["']|require\(["']pg["']\)/, rel);
+    }
   });
 
   it("maps desk and domain states onto running/paused/starting/stopped", () => {

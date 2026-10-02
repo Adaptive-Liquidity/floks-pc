@@ -5,7 +5,7 @@ import {
   formatLastActive,
   lifecycleActionsFor,
   type DashboardStatus,
-} from "@/lib/computers/owner";
+} from "@/lib/computers/dashboard";
 import { ComputerActivityLog, type ActivityRow } from "./ComputerActivityLog";
 import { ComputerLifecyclePanel } from "./ComputerLifecyclePanel";
 import "./computer-manage.css";

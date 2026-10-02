@@ -1,12 +1,25 @@
 import { z } from "zod";
-import { type Computer, type ComputerState } from "../../../src/lib/computers/index";
+import { type Computer } from "../../../src/lib/computers/index";
 import { userFromRequest } from "../auth/request-session";
 import { getSeatStore } from "../billing/seats";
 import { getComputerService } from "../desks/runtime";
-import type { DeskState } from "../types";
+import {
+  dashboardStatus,
+  formatLastActive,
+  lifecycleActionsFor,
+  type DashboardStatus,
+} from "./dashboard";
 
-export const DASHBOARD_STATUSES = ["running", "paused", "starting", "stopped"] as const;
-export type DashboardStatus = (typeof DASHBOARD_STATUSES)[number];
+export {
+  DASHBOARD_STATUSES,
+  dashboardStatus,
+  dashboardStatusFromDesk,
+  formatLastActive,
+  lifecycleActionsFor,
+  REBUILD_WARNING,
+  RESTART_NOTE,
+} from "./dashboard";
+export type { DashboardStatus } from "./dashboard";
 
 export const ComputerIdSchema = z
   .string()
@@ -21,54 +34,6 @@ export const LifecycleActionSchema = z.object({
 });
 
 export type LifecycleAction = z.infer<typeof LifecycleActionSchema>["action"];
-
-const STARTING = new Set<ComputerState>([
-  "requested",
-  "provisioning",
-  "waking",
-  "recovering",
-  "checkpointing",
-]);
-
-export function dashboardStatus(state: ComputerState): DashboardStatus {
-  if (state === "ready" || state === "running") return "running";
-  if (state === "paused") return "paused";
-  if (STARTING.has(state)) return "starting";
-  return "stopped";
-}
-
-export function dashboardStatusFromDesk(state: DeskState): DashboardStatus {
-  if (state === "running") return "running";
-  if (state === "sleeping") return "paused";
-  if (state === "provisioning") return "starting";
-  return "stopped";
-}
-
-export function lifecycleActionsFor(status: DashboardStatus): {
-  pause: boolean;
-  resume: boolean;
-  restart: boolean;
-} {
-  return {
-    pause: status === "running",
-    resume: status === "paused" || status === "stopped",
-    restart: status === "running" || status === "paused" || status === "stopped",
-  };
-}
-
-export function formatLastActive(iso: string | null, nowMs = Date.now()): string {
-  if (!iso) return "never";
-  const at = Date.parse(iso);
-  if (!Number.isFinite(at)) return "never";
-  const delta = Math.max(0, nowMs - at);
-  const minutes = Math.floor(delta / 60_000);
-  if (minutes < 1) return `${iso} · just now`;
-  if (minutes < 60) return `${iso} · ${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 48) return `${iso} · ${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${iso} · ${days}d ago`;
-}
 
 export async function computerOwnedByEmail(email: string, computerId: string): Promise<boolean> {
   const seats = await getSeatStore().listByEmail(email);
@@ -178,9 +143,3 @@ export function lifecycleFailure(err: unknown): {
     body: { ok: false, code: "LIFECYCLE_FAILED", message: "That action did not complete." },
   };
 }
-
-export const REBUILD_WARNING =
-  "This restart would rebuild the computer and delete its files. Confirm only if you accept that loss.";
-
-export const RESTART_NOTE =
-  "Restart reboots this computer and keeps files when the disk can be resumed. Pause and resume use suspend/resume.";
