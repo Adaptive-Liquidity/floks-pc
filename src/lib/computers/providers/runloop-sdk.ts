@@ -494,8 +494,9 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   }
 
   private async finishBrowser(opts?: { browser?: "strict" | "best-effort" }): Promise<void> {
+    const budgetMs = opts?.browser === "best-effort" ? 5_000 : 20_000;
     try {
-      await this.ensureBrowser();
+      await this.ensureBrowser(budgetMs);
     } catch (err) {
       if (opts?.browser === "best-effort") {
         process.stderr.write("flok-browser ensure failed\n");
@@ -618,18 +619,21 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   }
 
   /** One flok-ui Chrome at about:blank. A fixture process on 9222 is killed first. */
-  private async ensureBrowser(): Promise<void> {
+  private async ensureBrowser(budgetMs = 20_000): Promise<void> {
     if (!this.interactiveGuest) return;
     try {
       await ensureManagedBrowser({
+        timeoutMs: budgetMs,
         exec: async (argv) => {
-          const timeoutMs = argv.includes("python3") && argv.join(" ").includes("Popen") ? 20_000 : 8_000;
-          const r = await this.execGuest(argv, timeoutMs);
+          const isLaunch = argv.includes("python3") && argv.join(" ").includes("Popen");
+          const commandBudget = isLaunch ? 20_000 : 8_000;
+          const r = await this.execGuest(argv, Math.min(commandBudget, budgetMs));
           return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
         },
         launchArgv: this.chromePopenArgv(BROWSER_START_URL),
       });
     } catch (err) {
+      if (budgetMs < 20_000) throw err;
       if (err instanceof BrowserNotReady) {
         throw new ProviderUnavailable("runloop", await this.chromeReadyFailure());
       }

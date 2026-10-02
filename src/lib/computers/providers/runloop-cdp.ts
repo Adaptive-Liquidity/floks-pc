@@ -5,7 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { navigationReached } from "./runloop-browser.js";
+import { NAVIGATION_REACHED_JS } from "./runloop-browser.js";
 import { RUNLOOP_WORKSPACE_ROOT } from "./runloop-client.js";
 
 export const CDP_DEBUG_PORT = 9222;
@@ -504,7 +504,7 @@ export const CDP_NAV_HELPER_JS = [
   "  }",
   "}",
   SELECT_PAGE_TARGET_JS,
-  navigationReached.toString(),
+  NAVIGATION_REACHED_JS,
   "async function hrefOf(call) {",
   "  const ev = await call('Runtime.evaluate', { expression: 'location.href', returnByValue: true });",
   "  const value = ev && ev.result ? ev.result.value : '';",

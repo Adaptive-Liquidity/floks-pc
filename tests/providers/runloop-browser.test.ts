@@ -3,10 +3,15 @@
  */
 
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import http from "node:http";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { spawn } from "node:child_process";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { crc32, deflateSync } from "node:zlib";
 import { MCP_TOOL_NAMES, MCP_TOOLS } from "../../src/lib/mcp/tools.ts";
 import { MemoryRunloopControlPlane, RunloopProvider } from "../../src/lib/computers/providers/runloop.ts";
@@ -18,6 +23,7 @@ import {
   ensureManagedBrowser,
   navigateManagedPage,
   navigationReached,
+  NAVIGATION_REACHED_JS,
   parseNavHelperStdout,
   runValidatedActions,
   screenIsBlank,
@@ -79,16 +85,19 @@ function rgbPng(width: number, pixels: Array<[number, number, number]>): Buffer 
   ]);
 }
 
-function solidRgbWithDot(width: number, height: number, dotX: number, dotY: number): Buffer {
+function blackWithTextLine(): Buffer {
+  const width = 180;
+  const height = 40;
   const stride = 1 + width * 3;
   const raw = Buffer.alloc(height * stride);
-  for (let y = 0; y < height; y++) {
-    const row = y * stride;
-    raw[row] = 0;
-    raw.fill(255, row + 1, row + stride);
+  for (let y = 8; y < 32; y++) {
+    for (const x of [12, 13, 14, 22, 30, 31, 40, 48, 49, 56]) {
+      const at = y * stride + 1 + x * 3;
+      raw[at] = 255;
+      raw[at + 1] = 255;
+      raw[at + 2] = 255;
+    }
   }
-  const at = dotY * stride + 1 + dotX * 3;
-  raw[at] = 0;
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
@@ -112,6 +121,157 @@ function filesUnder(dir: string): string[] {
     else out.push(path);
   }
   return out;
+}
+
+const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+function wsAccept(key: string): string {
+  return createHash("sha1").update(key + WS_GUID).digest("base64");
+}
+
+function encodeServerFrame(text: string): Buffer {
+  const payload = Buffer.from(text);
+  if (payload.length < 126) return Buffer.concat([Buffer.from([0x81, payload.length]), payload]);
+  const header = Buffer.alloc(4);
+  header[0] = 0x81;
+  header[1] = 126;
+  header.writeUInt16BE(payload.length, 2);
+  return Buffer.concat([header, payload]);
+}
+
+function takeClientFrame(buf: Buffer): { opcode: number; text: string; rest: Buffer } | null {
+  if (buf.length < 2) return null;
+  const opcode = buf[0] & 0x0f;
+  const masked = (buf[1] & 0x80) !== 0;
+  let length = buf[1] & 0x7f;
+  let offset = 2;
+  if (length === 126) {
+    if (buf.length < 4) return null;
+    length = buf.readUInt16BE(2);
+    offset = 4;
+  } else if (length === 127) {
+    return null;
+  }
+  const maskLen = masked ? 4 : 0;
+  if (buf.length < offset + maskLen + length) return null;
+  const mask = masked ? buf.subarray(offset, offset + 4) : null;
+  offset += maskLen;
+  const payload = Buffer.from(buf.subarray(offset, offset + length));
+  if (mask) {
+    for (let i = 0; i < payload.length; i++) payload[i] = payload[i]! ^ mask[i & 3]!;
+  }
+  return { opcode, text: opcode === 1 ? payload.toString("utf8") : "", rest: buf.subarray(offset + length) };
+}
+
+function hrefFor(requested: string, evalCount: number): { href?: string; error?: string } {
+  if (requested.includes("throw-once") && evalCount === 1) {
+    return { error: "Execution context was destroyed" };
+  }
+  if (requested.includes("chrome-error")) return { href: "chrome-error://chromewebdata/" };
+  if (requested === "https://host:8443/p") return { href: "https://host:9443/other" };
+  if (requested.startsWith("http://example.com")) return { href: "https://example.com/home" };
+  return { href: "https://example.com/landed" };
+}
+
+async function withFakeCdp(run: (dir: string) => Promise<void>): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), "flok-cdp-"));
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    if (req.url?.startsWith("/json/version")) {
+      res.end("{}");
+      return;
+    }
+    res.end(
+      JSON.stringify([
+        {
+          id: "p1",
+          type: "page",
+          webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/p1",
+        },
+      ]),
+    );
+  });
+  server.on("upgrade", (req, socket) => {
+    const key = req.headers["sec-websocket-key"];
+    if (typeof key !== "string") {
+      socket.destroy();
+      return;
+    }
+    socket.write(
+      `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${wsAccept(key)}\r\n\r\n`,
+    );
+    let pending = Buffer.alloc(0);
+    let requested = "";
+    let evalCount = 0;
+    socket.on("error", () => undefined);
+    socket.on("data", (chunk: Buffer) => {
+      pending = Buffer.concat([pending, chunk]);
+      for (;;) {
+        const frame = takeClientFrame(pending);
+        if (!frame) break;
+        pending = Buffer.from(frame.rest);
+        if (frame.opcode === 8) {
+          socket.end();
+          break;
+        }
+        if (!frame.text) continue;
+        const msg = JSON.parse(frame.text) as { id?: number; method?: string; params?: { url?: string } };
+        if (msg.method === "Page.navigate") requested = msg.params?.url ?? "";
+        if (msg.method === "Runtime.evaluate") evalCount += 1;
+        const next = msg.method === "Runtime.evaluate" ? hrefFor(requested, evalCount) : {};
+        const body = next.error
+          ? { id: msg.id, error: { message: next.error } }
+          : {
+              id: msg.id,
+              result:
+                msg.method === "Runtime.evaluate"
+                  ? { result: { type: "string", value: next.href } }
+                  : {},
+            };
+        socket.write(encodeServerFrame(JSON.stringify(body)));
+      }
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(9222, "127.0.0.1", () => resolve());
+  });
+  try {
+    await run(dir);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function runHelper(dir: string, url: string): Promise<{ stdout: string; code: number | null }> {
+  const file = join(dir, "cdp-nav.mjs");
+  writeFileSync(file, CDP_NAV_HELPER_JS);
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [file, url], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error(`nav helper timed out for ${url}\n${stderr}\n${stdout}`));
+    }, 25_000);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ stdout, code });
+    });
+  });
 }
 
 describe("visible browser ensure", () => {
@@ -203,6 +363,7 @@ describe("visible browser ensure", () => {
     const stack = sdk.slice(sdk.indexOf("async ensureInteractiveStack"), sdk.indexOf("async screenshot"));
     assert.equal(stack.split("await this.finishBrowser(").length - 1, 2);
     assert.match(sdk, /PNG24:/);
+    assert.match(sdk, /best-effort" \? 5_000/);
   });
 
   it("times out instead of hanging when Chrome never answers", async () => {
@@ -322,7 +483,9 @@ describe("honest open_url", () => {
     assert.equal(selectPageTarget(pages)?.id, "first");
     assert.equal(CDP_AX_HELPER_JS.includes(SELECT_PAGE_TARGET_JS), true);
     assert.equal(CDP_NAV_HELPER_JS.includes(SELECT_PAGE_TARGET_JS), true);
-    assert.equal(CDP_NAV_HELPER_JS.includes(navigationReached.toString()), true);
+    assert.equal(CDP_NAV_HELPER_JS.includes(NAVIGATION_REACHED_JS), true);
+    assert.match(CDP_NAV_HELPER_JS, /function navigationReached\(/);
+    assert.doesNotMatch(CDP_NAV_HELPER_JS, /__name\(/);
     assert.match(CDP_NAV_HELPER_JS, /chrome-error:\/\//);
     assert.match(CDP_NAV_HELPER_JS, /try \{\s*href = await hrefOf\(call\);/);
     assert.match(CDP_NAV_HELPER_JS, /Page\.navigate/);
@@ -353,6 +516,64 @@ describe("honest open_url", () => {
     const ui = sdk.slice(sdk.indexOf("async uiAction"), sdk.indexOf("private requireFs"));
     assert.doesNotMatch(ui, /chromePopenArgv|google-chrome|Popen/);
   });
+
+  it("guest navigationReached matches the host function", () => {
+    const guestValue: unknown = runInNewContext(`${NAVIGATION_REACHED_JS}\nnavigationReached`, { URL });
+    if (typeof guestValue !== "function") throw new Error("guest navigationReached missing");
+    const guest = guestValue as (requested: string, current: string) => boolean;
+    const matrix: Array<[string, string, boolean]> = [
+      ["http://example.com/", "https://example.com/", true],
+      ["https://example.com", "https://example.com/", true],
+      ["https://example.com/", "https://www.example.com/home", true],
+      ["https://x.com/", "https://x.com/home", true],
+      ["https://example.com/a?q=1#h", "https://example.com/b", true],
+      ["https://host:8443/p", "https://host:9443/p", false],
+      ["https://example.com/", "https://evil.test/", false],
+      ["https://twitter.com/", "https://x.com/", false],
+      ["http://example.com:8080/", "https://example.com/", false],
+      ["https://example.com:8443/p", "https://example.com:8443/other", true],
+      ["file:///home/user/flok/a.html", "file:///home/user/flok/a.html", true],
+      ["file:///home/user/flok/dir/", "file:///home/user/flok/dir", true],
+      ["file:///home/user/flok/a.html", "file:///home/user/flok/b.html", false],
+      ["file:///home/user/flok/a.html", "https://example.com/", false],
+      ["https://example.com/", "not a url", false],
+    ];
+    for (const [requested, current, expected] of matrix) {
+      assert.equal(navigationReached(requested, current), expected, `${requested} -> ${current}`);
+      assert.equal(guest(requested, current), navigationReached(requested, current), `${requested} -> ${current}`);
+    }
+  });
+
+  it("runs the nav helper against a loopback CDP", async () => {
+    await withFakeCdp(async (dir) => {
+      const same = await runHelper(dir, "https://example.com/");
+      const sameBody = JSON.parse(same.stdout) as { ok?: boolean; finalUrl?: string };
+      assert.equal(same.code, 0);
+      assert.equal(sameBody.ok, true);
+      assert.equal(sameBody.finalUrl, "https://example.com/landed");
+
+      const upgraded = await runHelper(dir, "http://example.com/start");
+      const upgradedBody = JSON.parse(upgraded.stdout) as { ok?: boolean; finalUrl?: string };
+      assert.equal(upgradedBody.ok, true);
+      assert.equal(upgradedBody.finalUrl, "https://example.com/home");
+
+      const errored = await runHelper(dir, "https://example.com/chrome-error");
+      const erroredBody = JSON.parse(errored.stdout) as { ok?: boolean; errorText?: string; href?: string };
+      assert.equal(erroredBody.ok, false);
+      assert.equal(erroredBody.errorText, "navigation error page");
+      assert.match(erroredBody.href ?? "", /^chrome-error:/);
+
+      const thrown = await runHelper(dir, "https://example.com/throw-once");
+      const thrownBody = JSON.parse(thrown.stdout) as { ok?: boolean; finalUrl?: string };
+      assert.equal(thrownBody.ok, true);
+      assert.equal(thrownBody.finalUrl, "https://example.com/landed");
+
+      const port = await runHelper(dir, "https://host:8443/p");
+      const portBody = JSON.parse(port.stdout) as { ok?: boolean; href?: string };
+      assert.equal(portBody.ok, false);
+      assert.equal(portBody.href, "https://host:9443/other");
+    });
+  });
 });
 
 describe("screen truth and fixture removal", () => {
@@ -375,9 +596,7 @@ describe("screen truth and fixture removal", () => {
     assert.equal(screenIsBlank(gray), false);
     assert.equal(screenIsBlank(palette), false);
     assert.equal(screenIsBlank(solid), true);
-    const offColumn = Math.round(1439 / 23);
-    assert.equal(offColumn === 0 || offColumn === 720, false);
-    assert.equal(screenIsBlank(solidRgbWithDot(1440, 900, offColumn, 0)), false);
+    assert.equal(screenIsBlank(blackWithTextLine()), false);
   });
 
   it("keeps the fixture out of customer source and starts a visible background", () => {

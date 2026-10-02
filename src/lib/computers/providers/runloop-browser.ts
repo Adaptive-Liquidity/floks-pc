@@ -105,7 +105,7 @@ export async function ensureManagedBrowser(opts: {
 /**
  * Same registrable host and effective port. http to https on the default
  * ports counts. Path, query, and hash are ignored. file: still requires the
- * same path. Self-contained so toString() is valid guest JavaScript.
+ * same path.
  */
 export function navigationReached(requested: string, current: string): boolean {
   function normalizePath(path: string): string {
@@ -149,6 +149,42 @@ export function navigationReached(requested: string, current: string): boolean {
   if (!upgrade && wantPort !== gotPort) return false;
   return true;
 }
+
+/** Guest copy. Plain JavaScript, not Function.toString(), so a minifier cannot rename it. */
+export const NAVIGATION_REACHED_JS = `function navigationReached(requested, current) {
+  function normalizePath(path) {
+    if (path.length > 1 && path.endsWith("/")) return path.slice(0, -1);
+    return path.length === 0 ? "/" : path;
+  }
+  function registrableHost(host) {
+    const lower = host.toLowerCase();
+    return lower.startsWith("www.") ? lower.slice(4) : lower;
+  }
+  function effectivePort(url) {
+    if (url.port) return url.port;
+    if (url.protocol === "http:") return "80";
+    if (url.protocol === "https:") return "443";
+    return "";
+  }
+  let want, got;
+  try {
+    want = new URL(requested);
+    got = new URL(current);
+  } catch {
+    return false;
+  }
+  if (want.protocol === "file:" || got.protocol === "file:") {
+    return want.protocol === "file:" && got.protocol === "file:" && normalizePath(want.pathname) === normalizePath(got.pathname);
+  }
+  if (registrableHost(want.hostname) !== registrableHost(got.hostname)) return false;
+  const wantPort = effectivePort(want);
+  const gotPort = effectivePort(got);
+  const upgrade = want.protocol === "http:" && got.protocol === "https:" && wantPort === "80" && gotPort === "443";
+  if (want.protocol !== got.protocol && !upgrade) return false;
+  if (!upgrade && wantPort !== gotPort) return false;
+  return true;
+}
+`;
 
 export function navigationFailureMessage(origin: string, href: string | undefined): string {
   const now = href && href.trim().length > 0 ? href.trim() : "unknown";
@@ -298,7 +334,7 @@ function unfilterScanlines(data: Buffer, width: number, height: number, bpp: num
   return out;
 }
 
-/** True when sampled pixels are one colour. A decode miss is not treated as blank. */
+/** True when every pixel is one colour. A decode miss is not treated as blank. */
 export function screenIsBlank(png: Buffer): boolean {
   if (png.length < 8 || !png.subarray(0, 8).equals(PNG_SIG)) return false;
   let width = 0;
@@ -340,23 +376,12 @@ export function screenIsBlank(png: Buffer): boolean {
   }
   const pixels = unfilterScanlines(inflated, width, height, bpp);
   if (!pixels) return false;
+  const count = width * height;
   const firstAt = 0;
-  const xs = new Set<number>([0, width - 1]);
-  const ys = new Set<number>([0, height - 1]);
-  const xSteps = Math.min(24, width);
-  const ySteps = Math.min(16, height);
-  for (let i = 0; i < xSteps; i++) {
-    xs.add(Math.min(width - 1, Math.round((i * (width - 1)) / Math.max(1, xSteps - 1))));
-  }
-  for (let j = 0; j < ySteps; j++) {
-    ys.add(Math.min(height - 1, Math.round((j * (height - 1)) / Math.max(1, ySteps - 1))));
-  }
-  for (const y of ys) {
-    for (const x of xs) {
-      const at = (y * width + x) * bpp;
-      for (let c = 0; c < channels; c++) {
-        if (pixels[at + c] !== pixels[firstAt + c]) return false;
-      }
+  for (let i = 0; i < count; i++) {
+    const at = i * bpp;
+    for (let c = 0; c < channels; c++) {
+      if (pixels[at + c] !== pixels[firstAt + c]) return false;
     }
   }
   return true;
