@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { McpGateway } from "../../../src/lib/mcp/handler";
-import { MCP_TOOL_NAMES } from "../../../src/lib/mcp/tools";
 import { publicOriginFromRequest } from "../../lib/auth/callback";
 import { getComputerService } from "../../lib/desks/runtime";
 import { bindPairFlock } from "../../lib/mcp-flock";
@@ -58,8 +57,4 @@ export async function POST(request: Request): Promise<NextResponse> {
     ...(protocol ? { protocolVersionHeader: protocol } : {}),
   });
   return NextResponse.json(result ?? { ok: true });
-}
-
-export function toolNames(): readonly string[] {
-  return MCP_TOOL_NAMES;
 }
