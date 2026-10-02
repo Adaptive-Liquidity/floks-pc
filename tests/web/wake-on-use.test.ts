@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ComputerService, FakeProvider, ProviderUnavailable } from "../../src/lib/computers/index.ts";
+import { ComputerService, ComputerUseNotAvailable, FakeProvider, ProviderUnavailable } from "../../src/lib/computers/index.ts";
 import type { ComputerSpec, ExecRequest, ExecResult, ObserveRequest } from "../../src/lib/computers/types.ts";
 import { McpGateway } from "../../src/lib/mcp/handler.ts";
 import { RecordingLogger } from "../../src/lib/mcp/log.ts";
@@ -19,6 +19,8 @@ class ShutdownProvider extends FakeProvider {
   starting = false;
   cdpReady = true;
   statusCalls = 0;
+  axThrows = false;
+  axCalls = 0;
 
   override async provision(spec: ComputerSpec) {
     const created = await super.provision(spec);
@@ -51,6 +53,10 @@ class ShutdownProvider extends FakeProvider {
   }
 
   override async observe(ref: string, request: ObserveRequest) {
+    if (request.includeAccessibility === true && this.axThrows) {
+      this.axCalls += 1;
+      throw new ComputerUseNotAvailable();
+    }
     const shot = await super.observe(ref, { ...request, includeAccessibility: false });
     if (request.includeAccessibility === true && this.cdpReady) {
       return super.observe(ref, request);
@@ -308,6 +314,32 @@ describe("wake a shut-down computer on use", () => {
     assert.equal(observe.body.accessibility_pending, true);
     assert.equal(observe.body.retry_after_ms, 10000);
     assert.equal(observe.body.accessibility_summary, undefined);
+  });
+
+  it("returns a screenshot when the accessibility dump is not available yet", async () => {
+    const provider = new ShutdownProvider();
+    provider.axThrows = true;
+    let now = 0;
+    const service = new ComputerService(provider, {
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+    });
+    const gateway = new McpGateway(service);
+    const computer = await service.requestComputer({ birdId: "bird-ax-throw", flockId: "flock-wake" });
+    const paired = await service.issueBoundCapability(computer.id, computer.flockId);
+    const observe = await tool(
+      gateway,
+      "computer_observe",
+      { include_screenshot: true, include_accessibility: true },
+      { capabilityId: paired.capabilityId, flockId: computer.flockId },
+    );
+    assert.equal(observe.isError, false);
+    assert.equal(observe.body.has_screenshot, true);
+    assert.equal(observe.body.accessibility_pending, true);
+    assert.equal(observe.body.accessibility_summary, undefined);
+    assert.ok(provider.axCalls > 1);
   });
 });
 

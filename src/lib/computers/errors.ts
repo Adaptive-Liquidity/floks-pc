@@ -244,7 +244,6 @@ export class ComputerAsleep extends ComputerError {
   }
 }
 
-/** The old disk could not be resumed. The bot must see this before using the replacement. */
 export class BotKeyRequired extends ComputerError {
   constructor() {
     super(
@@ -255,6 +254,7 @@ export class BotKeyRequired extends ComputerError {
   }
 }
 
+/** The old disk could not be resumed. The bot must see this before using the replacement. */
 export class ComputerRebuilt extends ComputerError {
   constructor() {
     super(

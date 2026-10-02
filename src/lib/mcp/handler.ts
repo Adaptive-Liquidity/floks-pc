@@ -361,7 +361,23 @@ export class McpGateway {
       };
     }
     if (parsed.pair_code) {
-      const redeemed = await this.service.redeemBotClaim({ code: parsed.pair_code, flockId: account.flock });
+      const conn = this.connectionIdentity(ctx);
+      try {
+        this.pairThrottle.assert(conn);
+      } catch {
+        this.logger.warn("mcp.pair_throttled", { connection: conn.authenticated ? "auth" : "unauth" });
+        return {
+          isError: true,
+          payload: { code: "PAIR_THROTTLED", message: "too many pair attempts" },
+        };
+      }
+      let redeemed: Awaited<ReturnType<ComputerService["redeemBotClaim"]>>;
+      try {
+        redeemed = await this.service.redeemBotClaim({ code: parsed.pair_code, flockId: account.flock });
+      } catch (err) {
+        this.pairThrottle.noteFailure(conn);
+        throw err;
+      }
       if (redeemed.pending) {
         return {
           isError: false,
@@ -369,6 +385,7 @@ export class McpGateway {
             connected: false,
             pending: true,
             approve_url: `${account.origin}/connect-bot/${redeemed.claimId}`,
+            ...(redeemed.checkoutOpen ? { message: "Waiting for checkout to finish." } : {}),
           },
         };
       }

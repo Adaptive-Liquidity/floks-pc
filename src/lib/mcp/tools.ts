@@ -41,6 +41,8 @@ const handle = z
 
 export const ComputerPairArgsSchema = z.object({
   pair_code: z.string().min(1).max(32).optional().describe("One-time pair code (ABCD-EFGH-JK)."),
+  capability_token: capabilityToken,
+  computer_handle: handle,
   bird_id: z.string().min(1).max(128).optional(),
   flock_id: z.string().min(1).max(128).optional(),
   account_id: z

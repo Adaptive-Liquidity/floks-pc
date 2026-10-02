@@ -20,6 +20,7 @@
 
 import { randomBytes } from "node:crypto";
 import type { ComputerProvider } from "./providers/provider.js";
+import { ComputerUseNotAvailable } from "./providers/runloop.js";
 import type {
   ActionBatch,
   ActionResult,
@@ -69,6 +70,7 @@ import {
   PairCodeInvalid,
   PathEscape,
   ProviderNeedsReplacement,
+  ProviderUnavailable,
   QuotaExceeded,
 } from "./errors.js";
 import {
@@ -973,6 +975,7 @@ export class ComputerService {
   }
 
   private static readonly BOT_CLAIM_TTL_MS = 15 * 60 * 1000;
+  private static readonly BOT_CHECKOUT_TTL_MS = 24 * 60 * 60 * 1000;
   private static readonly BOT_KEY_RENEW_WITHIN_MS = 7 * 24 * 60 * 60 * 1000;
 
   private maybeRenew(capability: ComputerCapability): ComputerCapability {
@@ -1072,30 +1075,44 @@ export class ComputerService {
     return next;
   }
 
-  async setClaimCheckoutNonce(input: { claimId: string; flockId: string; nonce: string }): Promise<void> {
+  async setClaimCheckoutNonce(input: {
+    claimId: string;
+    flockId: string;
+    nonce: string;
+    botLabel: string;
+  }): Promise<void> {
     await this.reloadIfRevisionChanged();
     const claim = this.botClaims.get(input.claimId);
     if (!claim || claim.flockId !== input.flockId) throw new PairCodeInvalid("mismatch");
-    this.botClaims.set(claim.id, { ...claim, checkoutNonce: input.nonce });
+    if (claim.status === "redeemed" || claim.status === "denied") throw new PairCodeInvalid(claim.status);
+    if (claim.expiresAt.getTime() <= this.now()) throw new PairCodeInvalid("expired");
+    const label = input.botLabel.trim();
+    if (label.length < 1 || label.length > 40) throw new PairCodeInvalid("bot label");
+    this.botClaims.set(claim.id, {
+      ...claim,
+      checkoutNonce: input.nonce,
+      botLabel: label,
+      expiresAt: new Date(this.now() + ComputerService.BOT_CHECKOUT_TTL_MS),
+    });
     await this.persist();
   }
 
-  async attachPurchaseToClaim(
-    checkoutNonce: string,
-    computerId: string,
-    botLabel?: string,
-  ): Promise<boolean> {
+  async attachPurchaseToClaim(checkoutNonce: string, computerId: string): Promise<boolean> {
     await this.reloadIfRevisionChanged();
     const claim = [...this.botClaims.values()].find((row) => row.checkoutNonce === checkoutNonce);
     if (!claim || claim.status === "denied" || claim.status === "redeemed") return false;
+    if (claim.expiresAt.getTime() <= this.now()) return false;
+    const label = claim.botLabel?.trim() ?? "";
+    if (label.length < 1 || label.length > 40) return false;
     const computer = this.computers.get(computerId);
     if (!computer || computer.state === "deleted" || computer.flockId !== claim.flockId) return false;
     if (this.liveBotKey(computerId)) return false;
-    const label = botLabel?.trim();
     this.botClaims.set(claim.id, {
       ...claim,
+      status: "approved",
       computerId,
-      ...(label ? { botLabel: label } : {}),
+      botLabel: label,
+      expiresAt: new Date(this.now() + ComputerService.BOT_CHECKOUT_TTL_MS),
     });
     await this.persist();
     return true;
@@ -1119,7 +1136,10 @@ export class ComputerService {
   async redeemBotClaim(input: {
     code: string;
     flockId: string;
-  }): Promise<{ pending: true; claimId: string; expiresAt: Date } | { pending: false; pair: PairResult; botLabel: string | null }> {
+  }): Promise<
+    | { pending: true; claimId: string; expiresAt: Date; checkoutOpen: boolean }
+    | { pending: false; pair: PairResult; botLabel: string | null }
+  > {
     await this.reloadIfRevisionChanged();
     const digest = hashPairCode(input.code);
     const id = this.botClaimsByDigest.get(digest);
@@ -1136,7 +1156,12 @@ export class ComputerService {
     if (claim.expiresAt.getTime() <= this.now()) return fail("expired");
     if (claim.status === "denied" || claim.status === "redeemed") return fail(claim.status);
     if (claim.status === "pending" || !claim.computerId) {
-      return { pending: true, claimId: claim.id, expiresAt: claim.expiresAt };
+      return {
+        pending: true,
+        claimId: claim.id,
+        expiresAt: claim.expiresAt,
+        checkoutOpen: claim.status === "pending" && claim.checkoutNonce !== null,
+      };
     }
     const computer = this.computers.get(claim.computerId);
     if (!computer || computer.state === "deleted" || computer.flockId !== claim.flockId) {
@@ -1432,16 +1457,18 @@ export class ComputerService {
     }
     const deadline = this.now() + 20_000;
     for (;;) {
-      const observation = await this.provider.observe(ref, request);
-      if (observation.accessibilitySummary !== undefined) return observation;
-      if (this.now() >= deadline) {
-        if (observation.screenshotBase64) {
-          return { ...observation, accessibilityPending: true };
-        }
-        throw new ObserveRetryable("starting");
+      try {
+        const observation = await this.provider.observe(ref, request);
+        if (observation.accessibilitySummary !== undefined) return observation;
+      } catch (err) {
+        if (!(err instanceof ComputerUseNotAvailable) && !(err instanceof ProviderUnavailable)) throw err;
       }
+      if (this.now() >= deadline) break;
       await this.sleepFn(Math.min(500, Math.max(0, deadline - this.now())));
     }
+    const shot = await this.provider.observe(ref, { ...request, includeAccessibility: false });
+    if (shot.screenshotBase64) return { ...shot, accessibilityPending: true };
+    throw new ObserveRetryable("starting");
   }
 
   private async pollUntilUp(ref: string, deadline: number): Promise<void> {

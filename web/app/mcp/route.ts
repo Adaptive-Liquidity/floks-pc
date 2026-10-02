@@ -100,7 +100,7 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 function logRequestShape(request: Request, body: unknown): void {
-  if (process.env.NODE_ENV === "production") return;
+  if (process.env.VERCEL_ENV === "production") return;
   const names = [...request.headers.keys()].filter(
     (name) => !/authorization|cookie|token|code/i.test(name),
   );

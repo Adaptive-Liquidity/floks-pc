@@ -19,8 +19,15 @@ export async function POST(
   if (!user) return NextResponse.json({ ok: false }, { status: 401 });
   const { claimId } = await context.params;
   const form = await request.formData();
-  const plan = normalizePlanId(String(form.get("plan") ?? "personal")) ?? "personal";
   const flock = flockIdForEmail(user.email);
+  const service = await getComputerService();
+  const claim = await service.getBotClaim(claimId);
+  if (!claim || claim.flockId !== flock) return NextResponse.json({ ok: false }, { status: 404 });
+  const botLabel = String(form.get("bot_name") ?? "").trim();
+  if (botLabel.length < 1 || botLabel.length > 40 || claim.status !== "pending") {
+    return NextResponse.json({ ok: false }, { status: 400 });
+  }
+  const plan = normalizePlanId(String(form.get("plan") ?? "personal")) ?? "personal";
   const link = await createBuyLink({
     origin,
     email: user.email,
@@ -29,6 +36,6 @@ export async function POST(
     clientId: "connect-bot",
     plan,
   });
-  await (await getComputerService()).setClaimCheckoutNonce({ claimId, flockId: flock, nonce: link.nonce });
+  await service.setClaimCheckoutNonce({ claimId, flockId: flock, nonce: link.nonce, botLabel });
   return NextResponse.redirect(link.url, { status: 303 });
 }

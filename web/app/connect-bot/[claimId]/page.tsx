@@ -52,6 +52,10 @@ export default async function ConnectBotPage({
           </button>
         </form>
         <form method="post" action={`/api/bots/claims/${claimId}/buy`}>
+          <label className="note">
+            Bot name
+            <input name="bot_name" required minLength={1} maxLength={40} />
+          </label>
           <input type="hidden" name="plan" value="personal" />
           <button className="ghost wide" type="submit">
             Buy a new computer for this bot
