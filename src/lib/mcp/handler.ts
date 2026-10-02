@@ -271,6 +271,12 @@ export class McpGateway {
         case "handoff_receive": {
           const parsed = HandoffArgsSchema.parse(args ?? {});
           requireToken(parsed.capability_token);
+          if (parsed.capability_token) {
+            this.service.noteHandoffAttempt({
+              token: parsed.capability_token,
+              operation: name,
+            });
+          }
           return {
             isError: true,
             payload: {

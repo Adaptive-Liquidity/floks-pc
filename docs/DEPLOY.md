@@ -9,7 +9,8 @@ Do **not** promote a Preview to Vercel Production, change DNS, or edit live Stri
 - Root Directory: `web`
 - `web/vercel.json` installs `web` **and** the repo root so `../src` can resolve `zod`.
 - Cron: `GET /api/cron/computers` every 5 minutes (Pro plan). Set `CRON_SECRET`. Vercel sends `Authorization: Bearer $CRON_SECRET`.
-- Apply SQL in order: `migrations/0001_node_computers.sql` through `0008_stripe_events.sql`. Run `npm run migrate` only with `DATABASE_URL` set, and only after the owner approves that database change.
+- Apply SQL in order: `migrations/0001_node_computers.sql` through `0009_pending_binds.sql`. Run `npm run migrate` only with `DATABASE_URL` set, and only after the owner approves that database change.
+- `migrations/0010_computer_activity_events.sql` is **owner-applied**. Do not apply it from this PR. The activity log stays in memory until that file is applied against `DATABASE_URL`.
 - Apply `migrations/0005_pair_reveals.sql` to the preview database before pull request 33 or 34 deploys. Without that column, `/setup` returns 500 for a paying customer.
 
 ## Kill switch and rollback

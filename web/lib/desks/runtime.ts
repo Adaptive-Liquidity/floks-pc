@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import {
   ComputerService,
   FakeProvider,
+  MemoryActivityStore,
   MemoryControlPlaneStore,
   controlPlaneStoreFromEnv,
   hashPairCode,
 } from "../../../src/lib/computers/index";
+import { PostgresActivityStore } from "../store/activity-pg";
 import type { Computer, ComputerPairCode, ComputerProvider } from "../../../src/lib/computers/index";
 import { shouldSuspendForCap } from "../billing/metering";
 import { getSeatStore, type SeatRecord } from "../billing/seats";
@@ -24,10 +26,18 @@ const globalDesk = globalThis as typeof globalThis & {
   __staxRevealInjected?: PairRevealStore | null;
 };
 let memoryPlane: MemoryControlPlaneStore | null = null;
+let memoryActivity: MemoryActivityStore | null = null;
 
 function sharedMemoryPlane(): MemoryControlPlaneStore {
   if (!memoryPlane) memoryPlane = new MemoryControlPlaneStore();
   return memoryPlane;
+}
+
+function sharedActivityStore(): MemoryActivityStore | PostgresActivityStore {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (databaseUrl) return new PostgresActivityStore(databaseUrl);
+  if (!memoryActivity) memoryActivity = new MemoryActivityStore();
+  return memoryActivity;
 }
 
 function getRevealStore(): PairRevealStore {
@@ -63,7 +73,10 @@ export async function getComputerService(): Promise<ComputerService> {
         webControlPlaneStore(process.env, provider.name) ??
         controlPlaneStoreFromEnv(process.env, provider.name) ??
         sharedMemoryPlane();
-      const service = new ComputerService(provider, { store });
+      const service = new ComputerService(provider, {
+        store,
+        activityStore: sharedActivityStore(),
+      });
       service.setWakeAdmission(async (computerId) => {
         try {
           const seats = await getSeatStore().listAll();

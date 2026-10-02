@@ -274,6 +274,17 @@ export class ComputerRebuilt extends ComputerError {
   }
 }
 
+/** Restart would provision a blank machine. The owner must confirm first. */
+export class RebuildConfirmRequired extends ComputerError {
+  constructor() {
+    super(
+      "REBUILD_CONFIRM_REQUIRED",
+      "This restart would rebuild the computer and delete its files. Confirm to continue.",
+    );
+    this.name = "RebuildConfirmRequired";
+  }
+}
+
 /** The vendor machine cannot be resumed. The seat needs a new devbox with the same computer id. */
 export class ProviderNeedsReplacement extends ComputerError {
   constructor(provider: string) {

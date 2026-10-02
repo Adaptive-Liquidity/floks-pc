@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useChrome } from "@/components/Chrome";
 import { PayPills } from "@/components/PayPills";
+import { ComputerManageSection } from "@/components/computer/ComputerManageSection";
+import { dashboardStatusFromDesk } from "@/lib/computers/owner";
 import { publicConnector, SETUP_ACTIONS } from "@/lib/config";
 import { ACCOUNT_EMPTY, ACCOUNT_HOME_LINE, PAST_DUE, WEBHOOK_LAG, ZERO_SEATS } from "@/lib/copy";
 import type { SeatSession } from "@/lib/types";
@@ -69,6 +71,13 @@ export function SetupDesk({
                   : `Bot: ${desk.botName}`
                 : "Bot: none"}
             </p>
+            {desk.computerId ? (
+              <ComputerManageSection
+                computerId={desk.computerId}
+                preview={preview}
+                initialStatus={dashboardStatusFromDesk(desk.state)}
+              />
+            ) : null}
             {desk.computerId ? (
               <button
                 className="ghost wide"
