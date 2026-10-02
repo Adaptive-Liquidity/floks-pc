@@ -4,7 +4,7 @@
  */
 
 import { capabilityAuth, sharedAccountAuth } from "../computers/capabilities.js";
-import { CapabilityMissing, PairCodeInvalid } from "../computers/errors.js";
+import { CapabilityMissing, ComputerAsleep, ComputerStarting, PairCodeInvalid } from "../computers/errors.js";
 import type { ComputerService } from "../computers/service.js";
 import type {
   Action,
@@ -277,7 +277,7 @@ export class McpGateway {
         payload: {
           connected: true,
           computer_handle: viewed.computerId,
-          state: status.state,
+          state: publicToolState(status.state),
         },
       };
     }
@@ -331,14 +331,28 @@ export class McpGateway {
   private async computerStatus(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerStatusArgsSchema.parse(args ?? {});
     const op = operationAuth(ctx, parsed.capability_token, parsed.computer_handle);
-    const status = await this.service.status(op.auth, op.computerId);
-    const payload: Record<string, unknown> = { state: status.state };
-    if (status.lastActiveAt) payload.last_active_at = status.lastActiveAt.toISOString();
-    if (ctx.bound) {
-      payload.connected = true;
-      payload.computer_handle = this.service.getCapability(ctx.bound.capabilityId).computerId;
+    try {
+      const status = await this.service.status(op.auth, op.computerId);
+      const payload: Record<string, unknown> = { state: publicToolState(status.state) };
+      if (status.lastActiveAt) payload.last_active_at = status.lastActiveAt.toISOString();
+      if (ctx.bound) {
+        payload.connected = true;
+        payload.computer_handle = this.service.getCapability(ctx.bound.capabilityId).computerId;
+      }
+      return { isError: false, payload };
+    } catch (err) {
+      if (err instanceof ComputerStarting || err instanceof ComputerAsleep) {
+        const payload: Record<string, unknown> = {
+          state: err instanceof ComputerAsleep ? "sleeping" : "starting",
+        };
+        if (ctx.bound) {
+          payload.connected = true;
+          payload.computer_handle = this.service.getCapability(ctx.bound.capabilityId).computerId;
+        }
+        return { isError: false, payload };
+      }
+      throw err;
     }
-    return { isError: false, payload };
   }
 
   private async computerExec(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
@@ -533,6 +547,20 @@ function toolEnvelope(
     isError,
     structuredContent: payload,
   };
+}
+
+function publicToolState(state: string): string {
+  if (state === "paused" || state === "stopped") return "sleeping";
+  if (
+    state === "waking" ||
+    state === "provisioning" ||
+    state === "requested" ||
+    state === "recovering"
+  ) {
+    return "starting";
+  }
+  if (state === "ready" || state === "running") return "running";
+  return state;
 }
 
 function toolNameFromParams(params: unknown): string | undefined {

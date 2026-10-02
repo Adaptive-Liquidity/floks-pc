@@ -228,6 +228,30 @@ export class RestoreUnsupported extends ComputerError {
   }
 }
 
+/** Wake did not reach a running devbox before the wait expired. */
+export class ComputerStarting extends ComputerError {
+  constructor() {
+    super("COMPUTER_STARTING", "Your computer is starting. Try again in a minute.");
+    this.name = "ComputerStarting";
+  }
+}
+
+/** The seat is canceled, past due, or out of included hours, so the devbox stays down. */
+export class ComputerAsleep extends ComputerError {
+  constructor() {
+    super("COMPUTER_ASLEEP", "This seat is not active, so the computer stays asleep.");
+    this.name = "ComputerAsleep";
+  }
+}
+
+/** The vendor machine cannot be resumed. The seat needs a new devbox with the same computer id. */
+export class ProviderNeedsReplacement extends ComputerError {
+  constructor(provider: string) {
+    super("PROVIDER_NEEDS_REPLACEMENT", `${provider} devbox cannot resume`, { provider });
+    this.name = "ProviderNeedsReplacement";
+  }
+}
+
 export class CleanupFailed extends ComputerError {
   constructor() {
     super(

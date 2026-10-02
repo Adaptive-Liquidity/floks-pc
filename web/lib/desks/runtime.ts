@@ -7,6 +7,7 @@ import {
   hashPairCode,
 } from "../../../src/lib/computers/index";
 import type { Computer, ComputerPairCode, ComputerProvider } from "../../../src/lib/computers/index";
+import { shouldSuspendForCap } from "../billing/metering";
 import { getSeatStore, type SeatRecord } from "../billing/seats";
 import { webControlPlaneStore } from "../store/control-plane-pg";
 import { mapComputerState } from "./map-state";
@@ -63,6 +64,19 @@ export async function getComputerService(): Promise<ComputerService> {
         controlPlaneStoreFromEnv(process.env, provider.name) ??
         sharedMemoryPlane();
       const service = new ComputerService(provider, { store });
+      service.setWakeAdmission(async (computerId) => {
+        try {
+          const seats = await getSeatStore().listAll();
+          const seat = seats.find(
+            (row) => row.computerId === computerId || row.computerIds.includes(computerId),
+          );
+          if (!seat) return true;
+          if (seat.status !== "active") return false;
+          return !shouldSuspendForCap(seat);
+        } catch {
+          return false;
+        }
+      });
       await service.hydrate();
       return service;
     })();

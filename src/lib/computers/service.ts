@@ -51,7 +51,9 @@ import {
   CapabilityInvalid,
   CapabilityMissing,
   CapabilityRevoked,
+  ComputerAsleep,
   ComputerNotFound,
+  ComputerStarting,
   InsufficientScope,
   CheckpointRequired,
   CleanupFailed,
@@ -64,6 +66,7 @@ import {
   IllegalStateTransition,
   PairCodeInvalid,
   PathEscape,
+  ProviderNeedsReplacement,
   QuotaExceeded,
 } from "./errors.js";
 import {
@@ -179,6 +182,8 @@ export class ComputerService {
   private readonly beta: BetaPolicy;
   private readonly betaRegistry: BetaRegistry | undefined;
   private readonly now: () => number;
+  private readonly wakeTimeoutMs: number;
+  private wakeAdmission: (computerId: string) => Promise<boolean> = async () => true;
 
   constructor(
     private readonly provider: ComputerProvider,
@@ -189,6 +194,7 @@ export class ComputerService {
       beta?: BetaPolicy;
       betaRegistry?: BetaRegistry;
       now?: () => number;
+      wakeTimeoutMs?: number;
     },
   ) {
     this.store = opts?.store;
@@ -197,6 +203,12 @@ export class ComputerService {
     this.beta = opts?.beta ?? DISABLED_BETA_POLICY;
     this.betaRegistry = opts?.betaRegistry;
     this.now = opts?.now ?? Date.now;
+    this.wakeTimeoutMs = opts?.wakeTimeoutMs ?? 90_000;
+  }
+
+  /** When false, a shut-down devbox stays down. Missing seats are allowed. */
+  setWakeAdmission(admit: (computerId: string) => Promise<boolean>): void {
+    this.wakeAdmission = admit;
   }
 
   async hydrate(): Promise<void> {
@@ -1018,9 +1030,140 @@ export class ComputerService {
     return rec;
   }
 
+  /**
+   * If the vendor machine is suspended or shut down, resume it or replace it
+   * and wait until it is up. Running time stays billable. A refused seat is
+   * left down.
+   */
+  private async ensureAwake(computer: Computer): Promise<Computer> {
+    if (computer.state === "deleted" || computer.state === "deleting") {
+      throw new ComputerNotFound(computer.id);
+    }
+    if (!computer.providerRef) return computer;
+    if ((await this.classifyProvider(computer.providerRef)) === "up") return computer;
+    return this.enqueueDestroy(computer.id, () => this.ensureAwakeLocked(computer.id));
+  }
+
+  private async ensureAwakeLocked(computerId: string): Promise<Computer> {
+    let computer = await this.get(computerId);
+    const ref = computer.providerRef;
+    if (!ref) return computer;
+    if (computer.state === "deleted" || computer.state === "deleting") {
+      throw new ComputerNotFound(computer.id);
+    }
+    const kind = await this.classifyProvider(ref);
+    if (kind === "up") return computer;
+    if (!(await this.wakeAdmission(computer.id))) throw new ComputerAsleep();
+    const deadline = this.now() + this.wakeTimeoutMs;
+    computer = this.markWaking(computer);
+    await this.persist();
+    let liveRef = computer.providerRef ?? ref;
+    if (kind === "asleep") {
+      try {
+        await this.withinDeadline(this.provider.wake(liveRef), deadline);
+      } catch (err) {
+        if (err instanceof ComputerStarting || !this.shouldReplaceDevbox(err)) throw err;
+        computer = await this.replaceDevbox(computer);
+        liveRef = computer.providerRef ?? liveRef;
+      }
+    }
+    await this.withinDeadline(this.pollUntilUp(liveRef, deadline), deadline);
+    const latest = await this.get(computer.id);
+    if (latest.state === "waking") {
+      this.applyTransition(latest, "ready");
+      await this.persist();
+    }
+    return this.get(computer.id);
+  }
+
+  private markWaking(computer: Computer): Computer {
+    let current = computer;
+    if (current.state === "ready" || current.state === "running") {
+      current = this.applyTransition(current, "stopped");
+    }
+    if (
+      current.state === "paused" ||
+      current.state === "stopped" ||
+      current.state === "recovery_failed"
+    ) {
+      current = this.applyTransition(current, "waking");
+    }
+    return current;
+  }
+
+  private async classifyProvider(ref: string): Promise<"up" | "asleep" | "starting"> {
+    try {
+      const status = await this.provider.status(ref);
+      if (status.state === "ready" || status.state === "running") return "up";
+      if (
+        status.state === "paused" ||
+        status.state === "stopped" ||
+        status.state === "deleted" ||
+        status.state === "error"
+      ) {
+        return "asleep";
+      }
+      return "starting";
+    } catch {
+      return "asleep";
+    }
+  }
+
+  private shouldReplaceDevbox(err: unknown): boolean {
+    if (err instanceof ProviderNeedsReplacement) return true;
+    const message = err instanceof Error ? err.message : "";
+    return /DEVBOX_SHUTDOWN|cannot resume/i.test(message);
+  }
+
+  private async replaceDevbox(computer: Computer): Promise<Computer> {
+    const oldRef = computer.providerRef;
+    const created = await this.provider.provision({
+      birdId: computer.birdId,
+      flockId: computer.flockId,
+      osType: computer.osType,
+      ...(computer.computerClass ? { computerClass: computer.computerClass } : {}),
+      ...(computer.cpu !== null ? { cpu: computer.cpu } : {}),
+      ...(computer.memoryMb !== null ? { memoryMb: computer.memoryMb } : {}),
+      ...(computer.diskGb !== null ? { diskGb: computer.diskGb } : {}),
+      ...(computer.baseImageVersion ? { baseImageVersion: computer.baseImageVersion } : {}),
+    });
+    const updated = await this.patchComputer(computer.id, { providerRef: created.providerRef });
+    if (oldRef && oldRef !== created.providerRef) {
+      await this.provider.destroy(oldRef).catch(() => undefined);
+    }
+    return updated;
+  }
+
+  private async pollUntilUp(ref: string, deadline: number): Promise<void> {
+    for (;;) {
+      if ((await this.classifyProvider(ref)) === "up") return;
+      if (this.now() >= deadline) throw new ComputerStarting();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  private withinDeadline<T>(work: Promise<T>, deadline: number): Promise<T> {
+    const remaining = deadline - this.now();
+    if (remaining <= 0) return Promise.reject(new ComputerStarting());
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new ComputerStarting()), remaining);
+      work.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      );
+    });
+  }
+
   async status(auth: ComputerOperationAuth, computerId: string): Promise<ComputerStatus> {
     await this.reloadIfRevisionChanged();
-    const { computer } = this.authorize(auth, computerId, "status");
+    const authorized = this.authorize(auth, computerId, "status");
+    const computer = await this.ensureAwake(authorized.computer);
     const result: ComputerStatus = { state: computer.state };
     if (computer.lastActiveAt !== null) {
       result.lastActiveAt = computer.lastActiveAt;
@@ -1056,7 +1199,8 @@ export class ComputerService {
 
     const required: CapabilityScope[] =
       validatedRequest.mode === "shell" ? ["exec", "shell"] : ["exec"];
-    const { computer } = this.authorize(auth, computerId, required);
+    const authorized = this.authorize(auth, computerId, required);
+    const computer = await this.ensureAwake(authorized.computer);
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
     const root = workspaceRootForProvider(computer.provider);
@@ -1106,7 +1250,8 @@ export class ComputerService {
   ): Promise<FsResult> {
     await this.reloadIfRevisionChanged();
     const validatedRequest = FsRequestSchema.parse(request) as FsRequest;
-    const { computer } = this.authorize(auth, computerId, "fs");
+    const authorized = this.authorize(auth, computerId, "fs");
+    const computer = await this.ensureAwake(authorized.computer);
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
     const root = workspaceRootForProvider(computer.provider);
@@ -1152,7 +1297,8 @@ export class ComputerService {
     request: ObserveRequest,
   ): Promise<Observation> {
     await this.reloadIfRevisionChanged();
-    const { computer } = this.authorize(auth, computerId, "observe");
+    const authorized = this.authorize(auth, computerId, "observe");
+    const computer = await this.ensureAwake(authorized.computer);
     this.assertObserveAvailable(computer);
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
@@ -1179,7 +1325,8 @@ export class ComputerService {
     request: ActionBatch,
   ): Promise<ActionResult> {
     await this.reloadIfRevisionChanged();
-    const { computer } = this.authorize(auth, computerId, "act");
+    const authorized = this.authorize(auth, computerId, "act");
+    const computer = await this.ensureAwake(authorized.computer);
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
     const slots = rewriteActSlots(

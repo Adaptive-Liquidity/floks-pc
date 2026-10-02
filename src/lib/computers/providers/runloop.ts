@@ -29,7 +29,7 @@ import type {
   RestoreRequest,
   TakeoverGrant,
 } from "../types.js";
-import { ComputerError, PathEscape, ProviderUnavailable } from "../errors.js";
+import { ComputerError, PathEscape, ProviderNeedsReplacement, ProviderUnavailable } from "../errors.js";
 import { assertInsideRoot } from "../path.js";
 import { logCdpAxObserve, mapCdpAxDump, sanitizeCdpAxHint, validateAction } from "./runloop-interactive.js";
 import {
@@ -210,7 +210,16 @@ export class RunloopProvider implements ComputerProvider {
 
   async wake(ref: string): Promise<void> {
     const s = await this.requireSession(ref);
-    await s.resume();
+    const st = await s.state();
+    if (st === "stopped") {
+      try {
+        await s.resume();
+      } catch {
+        throw new ProviderNeedsReplacement("runloop");
+      }
+    } else if (st !== "running") {
+      await s.resume();
+    }
     try {
       await s.ensureInteractiveStack();
       if (this.requireInteractive && !s.interactiveGuest) {

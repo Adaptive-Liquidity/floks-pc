@@ -32,6 +32,31 @@ export type RunloopDevboxState =
   | "deleted"
   | "error";
 
+/** Runloop reports both `shutdown` and `DEVBOX_SHUTDOWN`. */
+export function mapRunloopDevboxStatus(status: string): RunloopDevboxState {
+  const normalized = status.trim().toLowerCase().replace(/^devbox_/, "");
+  switch (normalized) {
+    case "running":
+      return "running";
+    case "suspended":
+    case "suspending":
+      return "paused";
+    case "shutdown":
+    case "stopped":
+      return "stopped";
+    case "failure":
+      return "error";
+    case "provisioning":
+    case "initializing":
+    case "queued":
+    case "scheduled":
+    case "resuming":
+      return "provisioning";
+    default:
+      return "error";
+  }
+}
+
 export interface RunloopCreateParams {
   birdId: string;
   flockId: string;

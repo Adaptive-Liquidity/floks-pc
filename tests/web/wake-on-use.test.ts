@@ -78,6 +78,10 @@ describe("wake a shut-down computer on use", () => {
     provider.down.add(computer.providerRef);
     const paired = await service.issueBoundCapability(computer.id, computer.flockId);
     const bound = { capabilityId: paired.capabilityId, flockId: computer.flockId };
+    const pair = await tool(gateway, "computer_pair", {}, bound);
+    assert.equal(pair.isError, false);
+    assert.equal(pair.body.connected, true);
+    assert.equal(pair.body.state, "running");
     const exec = await tool(gateway, "computer_exec", { argv: ["echo", "hi"] }, bound);
     assert.equal(exec.isError, false);
     assert.equal(exec.body.exit_code, 0);

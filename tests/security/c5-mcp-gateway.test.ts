@@ -166,7 +166,7 @@ describe("C5 MCP gateway", () => {
       arguments: { capability_token: noema.token, computer_handle: noema.handle },
     });
     assert.equal((res.result as { isError: boolean }).isError, false);
-    assert.equal(payload(res).state, "ready");
+    assert.equal(payload(res).state, "running");
     assert.equal("providerDetail" in payload(res), false);
     assert.equal("provider_ref" in payload(res), false);
   });
@@ -729,7 +729,7 @@ describe("C5 MCP gateway", () => {
         }),
       });
       const stJson = (await st.json()) as { result: { isError: boolean; structuredContent: { state: string } } };
-      assert.equal(stJson.result.structuredContent.state, "ready");
+      assert.equal(stJson.result.structuredContent.state, "running");
 
       const oversized = await fetch(base, {
         method: "POST",
