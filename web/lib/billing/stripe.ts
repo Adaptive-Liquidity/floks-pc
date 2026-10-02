@@ -387,6 +387,8 @@ export async function createCheckoutSession(input: {
   plan: string;
   email: string;
   quantity?: number;
+  bindMetadata?: Record<string, string>;
+  expiresAt?: number;
 }): Promise<{ url: string }> {
   if (!isCheckoutPlanId(input.plan)) {
     throw new CheckoutNotConfigured("That plan is not available for self-serve checkout.");
@@ -407,6 +409,7 @@ export async function createCheckoutSession(input: {
     mode: "subscription",
     success_url: successUrl,
     cancel_url: cancelUrl,
+    ...(input.expiresAt ? { expires_at: input.expiresAt } : {}),
     customer_email: normalizeEmail(input.email),
     client_reference_id: normalizeEmail(input.email),
     line_items: [{ price: priceId, quantity }],
@@ -414,12 +417,14 @@ export async function createCheckoutSession(input: {
       plan: input.plan,
       price_id: priceId,
       agent_quantity: String(quantity),
+      ...input.bindMetadata,
     },
     subscription_data: {
       metadata: {
         plan: input.plan,
         price_id: priceId,
         agent_quantity: String(quantity),
+        ...input.bindMetadata,
       },
     },
   });

@@ -57,7 +57,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   const body = await readTokenRequest(request);
   if (body.grant_type === "refresh_token") {
-    const refreshed = await refreshAccess(body.refreshToken);
+    const sent = body.clientId.trim();
+    const refreshed = await refreshAccess(body.refreshToken, sent || undefined);
     if ("error" in refreshed) return NextResponse.json({ error: "invalid_grant" }, { status: 400 });
     return issued(refreshed.token, refreshed.refresh);
   }

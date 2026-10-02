@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { csrfOk, requestOrigin } from "../../../lib/auth/cookies";
 import { userFromRequest } from "../../../lib/auth/request-session";
-import { getSeatStore } from "../../../lib/billing/seats";
+import { listAllowComputers } from "../../../lib/billing/allow-computers";
 import { flockIdForEmail } from "../../../lib/desks/runtime";
 import { getOauthStore, issueCode, redirectAllowed } from "../../../lib/oauth";
 import { clientKey, rateLimitedBody, takeRateLimit } from "../../../lib/rate-limit";
 
-async function hasActiveSeat(email: string): Promise<boolean> {
-  const seats = await getSeatStore().listByEmail(email);
-  return seats.some((seat) => seat.status === "active");
+function consentUrl(request: Request): URL {
+  const url = new URL(request.url);
+  return new URL(`/oauth/consent?${url.searchParams.toString()}`, url.origin);
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
@@ -27,8 +27,11 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!redirectAllowed(client, redirectUri)) return NextResponse.json({ error: "invalid_client" });
   const { user } = await userFromRequest(request);
   if (!user) return NextResponse.json({ status: "signed_out" });
-  if (!(await hasActiveSeat(user.email))) return NextResponse.json({ status: "no_plan" });
-  return NextResponse.json({ status: "ready" });
+  const computers = await listAllowComputers(user.email);
+  if (computers.length > 0) {
+    return NextResponse.json({ status: "ready", client_name: client.clientName, computers });
+  }
+  return NextResponse.json({ status: "ready", needs_computer: true, client_name: client.clientName });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -51,8 +54,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     back.searchParams.set("return", `${new URL(request.url).pathname}${new URL(request.url).search}`);
     return NextResponse.redirect(back, { status: 303 });
   }
-  if (!(await hasActiveSeat(user.email))) {
-    return NextResponse.redirect(new URL("/pricing", origin), { status: 303 });
+  const computers = await listAllowComputers(user.email);
+  const picked = String(form.get("computer_id") ?? "");
+  let computerId: string | null = null;
+  if (computers.length > 0) {
+    const chosen = picked || (computers.length === 1 ? computers[0]?.id ?? "" : "");
+    if (!chosen || !computers.some((row) => row.id === chosen)) {
+      return NextResponse.redirect(consentUrl(request), { status: 303 });
+    }
+    if (await getOauthStore().computerHeldByOtherSubject(chosen, user.id)) {
+      return NextResponse.redirect(consentUrl(request), { status: 303 });
+    }
+    computerId = chosen;
   }
   const code = await issueCode({
     clientId,
@@ -60,6 +73,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     challenge,
     subject: user.id,
     flock: flockIdForEmail(user.email),
+    email: user.email,
+    computerId,
   });
   const dest = new URL(redirectUri);
   dest.searchParams.set("code", code);

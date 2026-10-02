@@ -51,6 +51,7 @@ export const OAUTH_LOADING = "Loading…";
 export const OAUTH_INVALID = "This client is not valid.";
 export const OAUTH_ERROR = "Staxions could not finish that request.";
 export const OAUTH_ALREADY = "Already allowed for this customer.";
+export const OAUTH_NO_COMPUTER = "No computer yet. Your Bot can get you one after you connect.";
 
 export const CALLBACK_FLASH = "Signing you in…";
 

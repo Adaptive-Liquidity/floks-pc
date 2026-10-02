@@ -8,10 +8,11 @@ import {
   OAUTH_ERROR,
   OAUTH_INVALID,
   OAUTH_LOADING,
+  OAUTH_NO_COMPUTER,
   OAUTH_TITLE,
 } from "@/lib/copy";
 import { CONNECTOR } from "@/lib/config";
-import { oauthUiFromPreflight, parseAuthorizePreflightBody } from "@/lib/oauth-ui";
+import { oauthUiFromPreflight, parseAuthorizePreflightBody, type AuthorizeComputer } from "@/lib/oauth-ui";
 import type { OauthUiState } from "@/lib/types";
 
 function redirectHost(uri: string): string {
@@ -28,6 +29,9 @@ export function AuthorizeCard() {
   const params = new URLSearchParams(query);
   const [state, setState] = useState<OauthUiState>("loading");
   const [detail, setDetail] = useState<string | null>(null);
+  const [needsComputer, setNeedsComputer] = useState(false);
+  const [botName, setBotName] = useState<string | null>(null);
+  const [computers, setComputers] = useState<AuthorizeComputer[]>([]);
 
   useEffect(() => {
     const next = new URLSearchParams(query);
@@ -43,6 +47,9 @@ export function AuthorizeCard() {
         const raw = parseAuthorizePreflightBody(text);
         const nextState = oauthUiFromPreflight(res.ok, raw);
         setDetail(nextState.detail);
+        setNeedsComputer(raw?.needsComputer === true);
+        setBotName(raw?.clientName ?? null);
+        setComputers(raw?.computers ?? []);
         setState(nextState.state);
       })
       .catch(() => {
@@ -85,6 +92,30 @@ export function AuthorizeCard() {
             {Array.from(params.entries()).map(([key, value]) => (
               <input key={key} type="hidden" name={key} value={value} />
             ))}
+            {botName ? <p className="note">Bot: {botName}</p> : null}
+            {computers.length > 0 ? (
+              <fieldset className="note">
+                <legend>Computer</legend>
+                {computers.map((computer) => (
+                  <label key={computer.id}>
+                    <input
+                      type="radio"
+                      name="computer_id"
+                      value={computer.id}
+                      defaultChecked={computer.id === computers[0]?.id}
+                      required
+                    />
+                    {computer.label ?? computer.id}
+                    {computer.plan ? ` · ${computer.plan}` : ""}
+                    {computer.status ? ` · ${computer.status}` : ""}
+                    {computer.in_use_by_bot ? (
+                      <span>{` This replaces ${computer.in_use_by_bot} on ${computer.label ?? "Computer"}.`}</span>
+                    ) : null}
+                  </label>
+                ))}
+              </fieldset>
+            ) : null}
+            {needsComputer && computers.length === 0 ? <p className="note">{OAUTH_NO_COMPUTER}</p> : null}
             <button className="key wide" type="submit" name="allow" value="1">
               Allow
             </button>

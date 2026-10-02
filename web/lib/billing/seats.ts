@@ -402,8 +402,15 @@ export class PostgresSeatStore implements SeatStore {
   }
 }
 
-const memory = new MemorySeatStore();
-let singleton: SeatStore | null = null;
+const globalSeats = globalThis as typeof globalThis & {
+  __staxSeatMemory?: MemorySeatStore;
+  __staxSeatStore?: SeatStore | null;
+};
+
+function sharedMemory(): MemorySeatStore {
+  if (!globalSeats.__staxSeatMemory) globalSeats.__staxSeatMemory = new MemorySeatStore();
+  return globalSeats.__staxSeatMemory;
+}
 
 function jailedSeatPath(userPath: string, cwd = process.cwd()): string {
   const resolved = resolve(cwd, userPath);
@@ -422,21 +429,23 @@ export function seatStoreFromEnv(env: NodeJS.ProcessEnv = process.env): SeatStor
     throw new DurableStoreRequired();
   }
   if (env.NODE_ENV === "test" || env.FLOK_WEB_SEAT_STORE === "memory") {
-    return memory;
+    return sharedMemory();
   }
   const filePath = env.FLOK_SEAT_STORE_PATH?.trim();
   if (filePath) return new JsonSeatStore(jailedSeatPath(filePath));
-  return memory;
+  return sharedMemory();
 }
 
 export function getSeatStore(): SeatStore {
-  if (!singleton) singleton = seatStoreFromEnv();
-  return singleton;
+  if (globalSeats.__staxSeatStore) return globalSeats.__staxSeatStore;
+  globalSeats.__staxSeatStore = seatStoreFromEnv();
+  return globalSeats.__staxSeatStore;
 }
 
 export function resetSeatStoreForTests(): void {
+  const memory = sharedMemory();
   memory.reset();
-  singleton = memory;
+  globalSeats.__staxSeatStore = memory;
 }
 
 export function periodLabel(seat: SeatRecord): string | null {

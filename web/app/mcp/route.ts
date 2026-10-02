@@ -1,17 +1,24 @@
 import { NextResponse } from "next/server";
+import type { ComputerService } from "../../../src/lib/computers/index";
 import { McpGateway } from "../../../src/lib/mcp/handler";
 import { mcpNegotiatedProtocol } from "../../../src/lib/mcp/http";
 import { publicOriginFromRequest } from "../../lib/auth/callback";
+import { protocolForPurchase, purchaseToolResult } from "../../lib/billing/bot-purchase";
 import { getComputerService } from "../../lib/desks/runtime";
 import { bindPairFlock } from "../../lib/mcp-flock";
-import { accessClaims } from "../../lib/oauth";
+import { accessClaims, getOauthStore, hashToken } from "../../lib/oauth";
 
 export const runtime = "nodejs";
 
 let gateway: McpGateway | null = null;
+let gatewayService: ComputerService | null = null;
 
 async function sharedGateway(): Promise<McpGateway> {
-  if (!gateway) gateway = new McpGateway(await getComputerService());
+  const service = await getComputerService();
+  if (!gateway || gatewayService !== service) {
+    gateway = new McpGateway(service);
+    gatewayService = service;
+  }
   return gateway;
 }
 
@@ -61,9 +68,23 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
   const protocol = request.headers.get("mcp-protocol-version") ?? undefined;
+  const access = token ? await getOauthStore().getAccess(hashToken(token)) : null;
+  const bound =
+    access && access.computerId && access.capabilityId
+      ? { capabilityId: access.capabilityId, flockId: access.flock }
+      : undefined;
+  if (access && !access.revoked && access.expiresAt > Date.now() && !bound) {
+    const purchased = await purchaseToolResult(body, access, origin, protocolForPurchase(protocol));
+    if (purchased) {
+      return NextResponse.json(purchased, {
+        headers: { "Mcp-Protocol-Version": mcpNegotiatedProtocol(purchased, protocol) },
+      });
+    }
+  }
   const result = await (await sharedGateway()).handleJsonRpc(body, {
     authorization: `Bearer oauth:${claims.subject}`,
     ...(protocol ? { protocolVersionHeader: protocol } : {}),
+    ...(bound ? { bound } : {}),
   });
   if (result === null) return new Response(null, { status: 202 });
   return NextResponse.json(result, {

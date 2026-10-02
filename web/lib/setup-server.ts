@@ -4,6 +4,7 @@ import { getSeatStore } from "./billing/seats";
 import { ensureSeatFromCheckout, getStripeCheckoutEmail } from "./billing/stripe";
 import { provisionSeatComputers } from "./billing/lifecycle";
 import { desksForSeats } from "./desks/runtime";
+import { getOauthStore } from "./oauth";
 import { sessionFromSeats } from "./setup-payload";
 import { gateFromSearch, previewSession } from "./session";
 import { previewEnabled } from "./preview";
@@ -38,6 +39,13 @@ export async function liveSeatSession(email: string, webhookPending = false): Pr
   }
   seats = await store.listByEmail(email);
   const desks = await desksForSeats(seats);
+  for (const desk of desks) {
+    if (!desk.computerId) continue;
+    const binding = await getOauthStore().liveComputerBinding(desk.computerId);
+    if (!binding) continue;
+    const client = await getOauthStore().getClient(binding.clientId);
+    desk.botName = client?.clientName || "another Bot";
+  }
   return sessionFromSeats({ email, seats, desks, webhookPending });
 }
 

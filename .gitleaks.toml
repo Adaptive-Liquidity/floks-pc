@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Checkout signing fixture that existed only in an intermediate commit on this branch."
+regexes = ['''test-bind-secret-must-be-32-characters''']

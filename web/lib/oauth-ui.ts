@@ -1,10 +1,57 @@
-export function parseAuthorizePreflightBody(text: string): { status?: string; error?: string; ok?: boolean } | null {
+export type AuthorizeComputer = {
+  id: string;
+  label?: string;
+  plan?: string;
+  status?: string;
+  in_use_by_bot?: string;
+};
+
+export function parseAuthorizePreflightBody(text: string): {
+  status?: string;
+  error?: string;
+  ok?: boolean;
+  needsComputer?: boolean;
+  clientName?: string;
+  computers?: AuthorizeComputer[];
+} | null {
   try {
-    const raw = JSON.parse(text) as { status?: unknown; error?: unknown; ok?: unknown };
+    const raw = JSON.parse(text) as {
+      status?: unknown;
+      error?: unknown;
+      ok?: unknown;
+      needs_computer?: unknown;
+      computers?: unknown;
+      client_name?: unknown;
+    };
+    const computers = Array.isArray(raw.computers)
+      ? raw.computers.flatMap((item) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+          const row = item as {
+            id?: unknown;
+            label?: unknown;
+            plan?: unknown;
+            status?: unknown;
+            in_use_by_bot?: unknown;
+          };
+          if (typeof row.id !== "string" || !row.id) return [];
+          return [
+            {
+              id: row.id,
+              ...(typeof row.label === "string" ? { label: row.label } : {}),
+              ...(typeof row.plan === "string" ? { plan: row.plan } : {}),
+              ...(typeof row.status === "string" ? { status: row.status } : {}),
+              ...(typeof row.in_use_by_bot === "string" ? { in_use_by_bot: row.in_use_by_bot } : {}),
+            },
+          ];
+        })
+      : [];
     return {
       ...(typeof raw.status === "string" ? { status: raw.status } : {}),
       ...(typeof raw.error === "string" ? { error: raw.error } : {}),
       ...(typeof raw.ok === "boolean" ? { ok: raw.ok } : {}),
+      ...(raw.needs_computer === true ? { needsComputer: true } : {}),
+      ...(typeof raw.client_name === "string" ? { clientName: raw.client_name } : {}),
+      ...(computers.length > 0 ? { computers } : {}),
     };
   } catch {
     return null;

@@ -101,7 +101,9 @@ describe("C5 MCP gateway", () => {
     assert.ok(exec);
     const execSchema = exec.inputSchema;
     const required = execSchema.required as string[];
-    assert.equal(required.includes("capability_token"), true);
+    assert.equal(required.includes("capability_token"), false);
+    assert.equal(required.includes("computer_handle"), false);
+    assert.equal(required.includes("argv"), true);
     const props = execSchema.properties as Record<string, Record<string, unknown>>;
     assert.equal(props.argv.maxItems, 64);
     const env = props.env as Record<string, unknown>;

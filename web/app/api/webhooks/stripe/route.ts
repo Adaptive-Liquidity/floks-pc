@@ -1,6 +1,7 @@
 import { NextResponse, after } from "next/server";
 import { applyStripeEvent, constructStripeEvent, parseUnsignedStripeEvent } from "@/lib/billing/stripe";
 import { claimStripeEvent, releaseStripeEvent } from "@/lib/billing/stripe-events";
+import { bindPurchasedComputer } from "@/lib/billing/bind-purchase";
 import { provisionSeatComputers, shutdownSeatComputers } from "@/lib/billing/lifecycle";
 
 export const runtime = "nodejs";
@@ -25,9 +26,11 @@ export async function POST(request: Request) {
     if (seat?.status === "active" && event.type === "checkout.session.completed") {
       after(async () => {
         try {
-          await provisionSeatComputers(seat);
+          const computers = await provisionSeatComputers(seat);
+          await bindPurchasedComputer(event, seat, computers);
         } catch (err) {
           console.error("[stripe.webhook] provision", err instanceof Error ? err.message : err);
+          await releaseStripeEvent(event.id);
         }
       });
     }

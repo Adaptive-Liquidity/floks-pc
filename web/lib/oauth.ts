@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 export type OauthClient = {
   id: string;
   redirectUris: string[];
+  clientName: string | null;
 };
 
 export type OauthCode = {
@@ -12,6 +13,8 @@ export type OauthCode = {
   challenge: string;
   subject: string;
   flock: string;
+  email: string;
+  computerId: string | null;
   expiresAt: number;
   used: boolean;
 };
@@ -22,9 +25,19 @@ export type OauthAccess = {
   subject: string;
   flock: string;
   clientId: string;
+  email: string;
+  computerId: string | null;
+  capabilityId: string | null;
   expiresAt: number;
   refreshExpiresAt: number;
   revoked: boolean;
+};
+
+export type OauthBind = {
+  clientId: string;
+  subject: string;
+  computerId: string;
+  capabilityId: string;
 };
 
 export interface OauthStore {
@@ -39,6 +52,16 @@ export interface OauthStore {
   getByRefresh(refreshHash: string): Promise<OauthAccess | null>;
   consumeRefresh(refreshHash: string): Promise<OauthAccess | null>;
   revokeSubject(subject: string): Promise<void>;
+  /** True when a different signed-in account already holds this computer. */
+  computerHeldByOtherSubject(computerId: string, subject: string): Promise<boolean>;
+  /** Point this client's live tokens at a computer. Leaves other accounts untouched. */
+  bindLiveTokens(input: OauthBind): Promise<number>;
+  /** Drop this computer from the same account's other clients so one Bot stays live. */
+  releaseOtherClients(computerId: string, keep: { subject: string; clientId: string }): Promise<void>;
+  /** Revoke every other live token bound to this computer. */
+  revokeComputerTokens(computerId: string, keep?: { subject: string; clientId: string }): Promise<void>;
+  /** Live binding for the Allow screen, if a Bot already holds this computer. */
+  liveComputerBinding(computerId: string): Promise<{ clientId: string; subject: string } | null>;
 }
 
 export class MemoryOauthStore implements OauthStore {
@@ -94,6 +117,47 @@ export class MemoryOauthStore implements OauthStore {
       if (row.subject === subject || row.flock === subject) row.revoked = true;
     }
   }
+  async computerHeldByOtherSubject(computerId: string, subject: string): Promise<boolean> {
+    for (const row of this.access.values()) {
+      if (!row.revoked && row.computerId === computerId && row.subject !== subject) return true;
+    }
+    return false;
+  }
+  async bindLiveTokens(input: OauthBind): Promise<number> {
+    if (await this.computerHeldByOtherSubject(input.computerId, input.subject)) return 0;
+    let n = 0;
+    for (const [key, row] of this.access) {
+      if (row.revoked || row.clientId !== input.clientId || row.subject !== input.subject) continue;
+      this.access.set(key, {
+        ...row,
+        computerId: input.computerId,
+        capabilityId: input.capabilityId,
+      });
+      n += 1;
+    }
+    if (n > 0) {
+      await this.releaseOtherClients(input.computerId, { subject: input.subject, clientId: input.clientId });
+    }
+    return n;
+  }
+  async releaseOtherClients(computerId: string, keep: { subject: string; clientId: string }): Promise<void> {
+    await this.revokeComputerTokens(computerId, keep);
+  }
+  async revokeComputerTokens(computerId: string, keep?: { subject: string; clientId: string }): Promise<void> {
+    for (const [key, row] of this.access) {
+      if (row.revoked || row.computerId !== computerId) continue;
+      if (keep && row.subject === keep.subject && row.clientId === keep.clientId) continue;
+      this.access.set(key, { ...row, revoked: true, computerId: null, capabilityId: null });
+    }
+  }
+  async liveComputerBinding(computerId: string): Promise<{ clientId: string; subject: string } | null> {
+    for (const row of this.access.values()) {
+      if (!row.revoked && row.computerId === computerId) {
+        return { clientId: row.clientId, subject: row.subject };
+      }
+    }
+    return null;
+  }
 }
 
 type PgClient = {
@@ -119,24 +183,41 @@ export class PostgresOauthStore implements OauthStore {
   async saveClient(client: OauthClient): Promise<void> {
     await this.withClient((query) =>
       query(
-        `INSERT INTO oauth_clients (id, redirect_uris) VALUES ($1, $2)
-         ON CONFLICT (id) DO UPDATE SET redirect_uris = EXCLUDED.redirect_uris`,
-        [client.id, client.redirectUris],
+        `INSERT INTO oauth_clients (id, redirect_uris, client_name) VALUES ($1, $2, $3)
+         ON CONFLICT (id) DO UPDATE SET redirect_uris = EXCLUDED.redirect_uris, client_name = EXCLUDED.client_name`,
+        [client.id, client.redirectUris, client.clientName],
       ),
     );
   }
   async getClient(id: string): Promise<OauthClient | null> {
-    const result = await this.withClient((query) => query(`SELECT id, redirect_uris FROM oauth_clients WHERE id = $1`, [id]));
+    const result = await this.withClient((query) =>
+      query(`SELECT id, redirect_uris, client_name FROM oauth_clients WHERE id = $1`, [id]),
+    );
     const row = result.rows[0];
     if (!row) return null;
-    return { id: String(row.id), redirectUris: row.redirect_uris as string[] };
+    return {
+      id: String(row.id),
+      redirectUris: row.redirect_uris as string[],
+      clientName: row.client_name ? String(row.client_name) : null,
+    };
   }
   async saveCode(row: OauthCode): Promise<void> {
     await this.withClient((query) =>
       query(
-        `INSERT INTO oauth_codes (code, client_id, redirect_uri, challenge, subject, flock, expires_at, used)
-         VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7 / 1000.0),$8)`,
-        [row.code, row.clientId, row.redirectUri, row.challenge, row.subject, row.flock, row.expiresAt, row.used],
+        `INSERT INTO oauth_codes (code, client_id, redirect_uri, challenge, subject, flock, expires_at, used, computer_id, email)
+         VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7 / 1000.0),$8,$9,$10)`,
+        [
+          row.code,
+          row.clientId,
+          row.redirectUri,
+          row.challenge,
+          row.subject,
+          row.flock,
+          row.expiresAt,
+          row.used,
+          row.computerId,
+          row.email,
+        ],
       ),
     );
   }
@@ -156,10 +237,26 @@ export class PostgresOauthStore implements OauthStore {
   async saveAccess(row: OauthAccess): Promise<void> {
     await this.withClient((query) =>
       query(
-        `INSERT INTO oauth_access_tokens (token_hash, refresh_hash, subject, flock, client_id, expires_at, refresh_expires_at, revoked)
-         VALUES ($1,$2,$3,$4,$5,to_timestamp($6 / 1000.0),to_timestamp($7 / 1000.0),$8)
-         ON CONFLICT (token_hash) DO UPDATE SET revoked = EXCLUDED.revoked`,
-        [row.tokenHash, row.refreshHash, row.subject, row.flock, row.clientId, row.expiresAt, row.refreshExpiresAt, row.revoked],
+        `INSERT INTO oauth_access_tokens (token_hash, refresh_hash, subject, flock, client_id, expires_at, refresh_expires_at, revoked, computer_id, capability_id, email)
+         VALUES ($1,$2,$3,$4,$5,to_timestamp($6 / 1000.0),to_timestamp($7 / 1000.0),$8,$9,$10,$11)
+         ON CONFLICT (token_hash) DO UPDATE SET
+           revoked = EXCLUDED.revoked,
+           computer_id = EXCLUDED.computer_id,
+           capability_id = EXCLUDED.capability_id,
+           email = EXCLUDED.email`,
+        [
+          row.tokenHash,
+          row.refreshHash,
+          row.subject,
+          row.flock,
+          row.clientId,
+          row.expiresAt,
+          row.refreshExpiresAt,
+          row.revoked,
+          row.computerId,
+          row.capabilityId,
+          row.email,
+        ],
       ),
     );
   }
@@ -187,6 +284,69 @@ export class PostgresOauthStore implements OauthStore {
       query(`UPDATE oauth_access_tokens SET revoked = true WHERE subject = $1 OR flock = $1`, [subject]),
     );
   }
+  async computerHeldByOtherSubject(computerId: string, subject: string): Promise<boolean> {
+    const result = await this.withClient((query) =>
+      query(
+        `SELECT 1 FROM oauth_access_tokens WHERE computer_id = $1 AND subject <> $2 AND revoked = false LIMIT 1`,
+        [computerId, subject],
+      ),
+    );
+    return result.rows.length > 0;
+  }
+  async bindLiveTokens(input: OauthBind): Promise<number> {
+    if (await this.computerHeldByOtherSubject(input.computerId, input.subject)) return 0;
+    const result = await this.withClient((query) =>
+      query(
+        `UPDATE oauth_access_tokens
+         SET computer_id = $1, capability_id = $2
+         WHERE client_id = $3 AND subject = $4 AND revoked = false
+         RETURNING token_hash`,
+        [input.computerId, input.capabilityId, input.clientId, input.subject],
+      ),
+    );
+    const updated = result.rows.length;
+    if (updated > 0) {
+      await this.releaseOtherClients(input.computerId, { subject: input.subject, clientId: input.clientId });
+    }
+    return updated;
+  }
+  async releaseOtherClients(computerId: string, keep: { subject: string; clientId: string }): Promise<void> {
+    await this.revokeComputerTokens(computerId, keep);
+  }
+  async revokeComputerTokens(computerId: string, keep?: { subject: string; clientId: string }): Promise<void> {
+    if (keep) {
+      await this.withClient((query) =>
+        query(
+          `UPDATE oauth_access_tokens
+           SET revoked = true, computer_id = NULL, capability_id = NULL
+           WHERE computer_id = $1 AND revoked = false
+             AND NOT (subject = $2 AND client_id = $3)`,
+          [computerId, keep.subject, keep.clientId],
+        ),
+      );
+      return;
+    }
+    await this.withClient((query) =>
+      query(
+        `UPDATE oauth_access_tokens
+         SET revoked = true, computer_id = NULL, capability_id = NULL
+         WHERE computer_id = $1 AND revoked = false`,
+        [computerId],
+      ),
+    );
+  }
+  async liveComputerBinding(computerId: string): Promise<{ clientId: string; subject: string } | null> {
+    const result = await this.withClient((query) =>
+      query(
+        `SELECT client_id, subject FROM oauth_access_tokens
+         WHERE computer_id = $1 AND revoked = false LIMIT 1`,
+        [computerId],
+      ),
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return { clientId: String(row.client_id), subject: String(row.subject) };
+  }
 }
 
 function mapCode(row: Record<string, unknown> | undefined): OauthCode | null {
@@ -198,6 +358,8 @@ function mapCode(row: Record<string, unknown> | undefined): OauthCode | null {
     challenge: String(row.challenge),
     subject: String(row.subject),
     flock: String(row.flock),
+    email: row.email ? String(row.email) : "",
+    computerId: row.computer_id ? String(row.computer_id) : null,
     expiresAt: new Date(String(row.expires_at)).getTime(),
     used: Boolean(row.used),
   };
@@ -211,6 +373,9 @@ function mapAccess(row: Record<string, unknown> | undefined): OauthAccess | null
     subject: String(row.subject),
     flock: String(row.flock),
     clientId: String(row.client_id),
+    email: row.email ? String(row.email) : "",
+    computerId: row.computer_id ? String(row.computer_id) : null,
+    capabilityId: row.capability_id ? String(row.capability_id) : null,
     expiresAt: new Date(String(row.expires_at)).getTime(),
     refreshExpiresAt: new Date(String(row.refresh_expires_at)).getTime(),
     revoked: Boolean(row.revoked),
@@ -266,9 +431,9 @@ export function newId(prefix: string): string {
   return `${prefix}_${randomBytes(16).toString("base64url")}`;
 }
 
-export function registerClient(redirectUris: string[]): OauthClient {
-  const client = { id: newId("stax"), redirectUris };
-  return client;
+export function registerClient(redirectUris: string[], clientName?: string | null): OauthClient {
+  const name = clientName?.trim() ?? "";
+  return { id: newId("stax"), redirectUris, clientName: name ? name.slice(0, 80) : null };
 }
 
 function loopbackRedirectMatch(registered: string, requested: string): boolean {
@@ -321,6 +486,8 @@ export async function issueCode(input: {
   challenge: string;
   subject: string;
   flock: string;
+  email?: string;
+  computerId?: string | null;
   now?: number;
 }): Promise<string> {
   const code = newId("code");
@@ -331,6 +498,8 @@ export async function issueCode(input: {
     challenge: input.challenge,
     subject: input.subject,
     flock: input.flock,
+    email: input.email?.trim().toLowerCase() ?? "",
+    computerId: input.computerId ?? null,
     expiresAt: (input.now ?? Date.now()) + 5 * 60_000,
     used: false,
   });
@@ -351,40 +520,97 @@ export async function exchangeCode(input: {
   if (pkceS256(input.verifier) !== row.challenge) return { error: "invalid_grant" };
   const consumed = await getOauthStore().consumeCode(input.code);
   if (!consumed) return { error: "invalid_grant" };
-  return saveTokenPair(consumed.subject, consumed.flock, consumed.clientId, now);
+  let capabilityId: string | null = null;
+  if (consumed.computerId) {
+    try {
+      const { getComputerService } = await import("./desks/runtime");
+      const issued = await (await getComputerService()).issueBoundCapability(consumed.computerId, consumed.flock);
+      capabilityId = issued.capabilityId;
+    } catch {
+      return { error: "invalid_grant" };
+    }
+  }
+  return saveTokenPair({
+    subject: consumed.subject,
+    flock: consumed.flock,
+    clientId: consumed.clientId,
+    email: consumed.email,
+    computerId: consumed.computerId,
+    capabilityId,
+    now,
+  });
 }
 
 export async function refreshAccess(
   refreshToken: string,
+  clientId?: string,
   now = Date.now(),
 ): Promise<{ token: string; refresh: string; subject: string; flock: string } | { error: "invalid_grant" }> {
-  const row = await getOauthStore().consumeRefresh(hashToken(refreshToken));
-  if (!row || row.refreshExpiresAt <= now) return { error: "invalid_grant" };
-  return saveTokenPair(row.subject, row.flock, row.clientId, now);
+  const refreshHash = hashToken(refreshToken);
+  const existing = await getOauthStore().getByRefresh(refreshHash);
+  if (!existing || existing.refreshExpiresAt <= now) return { error: "invalid_grant" };
+  if (clientId && clientId !== existing.clientId) return { error: "invalid_grant" };
+  const row = await getOauthStore().consumeRefresh(refreshHash);
+  if (!row) return { error: "invalid_grant" };
+  if (row.computerId || row.capabilityId) {
+    if (!row.computerId || !row.capabilityId) return { error: "invalid_grant" };
+    const { getComputerService } = await import("./desks/runtime");
+    const extended = await (await getComputerService()).extendBoundCapability(row.capabilityId, row.flock);
+    if (!extended) return { error: "invalid_grant" };
+  }
+  return saveTokenPair({
+    subject: row.subject,
+    flock: row.flock,
+    clientId: row.clientId,
+    email: row.email,
+    computerId: row.computerId,
+    capabilityId: row.capabilityId,
+    now,
+  });
 }
 
-async function saveTokenPair(subject: string, flock: string, clientId: string, now: number) {
+async function saveTokenPair(input: {
+  subject: string;
+  flock: string;
+  clientId: string;
+  email: string;
+  computerId: string | null;
+  capabilityId: string | null;
+  now: number;
+}) {
   const token = newId("atk");
   const refresh = newId("rtk");
-  await getOauthStore().saveAccess({
+  const store = getOauthStore();
+  await store.saveAccess({
     tokenHash: hashToken(token),
     refreshHash: hashToken(refresh),
-    subject,
-    flock,
-    clientId,
-    expiresAt: now + 60 * 60_000,
-    refreshExpiresAt: now + 30 * 24 * 60 * 60_000,
+    subject: input.subject,
+    flock: input.flock,
+    clientId: input.clientId,
+    email: input.email,
+    computerId: input.computerId,
+    capabilityId: input.capabilityId,
+    expiresAt: input.now + 60 * 60_000,
+    refreshExpiresAt: input.now + 30 * 24 * 60 * 60_000,
     revoked: false,
   });
-  return { token, refresh, subject, flock };
+  if (input.computerId) {
+    await store.revokeComputerTokens(input.computerId, { subject: input.subject, clientId: input.clientId });
+  }
+  return { token, refresh, subject: input.subject, flock: input.flock };
 }
 
 export async function accessClaims(
   token: string,
   now = Date.now(),
-): Promise<{ subject: string; flock: string } | null> {
+): Promise<{ subject: string; flock: string; computerId: string | null; capabilityId: string | null } | null> {
   const row = await getOauthStore().getAccess(hashToken(token));
   if (!row || row.revoked || row.expiresAt <= now) return null;
-  return { subject: row.subject, flock: row.flock };
+  return {
+    subject: row.subject,
+    flock: row.flock,
+    computerId: row.computerId,
+    capabilityId: row.capabilityId,
+  };
 }
 

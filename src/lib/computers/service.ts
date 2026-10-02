@@ -47,8 +47,12 @@ import type {
 import {
   BetaInviteRequired,
   BetaStoreRequired,
+  CapabilityExpired,
   CapabilityInvalid,
+  CapabilityMissing,
+  CapabilityRevoked,
   ComputerNotFound,
+  InsufficientScope,
   CheckpointRequired,
   CleanupFailed,
   ComputerError,
@@ -95,6 +99,7 @@ import {
   DEFAULT_PAIR_SCOPES,
   extractCapabilityToken,
   hashToken,
+  hasScope,
   isCapabilityValid,
   issueCapability,
   parseScopes,
@@ -916,6 +921,77 @@ export class ComputerService {
     };
   }
 
+  /**
+   * Owner path after checkout. Mints a capability for a computer that already
+   * belongs to this flock. Does not redeem a pair code. The raw token is
+   * returned once and is not stored.
+   */
+  async issueBoundCapability(computerId: string, flockId: string): Promise<PairResult> {
+    await this.reloadIfRevisionChanged();
+    const computer = await this.get(computerId);
+    if (computer.state === "deleted") throw new ComputerNotFound(computerId);
+    if (computer.flockId !== flockId) throw new CapabilityInvalid("flock mismatch");
+    this.revokeAllForComputer(computerId);
+    const scopes = copyScopes(parseScopes(DEFAULT_PAIR_SCOPES));
+    const minted = issueCapability(DEFAULT_CAPABILITY_TTL_MS);
+    const cap: ComputerCapability = {
+      id: newId(),
+      computerId: computer.id,
+      birdId: computer.birdId,
+      flockId: computer.flockId,
+      tokenDigest: minted.digest,
+      scopes,
+      issuedAt: minted.issuedAt,
+      expiresAt: minted.expiresAt,
+      revokedAt: null,
+      lastUsedAt: null,
+    };
+    this.capabilities.set(cap.id, cap);
+    this.capabilitiesByDigest.set(cap.tokenDigest, cap.id);
+    await this.persist();
+    return {
+      token: minted.token,
+      capabilityId: cap.id,
+      computerHandle: computer.id,
+      nodeHandle: computer.birdId,
+      flockId: computer.flockId,
+      scopes: copyScopes(scopes),
+      expiresAt: cap.expiresAt,
+    };
+  }
+
+  /** Drop every capability and unused pair code on this computer. */
+  async revokeBoundComputer(computerId: string): Promise<void> {
+    await this.reloadIfRevisionChanged();
+    await this.get(computerId);
+    this.revokeAllForComputer(computerId);
+    await this.persist();
+  }
+
+  /**
+   * Refresh path. Fails when the capability is revoked or expired, or the
+   * computer is gone or no longer in this flock.
+   */
+  async extendBoundCapability(capabilityId: string, flockId: string): Promise<boolean> {
+    try {
+      await this.reloadIfRevisionChanged();
+      const { capability } = this.authorize(
+        { kind: "bound", capabilityId, flockId },
+        "",
+        "status",
+      );
+      this.capabilities.set(capability.id, {
+        ...capability,
+        scopes: copyScopes(capability.scopes),
+        expiresAt: new Date(this.now() + DEFAULT_CAPABILITY_TTL_MS),
+      });
+      await this.persist();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async revokeCapability(capabilityId: string): Promise<void> {
     const cap = this.capabilities.get(capabilityId);
     if (!cap) throw new CapabilityInvalid("not found");
@@ -1461,11 +1537,42 @@ export class ComputerService {
     return this.transition(computerId, "stopped");
   }
 
+  private authorizeBound(
+    auth: { kind: "bound"; capabilityId: string; flockId: string },
+    required: CapabilityScope | readonly CapabilityScope[],
+  ): { computer: Computer; capability: ComputerCapability } {
+    const capability = this.capabilities.get(auth.capabilityId);
+    if (!capability) throw new CapabilityMissing("missing capability");
+    if (capability.revokedAt !== null) throw new CapabilityRevoked(capability.id);
+    if (capability.expiresAt.getTime() <= this.now()) throw new CapabilityExpired(capability.id);
+    const computer = this.computers.get(capability.computerId);
+    if (!computer || computer.state === "deleted") {
+      throw new ComputerNotFound(capability.computerId);
+    }
+    if (computer.flockId !== auth.flockId || capability.flockId !== auth.flockId) {
+      throw new CapabilityInvalid("flock mismatch");
+    }
+    const needed = typeof required === "string" ? [required] : [...required];
+    for (const scope of needed) {
+      if (!hasScope(capability.scopes, scope)) {
+        throw new InsufficientScope(scope, capability.scopes);
+      }
+    }
+    const touched: ComputerCapability = {
+      ...capability,
+      scopes: copyScopes(capability.scopes),
+      lastUsedAt: new Date(this.now()),
+    };
+    this.capabilities.set(capability.id, touched);
+    return { computer, capability: touched };
+  }
+
   private authorize(
     auth: ComputerOperationAuth,
     computerId: string,
     required: CapabilityScope | readonly CapabilityScope[],
   ): { computer: Computer; capability: ComputerCapability } {
+    if (auth.kind === "bound") return this.authorizeBound(auth, required);
     const token = extractCapabilityToken(auth);
     const digest = hashToken(token);
     const capId = this.capabilitiesByDigest.get(digest);

@@ -274,12 +274,29 @@ describe("pair keys on FakeProvider", () => {
       subject: "user_01JCANCEL",
       flock: flockIdForEmail(seat.email),
       clientId: "stax_test",
+      email: seat.email,
+      computerId,
+      capabilityId: "cap_cancel",
+      expiresAt: Date.now() + 60_000,
+      refreshExpiresAt: Date.now() + 86_400_000,
+      revoked: false,
+    });
+    await getOauthStore().saveAccess({
+      tokenHash: "hash-other",
+      refreshHash: "refresh-other",
+      subject: "user_01JCANCEL",
+      flock: flockIdForEmail(seat.email),
+      clientId: "stax_other",
+      email: seat.email,
+      computerId: null,
+      capabilityId: null,
       expiresAt: Date.now() + 60_000,
       refreshExpiresAt: Date.now() + 86_400_000,
       revoked: false,
     });
     await shutdownSeatComputers({ ...seat, status: "canceled", computerId, computerIds: [computerId] });
     assert.equal((await getOauthStore().getAccess("hash-cancel"))?.revoked, true);
+    assert.equal((await getOauthStore().getAccess("hash-other"))?.revoked, false);
     assert.equal(await consumeRevealedCode(seat.id), null);
     const service = await getComputerService();
     const open = service.listPairCodes(computerId).filter((code) => code.usedAt === null);

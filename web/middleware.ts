@@ -2,11 +2,15 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 export function middleware(request: NextRequest): NextResponse {
-  void request.nextUrl.pathname;
   const response = NextResponse.next();
+  const path = request.nextUrl.pathname;
   response.headers.set("Referrer-Policy", "same-origin");
   if (process.env.SITE_INDEXABLE !== "1") {
     response.headers.set("X-Robots-Tag", "noindex, nofollow");
+  }
+  if (path.startsWith("/oauth") || path === "/buy" || path.startsWith("/buy/") || path === "/setup" || path.startsWith("/setup/")) {
+    response.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+    response.headers.set("X-Frame-Options", "DENY");
   }
   return response;
 }

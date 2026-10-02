@@ -76,10 +76,12 @@ export interface SharedAccountAuth {
 
 /**
  * Auth presented to ComputerService operation methods.
- * Only `{ kind: "capability", token }` can authorize. Shared MCP auth cannot.
+ * `capability` is a raw pair-code secret. `bound` is an OAuth row's stored
+ * capability id plus the signed-in flock. Shared MCP auth cannot authorize.
  */
 export type ComputerOperationAuth =
   | { kind: "capability"; token: string }
+  | { kind: "bound"; capabilityId: string; flockId: string }
   | { kind: "shared"; accountId: string }
   | { kind: "none" };
 
