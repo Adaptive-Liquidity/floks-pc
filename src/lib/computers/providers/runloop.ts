@@ -47,6 +47,7 @@ import {
   MAX_KEEP_ALIVE_SECONDS,
   RUNLOOP_PROVIDER_NAME,
   RUNLOOP_WORKSPACE_ROOT,
+  parseRunloopOnIdle,
   type RunloopControlPlane,
   type RunloopCreateParams,
   type RunloopDevboxSession,
@@ -67,6 +68,13 @@ export class RunloopBlueprintRequired extends ComputerError {
     super("RUNLOOP_BLUEPRINT_REQUIRED", detail);
     this.name = "RunloopBlueprintRequired";
   }
+}
+
+/** Window passed as after_idle. Does not change the keep-alive formula. Default is 30 minutes. */
+export function suspendIdleTimeSeconds(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number(env.STAXIONS_IDLE_MINUTES?.trim());
+  if (Number.isInteger(raw) && raw >= 5 && raw <= 24 * 60) return raw * 60;
+  return 30 * 60;
 }
 
 export class RunloopProvider implements ComputerProvider {
@@ -135,6 +143,7 @@ export class RunloopProvider implements ComputerProvider {
         ? Math.min(keepRaw, 24 * 60 * 60)
         : Math.min(Math.max(idleSeconds, LIVE_KEEP_ALIVE_SECONDS), MAX_KEEP_ALIVE_SECONDS);
     const { createSdkRunloopPlane } = await import("./runloop-sdk.js");
+    parseRunloopOnIdle();
     const client = await createSdkRunloopPlane({
       apiKey,
       blueprint,
@@ -145,7 +154,7 @@ export class RunloopProvider implements ComputerProvider {
       blueprint,
       apiKey,
       keepAliveSeconds,
-      idleTimeSeconds: idleSeconds,
+      idleTimeSeconds: suspendIdleTimeSeconds(),
       requireInteractive,
     });
   }

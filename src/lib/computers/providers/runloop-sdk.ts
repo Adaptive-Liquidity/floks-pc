@@ -36,6 +36,7 @@ import {
   RUNLOOP_WORKSPACE_ROOT,
   isIdempotentShutdownError,
   runloopLaunchParameters,
+  parseRunloopOnIdle,
   type RunloopControlPlane,
   type RunloopCreateParams,
   type RunloopDevboxSession,
@@ -110,12 +111,15 @@ export async function createSdkRunloopPlane(opts: {
   keepAliveSeconds?: number;
   /** Test stub. Production uses RunloopSDK. */
   sdk?: DevboxLauncher;
+  env?: NodeJS.ProcessEnv;
 }): Promise<RunloopControlPlane> {
+  const onIdle = parseRunloopOnIdle(opts.env ?? process.env);
   const sdk = opts.sdk ?? (new RunloopSDK({ bearerToken: opts.apiKey }) as unknown as DevboxLauncher);
   return new SdkRunloopControlPlane(
     sdk,
     opts.blueprint,
     opts.keepAliveSeconds ?? LIVE_KEEP_ALIVE_SECONDS,
+    onIdle,
   );
 }
 
@@ -124,11 +128,12 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
     private readonly sdk: DevboxLauncher,
     private readonly blueprint: string,
     private readonly keepAliveSeconds: number,
+    private readonly onIdle?: "suspend",
   ) {}
 
   async create(params: RunloopCreateParams): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
-    const launch = runloopLaunchParameters(params, this.keepAliveSeconds);
+    const launch = runloopLaunchParameters(params, this.keepAliveSeconds, this.onIdle);
     const created = (await this.sdk.devbox.createFromBlueprintName(this.blueprint, {
       name: `flok-${params.birdId}`.slice(0, 48),
       metadata: params.labels,
@@ -167,7 +172,7 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
     params: RunloopCreateParams,
   ): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
-    const launch = runloopLaunchParameters(params, this.keepAliveSeconds);
+    const launch = runloopLaunchParameters(params, this.keepAliveSeconds, this.onIdle);
     const created = (await this.sdk.devbox.createFromSnapshot(snapshotRef, {
       name: `flok-restore-${params.birdId}`.slice(0, 48),
       metadata: params.labels,
