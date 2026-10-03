@@ -85,6 +85,7 @@ export function decodeActivityCursor(cursor: string): { at: string; id: string }
     const at = raw.slice(0, tab);
     const id = raw.slice(tab + 1);
     if (!at || !id) return null;
+    if (!Number.isFinite(Date.parse(at))) return null;
     return { at, id };
   } catch {
     return null;

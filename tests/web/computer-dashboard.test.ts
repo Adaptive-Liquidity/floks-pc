@@ -321,7 +321,7 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
     };
     assert.equal(deniedBody.code, "REBUILD_CONFIRM_REQUIRED");
     assert.equal(deniedBody.needsRebuildConfirm, true);
-    assert.match(deniedBody.message ?? "", /delete its files/);
+    assert.match(deniedBody.message ?? "", /files deleted/);
     const mapped = lifecycleFailure(new RebuildConfirmRequired());
     assert.equal(mapped.body.needsRebuildConfirm, true);
 
@@ -492,5 +492,68 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
     assert.equal(res.status, 200);
     assert.equal((await service.get(computer.id)).state, "paused");
     assert.ok(boom.appendCalls > 0);
+  });
+
+  it("refuses resume and restart for past_due, canceled, and over-cap seats", async () => {
+    const cases = [
+      { email: "pastdue@example.com", bird: "bird-past", patch: { status: "past_due" as const } },
+      { email: "canceled@example.com", bird: "bird-cancel", patch: { status: "canceled" as const } },
+      {
+        email: "overcap@example.com",
+        bird: "bird-cap",
+        patch: { status: "active" as const, secondsUsed: 10 * 3600, hoursUsed: 10, overageEnabled: false },
+      },
+    ];
+    for (const row of cases) {
+      const service = new ComputerService(new FakeProvider(), { activityStore: new MemoryActivityStore() });
+      setComputerServiceForTests(service);
+      const computer = await seatWithComputer(row.email, service, row.bird);
+      await service.pauseThisComputer(computer.id);
+      const seats = await getSeatStore().listByEmail(row.email);
+      const seat = seats[0];
+      assert.ok(seat);
+      await getSeatStore().upsert({ ...seat, ...row.patch });
+
+      const resume = await postLifecycle(
+        postReq(computer.id, row.email, { action: "resume" }),
+        params(computer.id),
+      );
+      assert.equal(resume.status, 402, `resume ${row.email}`);
+      const resumeBody = (await resume.json()) as { code?: string; message?: string };
+      assert.equal(resumeBody.code, "COMPUTER_ASLEEP");
+      assert.match(resumeBody.message ?? "", /asleep|not active/i);
+
+      const restart = await postLifecycle(
+        postReq(computer.id, row.email, { action: "restart" }),
+        params(computer.id),
+      );
+      assert.equal(restart.status, 402, `restart ${row.email}`);
+      assert.equal(((await restart.json()) as { code?: string }).code, "COMPUTER_ASLEEP");
+      assert.equal((await service.get(computer.id)).state, "paused");
+
+      const pause = await postLifecycle(
+        postReq(computer.id, row.email, { action: "pause" }),
+        params(computer.id),
+      );
+      assert.equal(pause.status, 200, `pause still allowed ${row.email}`);
+    }
+  });
+
+  it("returns 400 for a malformed activity cursor", async () => {
+    const service = new ComputerService(new FakeProvider(), { activityStore: new MemoryActivityStore() });
+    setComputerServiceForTests(service);
+    const computer = await seatWithComputer("owner@example.com", service, "bird-bad-page");
+    const junk = await getActivity(
+      activityReq(computer.id, "owner@example.com", "?cursor=not-a-cursor"),
+      params(computer.id),
+    );
+    assert.equal(junk.status, 400);
+    assert.equal(((await junk.json()) as { message?: string }).message, "Invalid page.");
+    const decoded = Buffer.from("not-a-date\tid-1", "utf8").toString("base64url");
+    const badDate = await getActivity(
+      activityReq(computer.id, "owner@example.com", `?cursor=${encodeURIComponent(decoded)}`),
+      params(computer.id),
+    );
+    assert.equal(badDate.status, 400);
   });
 });

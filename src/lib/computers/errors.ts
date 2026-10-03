@@ -279,9 +279,17 @@ export class RebuildConfirmRequired extends ComputerError {
   constructor() {
     super(
       "REBUILD_CONFIRM_REQUIRED",
-      "This restart would rebuild the computer and delete its files. Confirm to continue.",
+      "This computer would be rebuilt and its files deleted. The owner must confirm on the dashboard.",
     );
     this.name = "RebuildConfirmRequired";
+  }
+}
+
+/** Activity list cursor is not a valid (at, id) page token. */
+export class InvalidActivityCursor extends ComputerError {
+  constructor() {
+    super("INVALID_ACTIVITY_CURSOR", "Invalid activity page.");
+    this.name = "InvalidActivityCursor";
   }
 }
 

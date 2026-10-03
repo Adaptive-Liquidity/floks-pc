@@ -5,7 +5,9 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   ComputerService,
+  ComputerAsleep,
   FakeProvider,
+  InvalidActivityCursor,
   MemoryActivityStore,
   ProviderNeedsReplacement,
   RebuildConfirmRequired,
@@ -228,6 +230,7 @@ describe("computer activity + owner lifecycle", () => {
     );
     const still = await service.get(id);
     assert.equal(still.state, "stopped");
+    assert.equal(still.rebuildConfirmRequired, true);
     failWake = false;
     await service.wakeThisComputer(id);
     const kept = await service.filesystem(cap, id, {
@@ -322,12 +325,77 @@ describe("computer activity + owner lifecycle", () => {
     provider.wake = origWake;
   });
 
-  it("flags 0010 as owner-applied metadata-only SQL", () => {
-    const sql = readFileSync(join(ROOT, "migrations/0010_computer_activity_events.sql"), "utf8");
+  it("flags 0012 as owner-applied metadata-only SQL", () => {
+    const sql = readFileSync(join(ROOT, "migrations/0012_computer_activity_events.sql"), "utf8");
     assert.match(sql, /OWNER-APPLIED/);
     assert.match(sql, /computer_activity_events/);
     assert.match(sql, /30 days/);
     const table = sql.slice(sql.indexOf("CREATE TABLE"));
     assert.doesNotMatch(table, /stdout|stderr|screenshot|token|cookie/i);
+  });
+
+  it("refuses resume and restart when wake admission is denied", async () => {
+    const service = new ComputerService(new FakeProvider());
+    service.setWakeAdmission(async () => false);
+    const { id } = await pairedComputer(service, "bird-asleep");
+    await service.pauseThisComputer(id);
+    await assert.rejects(() => service.wakeThisComputer(id), (err: unknown) => err instanceof ComputerAsleep);
+    await assert.rejects(() => service.restartThisComputer(id), (err: unknown) => err instanceof ComputerAsleep);
+    assert.equal((await service.get(id)).state, "paused");
+  });
+
+  it("blocks bot observe/act/exec/fs rebuild after the owner declines", async () => {
+    const provider = new FakeProvider();
+    const service = new ComputerService(provider);
+    const { id, token } = await pairedComputer(service, "bird-bot-block");
+    const cap = auth(token);
+    await service.filesystem(cap, id, {
+      operation: "write",
+      path: "/home/flok/keep-after-decline.txt",
+      content: "still-here",
+    });
+    const oldRef = (await service.get(id)).providerRef;
+    provider.status = async () => ({ state: "stopped" });
+    provider.wake = async () => {
+      throw new ProviderNeedsReplacement("fake");
+    };
+    await assert.rejects(() => service.restartThisComputer(id), (err: unknown) => err instanceof RebuildConfirmRequired);
+    assert.equal((await service.get(id)).rebuildConfirmRequired, true);
+
+    await assert.rejects(() => service.exec(cap, id, { argv: ["echo", "no"] }), (err: unknown) => {
+      return err instanceof RebuildConfirmRequired;
+    });
+    await assert.rejects(() => service.observe(cap, id, { includeAccessibility: false, includeScreenshot: false }), (err: unknown) => {
+      return err instanceof RebuildConfirmRequired;
+    });
+    await assert.rejects(
+      () => service.act(cap, id, { actions: [{ type: "wait", durationMs: 10 }] }),
+      (err: unknown) => err instanceof RebuildConfirmRequired,
+    );
+    await assert.rejects(
+      () => service.filesystem(cap, id, { operation: "read", path: "/home/flok/keep-after-decline.txt" }),
+      (err: unknown) => err instanceof RebuildConfirmRequired,
+    );
+    const after = await service.get(id);
+    assert.equal(after.providerRef, oldRef);
+    assert.equal(after.rebuildConfirmRequired, true);
+    assert.match(new RebuildConfirmRequired().message, /owner must confirm on the dashboard/);
+  });
+
+  it("rejects a malformed activity cursor", async () => {
+    const service = new ComputerService(new FakeProvider(), { activityStore: new MemoryActivityStore() });
+    const { id } = await pairedComputer(service, "bird-bad-cursor");
+    await assert.rejects(
+      () => service.listActivityEvents(id, { cursor: "not-a-cursor", limit: 10 }),
+      (err: unknown) => err instanceof InvalidActivityCursor,
+    );
+    await assert.rejects(
+      () =>
+        service.listActivityEvents(id, {
+          cursor: Buffer.from("not-a-date\tid-1", "utf8").toString("base64url"),
+          limit: 10,
+        }),
+      (err: unknown) => err instanceof InvalidActivityCursor,
+    );
   });
 });

@@ -80,6 +80,9 @@ export function ComputerManageSection({
     }
     if (typeof payload.lastActiveLabel === "string") setLastActiveLabel(payload.lastActiveLabel);
     else if (payload.lastActiveAt !== undefined) setLastActiveLabel(formatLastActive(payload.lastActiveAt ?? null));
+    if (payload.needsRebuildConfirm) {
+      setShowRebuildWarning(true);
+    }
   }, []);
 
   const load = useCallback(async () => {

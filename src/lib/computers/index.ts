@@ -102,6 +102,7 @@ export {
   ProviderUnavailable,
   QuotaExceeded,
   RebuildConfirmRequired,
+  InvalidActivityCursor,
   RestoreUnsupported,
 } from "./errors.js";
 

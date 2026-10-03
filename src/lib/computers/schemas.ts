@@ -105,6 +105,7 @@ export const ComputerSchema = z.object({
   updatedAt: z.coerce.date(),
   latestCheckpoint: ComputerLatestCheckpointSchema.nullable().default(null),
   recoveryNote: z.string().max(512).nullable().default(null),
+  rebuildConfirmRequired: z.boolean().optional(),
 });
 
 export const ProviderCapabilitiesSchema = z.object({

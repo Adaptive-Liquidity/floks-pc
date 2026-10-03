@@ -81,6 +81,7 @@ export function ownerComputerPayload(computer: Computer): {
   lastActiveAt: string | null;
   lastActiveLabel: string;
   actions: { pause: boolean; resume: boolean; restart: boolean };
+  needsRebuildConfirm?: true;
 } {
   const status = dashboardStatus(computer.state);
   const lastActiveAt = computer.lastActiveAt ? computer.lastActiveAt.toISOString() : null;
@@ -90,6 +91,7 @@ export function ownerComputerPayload(computer: Computer): {
     lastActiveAt,
     lastActiveLabel: formatLastActive(lastActiveAt),
     actions: lifecycleActionsFor(status),
+    ...(computer.rebuildConfirmRequired ? { needsRebuildConfirm: true as const } : {}),
   };
 }
 
@@ -132,6 +134,12 @@ export function lifecycleFailure(err: unknown): {
         message: typed.message,
         needsRebuildConfirm: true,
       },
+    };
+  }
+  if (typed?.code === "COMPUTER_ASLEEP") {
+    return {
+      status: 402,
+      body: { ok: false, code: typed.code, message: typed.message },
     };
   }
   if (typed) {

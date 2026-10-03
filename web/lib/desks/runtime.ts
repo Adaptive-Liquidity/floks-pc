@@ -77,19 +77,7 @@ export async function getComputerService(): Promise<ComputerService> {
         store,
         activityStore: sharedActivityStore(),
       });
-      service.setWakeAdmission(async (computerId) => {
-        try {
-          const seats = await getSeatStore().listAll();
-          const seat = seats.find(
-            (row) => row.computerId === computerId || row.computerIds.includes(computerId),
-          );
-          if (!seat) return true;
-          if (seat.status !== "active") return false;
-          return !shouldSuspendForCap(seat);
-        } catch {
-          return false;
-        }
-      });
+      service.setWakeAdmission(admitWakeForComputer);
       await service.hydrate();
       return service;
     })();
@@ -102,7 +90,23 @@ export function setPairRevealStoreForTests(store: PairRevealStore | null): void 
   globalDesk.__staxReveal = store;
 }
 
+/** Same entitlement gate MCP ensureAwake uses. Missing seats are allowed. */
+export async function admitWakeForComputer(computerId: string): Promise<boolean> {
+  try {
+    const seats = await getSeatStore().listAll();
+    const seat = seats.find(
+      (row) => row.computerId === computerId || row.computerIds.includes(computerId),
+    );
+    if (!seat) return true;
+    if (seat.status !== "active") return false;
+    return !shouldSuspendForCap(seat);
+  } catch {
+    return false;
+  }
+}
+
 export function setComputerServiceForTests(service: ComputerService | null): void {
+  if (service) service.setWakeAdmission(admitWakeForComputer);
   globalDesk.__staxDeskService = service ? Promise.resolve(service) : null;
 }
 

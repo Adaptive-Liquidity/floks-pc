@@ -73,9 +73,11 @@ import {
   ProviderUnavailable,
   QuotaExceeded,
   RebuildConfirmRequired,
+  InvalidActivityCursor,
 } from "./errors.js";
 import {
   DASHBOARD_EVENT_KINDS,
+  decodeActivityCursor,
   paginateActivityEvents,
   toActivityEvent,
   type ActivityStore,
@@ -308,7 +310,7 @@ export class ComputerService {
   private overlay(mine: ControlPlaneSnapshot, base: ControlPlaneSnapshot | null): void {
     this.overlayRecords(
       computersFromSnapshot(mine),
-      new Map((base?.computers ?? []).map((row) => [row.id, row])),
+      new Map((base ? computersFromSnapshot(base) : []).map((row) => [row.id, row])),
       (row) => this.computers.get(row.id),
       (row) => {
         this.computers.set(row.id, row);
@@ -483,6 +485,7 @@ export class ComputerService {
       updatedAt: now,
       latestCheckpoint: null,
       recoveryNote: null,
+      rebuildConfirmRequired: false,
     };
 
     this.computers.set(id, computer);
@@ -569,7 +572,9 @@ export class ComputerService {
 
   private async patchComputer(
     computerId: string,
-    patch: Partial<Pick<Computer, "latestCheckpoint" | "recoveryNote" | "providerRef">>,
+    patch: Partial<
+      Pick<Computer, "latestCheckpoint" | "recoveryNote" | "providerRef" | "rebuildConfirmRequired">
+    >,
   ): Promise<Computer> {
     const current = await this.get(computerId);
     const updated: Computer = {
@@ -604,6 +609,9 @@ export class ComputerService {
     await this.activityPersist;
     const limit = opts?.limit ?? 20;
     const cursor = opts?.cursor ?? null;
+    if (cursor && !decodeActivityCursor(cursor)) {
+      throw new InvalidActivityCursor();
+    }
     if (this.activityStore) {
       return this.activityStore.list(computerId, {
         cursor,
@@ -1477,7 +1485,19 @@ export class ComputerService {
         await this.withinDeadline(this.provider.wake(liveRef), deadline);
       } catch (err) {
         if (err instanceof ComputerStarting || !this.shouldReplaceDevbox(err)) throw err;
-        computer = await this.replaceDevbox(computer);
+        const latest = await this.get(computer.id);
+        if (latest.rebuildConfirmRequired) {
+          this.recordOperatorEvent({
+            computerId: latest.id,
+            birdId: latest.birdId,
+            kind: "lifecycle",
+            operation: "rebuild",
+            success: false,
+            errorCode: "REBUILD_CONFIRM_REQUIRED",
+          });
+          throw new RebuildConfirmRequired();
+        }
+        computer = await this.replaceDevbox(latest);
         this.axByComputer.delete(computer.id);
         await this.healToUp(await this.get(computer.id));
         this.recordOperatorEvent({
@@ -1538,7 +1558,13 @@ export class ComputerService {
     return /DEVBOX_SHUTDOWN|cannot resume/i.test(message);
   }
 
-  private async replaceDevbox(computer: Computer): Promise<Computer> {
+  private async replaceDevbox(
+    computer: Computer,
+    opts?: { ownerConfirmed?: boolean },
+  ): Promise<Computer> {
+    if (computer.rebuildConfirmRequired && opts?.ownerConfirmed !== true) {
+      throw new RebuildConfirmRequired();
+    }
     const oldRef = computer.providerRef;
     const created = await this.provider.provision({
       birdId: computer.birdId,
@@ -1550,7 +1576,10 @@ export class ComputerService {
       ...(computer.diskGb !== null ? { diskGb: computer.diskGb } : {}),
       ...(computer.baseImageVersion ? { baseImageVersion: computer.baseImageVersion } : {}),
     });
-    const updated = await this.patchComputer(computer.id, { providerRef: created.providerRef });
+    const updated = await this.patchComputer(computer.id, {
+      providerRef: created.providerRef,
+      rebuildConfirmRequired: false,
+    });
     if (oldRef && oldRef !== created.providerRef) {
       await this.provider.destroy(oldRef).catch(() => undefined);
     }
@@ -1867,12 +1896,25 @@ export class ComputerService {
   private async wakeThisComputerLocked(computerId: string): Promise<Computer> {
     const current = await this.get(computerId);
     if (current.state === "ready" || current.state === "running") return current;
+    if (!(await this.wakeAdmission(current.id))) throw new ComputerAsleep();
     let computer = this.applyTransition(current, "waking");
     await this.persist();
     const ref = this.requireProviderRef(computer);
     try {
       await this.provider.wake(ref);
-    } catch {
+    } catch (err) {
+      if (this.shouldReplaceDevbox(err)) {
+        await this.patchComputer(computerId, { rebuildConfirmRequired: true });
+        this.recordOperatorEvent({
+          computerId: computer.id,
+          birdId: computer.birdId,
+          kind: "lifecycle",
+          operation: "wake",
+          success: false,
+          errorCode: "REBUILD_CONFIRM_REQUIRED",
+        });
+        throw new RebuildConfirmRequired();
+      }
       computer = this.applyTransition(await this.get(computerId), "recovery_failed");
       await this.patchComputer(computer.id, {
         recoveryNote: "wake failed",
@@ -1889,7 +1931,19 @@ export class ComputerService {
     }
     try {
       await this.provider.healthProbe(ref);
-    } catch {
+    } catch (err) {
+      if (this.shouldReplaceDevbox(err)) {
+        await this.patchComputer(computerId, { rebuildConfirmRequired: true });
+        this.recordOperatorEvent({
+          computerId: computer.id,
+          birdId: computer.birdId,
+          kind: "lifecycle",
+          operation: "wake",
+          success: false,
+          errorCode: "REBUILD_CONFIRM_REQUIRED",
+        });
+        throw new RebuildConfirmRequired();
+      }
       computer = this.applyTransition(await this.get(computerId), "recovery_failed");
       await this.patchComputer(computer.id, {
         recoveryNote: "wake health probe failed",
@@ -1905,7 +1959,7 @@ export class ComputerService {
       throw new ComputerError("RECOVERY_FAILED", "wake health probe failed");
     }
     computer = this.applyTransition(await this.get(computerId), "ready");
-    await this.patchComputer(computer.id, { recoveryNote: null });
+    await this.patchComputer(computer.id, { recoveryNote: null, rebuildConfirmRequired: false });
     this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,
@@ -1938,6 +1992,7 @@ export class ComputerService {
     if (computer.state === "deleted" || computer.state === "deleting") {
       throw new ComputerNotFound(computerId);
     }
+    if (!(await this.wakeAdmission(computer.id))) throw new ComputerAsleep();
     if (computer.state !== "stopped") {
       computer = await this.transition(computerId, "stopped");
     }
@@ -1948,6 +2003,7 @@ export class ComputerService {
     } catch (err) {
       if (this.shouldReplaceDevbox(err)) {
         if (opts?.confirmRebuild !== true) {
+          await this.patchComputer(computerId, { rebuildConfirmRequired: true });
           this.recordOperatorEvent({
             computerId,
             birdId: computer.birdId,
@@ -1958,7 +2014,7 @@ export class ComputerService {
           });
           throw new RebuildConfirmRequired();
         }
-        computer = await this.replaceDevbox(await this.get(computerId));
+        computer = await this.replaceDevbox(await this.get(computerId), { ownerConfirmed: true });
         this.axByComputer.delete(computer.id);
         await this.healToUp(computer);
         this.recordOperatorEvent({
@@ -1987,7 +2043,7 @@ export class ComputerService {
       throw err;
     }
     computer = await this.healToUp(await this.get(computerId));
-    await this.patchComputer(computer.id, { recoveryNote: null });
+    await this.patchComputer(computer.id, { recoveryNote: null, rebuildConfirmRequired: false });
     this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,

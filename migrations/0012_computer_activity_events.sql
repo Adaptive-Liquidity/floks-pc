@@ -1,7 +1,8 @@
--- 0010_computer_activity_events.sql
+-- 0012_computer_activity_events.sql
 -- OWNER-APPLIED. Do not run this from a code PR. Do not apply on preview
 -- or production as part of this change. Flag only until the owner runs
 -- `npm run migrate` (or applies this file) against DATABASE_URL.
+-- 0010 is reserved for billing; 0011 is reserved for desktop sessions.
 --
 -- Metadata-only activity for the owner dashboard. Persist observe / act /
 -- exec / fs / handoff / lifecycle events. Never store tokens, pair codes,

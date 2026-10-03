@@ -161,6 +161,8 @@ export interface Computer {
   updatedAt: Date;
   latestCheckpoint: ComputerLatestCheckpoint | null;
   recoveryNote: string | null;
+  /** Durable: owner must confirm a wipe-rebuild. Survives Vercel instances. */
+  rebuildConfirmRequired: boolean;
 }
 
 /** Durable checkpoint pointer. No workspace bytes, tokens, or API keys. */

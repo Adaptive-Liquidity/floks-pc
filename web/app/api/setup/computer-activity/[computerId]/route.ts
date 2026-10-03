@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { ACTIVITY_RETENTION_DAYS } from "../../../../../../src/lib/computers/index";
+import {
+  ACTIVITY_RETENTION_DAYS,
+  decodeActivityCursor,
+} from "../../../../../../src/lib/computers/index";
 import { requireOwnedComputer } from "../../../../../lib/computers/owner";
 import { getComputerService } from "../../../../../lib/desks/runtime";
 import { clientKey, rateLimitedBody, takeRateLimit } from "../../../../../lib/rate-limit";
@@ -26,6 +29,9 @@ export async function GET(
     limit: url.searchParams.get("limit") ?? undefined,
   });
   if (!parsed.success) {
+    return NextResponse.json({ ok: false, message: "Invalid page." }, { status: 400 });
+  }
+  if (parsed.data.cursor && !decodeActivityCursor(parsed.data.cursor)) {
     return NextResponse.json({ ok: false, message: "Invalid page." }, { status: 400 });
   }
   const page = await (await getComputerService()).listActivityEvents(owned.computerId, {
