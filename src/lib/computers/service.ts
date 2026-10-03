@@ -21,6 +21,7 @@
 import { randomBytes } from "node:crypto";
 import type { ComputerProvider } from "./providers/provider.js";
 import type {
+  Action,
   ActionBatch,
   ActionResult,
   BotClaim,
@@ -138,6 +139,31 @@ function newId(): string {
 const PAIR_FAILURE_WINDOW_MS = PAIR_CODE_TTL_MS;
 /** Per presented Node identity, not per shared MCP account. */
 export const PAIR_IDENTITY_FAILURE_LIMIT = 10;
+export const OWNER_DESKTOP_WATCH_TIMEOUT_MS = 20_000;
+
+const OWNER_DESKTOP_ACTIONS = new Set(["click_coordinates", "type", "key", "scroll"]);
+
+function isOwnerDesktopAction(action: Action): boolean {
+  return OWNER_DESKTOP_ACTIONS.has(action.type);
+}
+
+function withOwnerDesktopTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new ComputerError("OWNER_DESKTOP_TIMEOUT", "Watching the screen timed out."));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
 
 interface PairIssueExtras {
   scopes: CapabilityScope[];
@@ -1373,7 +1399,7 @@ export class ComputerService {
       throw new ComputerNotFound(computer.id);
     }
     // Gate is side-effect-free. Decide before taking the per-computer lock.
-    if (!(await this.wakeAdmission(computer.id))) throw new ComputerAsleep();
+    await this.requireWakeAdmission(computer.id);
     if (!computer.providerRef) return computer;
     if ((await this.classifyProvider(computer.providerRef)) === "up") {
       return this.healToUp(computer);
@@ -1421,7 +1447,7 @@ export class ComputerService {
     if (computer.state === "deleted" || computer.state === "deleting") {
       throw new ComputerNotFound(computer.id);
     }
-    if (!(await this.wakeAdmission(computer.id))) throw new ComputerAsleep();
+    await this.requireWakeAdmission(computer.id);
     const kind = await this.classifyProvider(ref);
     if (kind === "up") return this.healToUp(computer);
     const deadline = this.now() + this.wakeBudgetMs();
@@ -1817,13 +1843,19 @@ export class ComputerService {
   }
 
   async wakeThisComputer(computerId: string): Promise<Computer> {
-    if (!(await this.wakeAdmission(computerId))) throw new ComputerAsleep();
+    await this.reloadIfRevisionChanged();
+    await this.requireWakeAdmission(computerId);
     return this.enqueueDestroy(computerId, () => this.wakeThisComputerLocked(computerId));
+  }
+
+  /** Same entitlement/billing gate MCP uses in ensureAwake. */
+  private async requireWakeAdmission(computerId: string): Promise<void> {
+    if (!(await this.wakeAdmission(computerId))) throw new ComputerAsleep();
   }
 
   private async wakeThisComputerLocked(computerId: string): Promise<Computer> {
     const current = await this.get(computerId);
-    if (!(await this.wakeAdmission(computerId))) throw new ComputerAsleep();
+    await this.requireWakeAdmission(computerId);
     if (current.state === "ready" || current.state === "running") return current;
     let computer = this.applyTransition(current, "waking");
     await this.persist();
@@ -1944,6 +1976,7 @@ export class ComputerService {
   }
 
   async recoverThisComputer(computerId: string): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
     return this.enqueueDestroy(computerId, () => this.recoverThisComputerLocked(computerId));
   }
 
@@ -1976,6 +2009,7 @@ export class ComputerService {
 
   private async recoverThisComputerLocked(computerId: string): Promise<Computer> {
     const current = await this.get(computerId);
+    await this.requireWakeAdmission(computerId);
     const latest = current.latestCheckpoint;
     if (!latest || (latest.status !== "ready" && latest.status !== "restored")) {
       throw new CheckpointRequired();
@@ -2327,6 +2361,112 @@ export class ComputerService {
     if (observation.activeWindow) result.activeWindow = observation.activeWindow;
     if (hasScreenshot && screenshot) result.screenshotBase64 = screenshot;
     return result;
+  }
+
+  /**
+   * Owner dashboard: status only. Does not wake. Paused/stopped offer wake.
+   */
+  async ownerDesktopStatus(computerId: string): Promise<{
+    computer: Computer;
+    needsWake: boolean;
+    viewable: boolean;
+  }> {
+    await this.reloadIfRevisionChanged();
+    const computer = await this.get(computerId);
+    const needsWake = computer.state === "paused" || computer.state === "stopped";
+    const viewable = computer.state === "ready" || computer.state === "running";
+    return { computer, needsWake, viewable };
+  }
+
+  /**
+   * Owner live view. Does not auto-wake. Screenshot is returned once and not stored.
+   */
+  async ownerDesktopWatch(
+    computerId: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<
+    | { ok: true; screen: OperatorObserveResult; state: ComputerState }
+    | { ok: false; needsWake: true; state: ComputerState }
+  > {
+    await this.reloadIfRevisionChanged();
+    const computer = await this.get(computerId);
+    if (computer.state === "paused" || computer.state === "stopped") {
+      return { ok: false, needsWake: true, state: computer.state };
+    }
+    if (computer.state !== "ready" && computer.state !== "running") {
+      throw new ObserveRetryable(computer.state);
+    }
+    const ref = this.requireProviderRef(computer);
+    await this.touch(computer);
+    const timeoutMs = opts?.timeoutMs ?? OWNER_DESKTOP_WATCH_TIMEOUT_MS;
+    const observation = await withOwnerDesktopTimeout(
+      this.provider.observe(ref, {
+        includeScreenshot: true,
+        includeAccessibility: false,
+      }),
+      timeoutMs,
+    );
+    return {
+      ok: true,
+      screen: this.toOperatorObserve(observation),
+      state: computer.state,
+    };
+  }
+
+  /**
+   * Owner takeover input. Coordinates/keys only — never click_element or open_url.
+   */
+  async ownerDesktopAct(computerId: string, request: ActionBatch): Promise<ActionResult> {
+    await this.reloadIfRevisionChanged();
+    const computer = await this.get(computerId);
+    if (computer.state === "paused" || computer.state === "stopped") {
+      throw new ObserveRetryable(computer.state);
+    }
+    if (computer.state !== "ready" && computer.state !== "running") {
+      throw new ObserveRetryable(computer.state);
+    }
+    for (const action of request.actions) {
+      if (!isOwnerDesktopAction(action)) {
+        throw new ComputerError(
+          "OWNER_ACT_DENIED",
+          `owner desktop does not allow ${action.type}`,
+        );
+      }
+    }
+    const ref = this.requireProviderRef(computer);
+    await this.touch(computer);
+    const result = await this.provider.act(ref, request);
+    this.recordOperatorEvent({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "browser",
+      operation: "owner-act",
+      success: result.ok,
+      errorCode: result.ok ? null : "OWNER_ACT_FAILED",
+    });
+    return result;
+  }
+
+  noteOwnerDesktop(input: {
+    computerId: string;
+    operation:
+      | "owner-view-start"
+      | "owner-view-stop"
+      | "owner-takeover-start"
+      | "owner-takeover-stop";
+    success: boolean;
+    errorCode?: string | null;
+  }): void {
+    const computer = this.computers.get(input.computerId);
+    const takeover = input.operation.startsWith("owner-takeover");
+    this.recordOperatorEvent({
+      computerId: input.computerId,
+      birdId: computer?.birdId ?? null,
+      kind: takeover ? "browser" : "observe",
+      operation: input.operation,
+      success: input.success,
+      errorCode: input.errorCode ?? null,
+    });
   }
 }
 

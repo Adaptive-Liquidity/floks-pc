@@ -51,7 +51,11 @@ export async function admitComputerWake(
   computerId: string,
   nowMs: number = Date.now(),
 ): Promise<boolean> {
-  return (await decideComputerWake(computerId, nowMs)).allow;
+  try {
+    return (await decideComputerWake(computerId, nowMs)).allow;
+  } catch {
+    return false;
+  }
 }
 
 /** One call per HTTP/screen path. Returns the 402 decision; the caller does not pause here. */
