@@ -44,6 +44,7 @@ export const SETUP_ACTIONS = {
   resend: "/login",
   connector: "/setup",
   callback: "/callback",
+  desktop: "/api/setup/computers",
 } as const;
 
 export function actionHref(path: string): string {
