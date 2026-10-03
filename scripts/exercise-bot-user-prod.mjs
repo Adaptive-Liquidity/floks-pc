@@ -19,7 +19,7 @@ if (!existsSync(distBot) || !existsSync(distIndex) || !existsSync(distMcp)) {
 }
 
 const src = readFileSync(distBot, "utf8");
-assert.equal(src.includes("Function.toString"), false);
+assert.doesNotMatch(src, /ENSURE_BOT_USER_SH\s*=\s*[^;]*\.toString\s*\(/);
 assert.match(src, /nosudo=1/);
 assert.match(src, /useradd -M -u/);
 assert.match(src, /\/var\/lib\/flok/);
@@ -75,4 +75,25 @@ assert.deepEqual([...mcp.MCP_TOOL_NAMES], [
   "handoff_receive",
 ]);
 
-console.log("exercise-bot-user-prod: ok (memory plane, not live Runloop)");
+const nextChunkDir = join(root, "web/.next/server/chunks");
+if (existsSync(nextChunkDir)) {
+  const { readdirSync } = await import("node:fs");
+  const chunks = readdirSync(nextChunkDir).filter((name) => name.endsWith(".js"));
+  const hits = [];
+  for (const name of chunks) {
+    const body = readFileSync(join(nextChunkDir, name), "utf8");
+    if (body.includes("nosudo=1") && body.includes("useradd -M -u")) hits.push(name);
+  }
+  assert.ok(hits.length >= 1, "next production server chunk must keep ENSURE_BOT_USER_SH literals");
+  for (const name of hits) {
+    const body = readFileSync(join(nextChunkDir, name), "utf8");
+    assert.match(body, /nosudo=1/);
+    assert.match(body, /useradd -M -u/);
+    assert.match(body, /\/var\/lib\/flok/);
+    assert.doesNotMatch(body, /ENSURE_BOT_USER_SH\s*=\s*[^;]*\.toString\s*\(/);
+    assert.match(body, /\["runuser","-u",/);
+    assert.match(body, /="flok"/);
+  }
+}
+
+console.log("exercise-bot-user-prod: ok (memory plane + next chunk literals, not live Runloop)");
