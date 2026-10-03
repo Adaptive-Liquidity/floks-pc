@@ -1,6 +1,6 @@
 # Staxions
 
-**Staxions — private cloud computers for AI assistants.** Public site is `web/`. Launch env checklist: `docs/DEPLOY.md`. Draft plans: `web/lib/billing/catalog.ts`.
+**Staxions — private cloud computers for AI assistants.** Public site is `web/`. Launch env checklist: `docs/DEPLOY.md`. Plan shape: `web/lib/billing/catalog.ts`. Unapproved draft cent figures, not rendered: `web/lib/billing/internal-draft-prices.ts`.
 
 This repository is the Staxions product (formerly FLOKS / FLOKS-PC internally): Next.js on Vercel, WorkOS AuthKit, Stripe subscriptions, Runloop Devboxes as the computers.
 

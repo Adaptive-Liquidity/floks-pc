@@ -12,16 +12,16 @@ Do **not** set live keys from a code PR. Do **not** apply `migrations/0010_billi
 |------|----------------|-------------------|
 | `STRIPE_SECRET_KEY` | `sk_test_…` | `sk_live_…` |
 | `STRIPE_WEBHOOK_SECRET` | test endpoint `whsec_…` | live endpoint `whsec_…` |
-| `STRIPE_PRICE_PERSONAL` | test Price id `price_…` | live Price id for Personal $29 |
-| `STRIPE_PRICE_PRO` | test Price id | live Price id for Pro $99 |
-| `STRIPE_PRICE_TEAM` | test Price id | live Price id for Team $79/seat |
+| `STRIPE_PRICE_PERSONAL` | test Price id `price_…` | live Price id for Personal. Pricing to be confirmed. |
+| `STRIPE_PRICE_PRO` | test Price id | live Price id for Pro. Pricing to be confirmed. |
+| `STRIPE_PRICE_TEAM` | test Price id | live Price id for Team. Pricing to be confirmed. |
 | `STRIPE_PORTAL_CONFIGURATION_ID` | test Customer Portal configuration | live configuration that allows plan, quantity, cancel |
 | `STAXIONS_BILLING_GRACE_HOURS` | optional, default `72` | same name; default 72 hours |
 | `STAXIONS_BIND_SECRET` | ≥32 chars; signs bot checkout links | new value on Production |
 | `CHECKOUT_DISABLED` | `1` to stop `POST /api/checkout` and `POST /buy` | same |
 | `APP_URL` | Preview origin | public origin |
 
-Draft catalog amounts live in `web/lib/billing/catalog.ts`. Never hard-code a live Price id in git.
+Public copy does not state a dollar amount. Unapproved draft cent figures stay in `web/lib/billing/internal-draft-prices.ts` and are not rendered. Never hard-code a live Price id in git.
 
 ## Webhook
 

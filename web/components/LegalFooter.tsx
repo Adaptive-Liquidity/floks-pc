@@ -1,5 +1,5 @@
 import { FOOTER_NAV } from "@/lib/legal";
-import { FOOTER_MARK } from "@/lib/copy";
+import { FOOTER_BYLINE, FOOTER_MARK } from "@/lib/copy";
 import { SUPPORT_EMAIL } from "@/lib/config";
 
 export function LegalFooter() {
@@ -10,6 +10,7 @@ export function LegalFooter() {
           <a className="font-headline-md text-headline-md text-tertiary-fixed tracking-tighter" href="/">
             {FOOTER_MARK}
           </a>
+          <p className="font-body-md text-on-surface-variant max-w-sm">{FOOTER_BYLINE}</p>
           <p className="font-body-md text-on-surface-variant max-w-sm">
             Asentxia Inc. · {SUPPORT_EMAIL}
           </p>

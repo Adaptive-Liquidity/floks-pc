@@ -1,8 +1,12 @@
 /**
- * Draft launch plans — edit this file when the founder locks prices.
+ * Launch plan shape. Public labels do not state a dollar amount.
  * Stripe Price IDs come from env (test on Preview, live on Production).
+ * Unapproved draft cent amounts stay in internal-draft-prices.ts and are not rendered.
  * Always-on is not a public plan.
  */
+
+export const PUBLIC_PRICE_LABEL = "Pricing to be confirmed";
+export const ENTERPRISE_PRICE_LABEL = "Contact us";
 
 export const BRAND = {
   name: "Staxions",
@@ -22,14 +26,11 @@ export type PlanId = CheckoutPlanId | LegacyPlanId;
 export type PlanCatalogEntry = {
   id: PublicPlanId;
   name: string;
-  /** Monthly list price in cents. Team is per-agent. Enterprise is contact-only. */
-  priceMonthlyCents: number | null;
   priceLabel: string;
   computers: number;
   includedHours: number;
   hoursPerAgent: number | null;
   minAgents: number;
-  overagePerHourCents: number;
   overageEnabledDefault: false;
   checkout: boolean;
   stripePriceEnv: "STRIPE_PRICE_PERSONAL" | "STRIPE_PRICE_PRO" | "STRIPE_PRICE_TEAM" | null;
@@ -43,74 +44,66 @@ export const PLAN_CATALOG: Record<PublicPlanId, PlanCatalogEntry> = {
   personal: {
     id: "personal",
     name: "Personal",
-    priceMonthlyCents: 2900,
-    priceLabel: "$29/mo",
+    priceLabel: PUBLIC_PRICE_LABEL,
     computers: 1,
     includedHours: 10,
     hoursPerAgent: null,
     minAgents: 1,
-    overagePerHourCents: 120,
     overageEnabledDefault: false,
     checkout: true,
     stripePriceEnv: "STRIPE_PRICE_PERSONAL",
     highlight: false,
-    blurb: "1 computer · 10 included hours. Extra hours $1.20/h, off by default.",
-    short: "Personal · $29/mo · 10h",
-    line: "Personal — $29/mo — 10 hours — 1 computer",
+    blurb: "1 computer · 10 included hours. Extra hours stay off by default.",
+    short: "Personal",
+    line: `Personal — ${PUBLIC_PRICE_LABEL} — 10 hours — 1 computer`,
   },
   pro: {
     id: "pro",
     name: "Pro",
-    priceMonthlyCents: 9900,
-    priceLabel: "$99/mo",
+    priceLabel: PUBLIC_PRICE_LABEL,
     computers: 2,
     includedHours: 40,
     hoursPerAgent: null,
     minAgents: 1,
-    overagePerHourCents: 120,
     overageEnabledDefault: false,
     checkout: true,
     stripePriceEnv: "STRIPE_PRICE_PRO",
     highlight: true,
-    blurb: "2 computers · 40 shared hours. Extra hours $1.20/h, off by default.",
-    short: "Pro · $99/mo · 40h",
-    line: "Pro — $99/mo — 40 shared hours — 2 computers",
+    blurb: "2 computers · 40 shared hours. Extra hours stay off by default.",
+    short: "Pro",
+    line: `Pro — ${PUBLIC_PRICE_LABEL} — 40 shared hours — 2 computers`,
   },
   team: {
     id: "team",
     name: "Team",
-    priceMonthlyCents: 7900,
-    priceLabel: "$79 per agent/mo",
+    priceLabel: PUBLIC_PRICE_LABEL,
     computers: 1,
     includedHours: 30,
     hoursPerAgent: 30,
     minAgents: 3,
-    overagePerHourCents: 120,
     overageEnabledDefault: false,
     checkout: true,
     stripePriceEnv: "STRIPE_PRICE_TEAM",
     highlight: false,
-    blurb: "Minimum 3 agents. 30 pooled hours per agent. Extra hours $1.20/h, off by default.",
-    short: "Team · $79/agent · 30h",
-    line: "Team — $79 per agent/mo — 30 hours per agent — minimum 3 agents",
+    blurb: "Minimum 3 agents. 30 pooled hours per agent. Extra hours stay off by default.",
+    short: "Team",
+    line: `Team — ${PUBLIC_PRICE_LABEL} — 30 hours per agent — minimum 3 agents`,
   },
   enterprise: {
     id: "enterprise",
     name: "Enterprise",
-    priceMonthlyCents: null,
-    priceLabel: "Talk to us",
+    priceLabel: ENTERPRISE_PRICE_LABEL,
     computers: 0,
     includedHours: 0,
     hoursPerAgent: null,
     minAgents: 1,
-    overagePerHourCents: 110,
     overageEnabledDefault: false,
     checkout: false,
     stripePriceEnv: null,
     highlight: false,
     blurb: "Pilot or design-partner only. No self-serve checkout.",
-    short: "Enterprise · Talk to us",
-    line: "Enterprise — contact / paid pilot only",
+    short: "Enterprise",
+    line: "Enterprise — contact us. No self-serve checkout.",
   },
 };
 
@@ -119,7 +112,6 @@ export const CHECKOUT_PLANS: readonly PlanCatalogEntry[] = CHECKOUT_PLAN_IDS.map
 );
 
 export const DEFAULT_IDLE_MINUTES = 30;
-export const DEFAULT_OVERAGE_PER_HOUR_CENTS = 120;
 /** Runloop documents a practical keep-alive cap around one hour. Cron refreshes it. */
 export const RUNLOOP_KEEP_ALIVE_MAX_SECONDS = 60 * 60;
 export const RUNLOOP_KEEP_ALIVE_MIN_SECONDS = 15 * 60;

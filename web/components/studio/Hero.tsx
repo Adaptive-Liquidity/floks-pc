@@ -4,7 +4,7 @@ import { useRef } from "react";
 import Link from "next/link";
 import { motion, useScroll, useTransform } from "motion/react";
 import { ArrowRight, Cpu, ShieldCheck } from "lucide-react";
-import { CREATE_ACCOUNT, SETUP_SIGN_IN } from "@/lib/copy";
+import { CREATE_ACCOUNT, HOME_LINE, HOME_SUB, PLANS, SETUP_SIGN_IN } from "@/lib/copy";
 import { HeroHardwareNode } from "./HeroHardwareNode";
 
 export function Hero() {
@@ -78,9 +78,7 @@ export function Hero() {
             animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
             transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1], delay: 0.5 }}
           >
-            Give it somewhere to work. An isolated Agent Computer — persistent workspace, dedicated browser, private
-            files, controlled execution, scoped permissions. Not another chat window. Not a temporary sandbox. One Bot,
-            one isolated computer. Work stays in Grok.
+            {HOME_SUB} {HOME_LINE}
           </motion.p>
 
           <motion.div
@@ -90,18 +88,35 @@ export function Hero() {
             animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
             transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1], delay: 0.65 }}
           >
-            <div className="glass-card p-4 rounded-xl border border-white/5 flex flex-col justify-center">
-              <span className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase mb-0.5">Personal</span>
-              <span className="font-label-mono text-label-mono text-white/80">$29 / 10h</span>
-            </div>
-            <div className="glass-card p-4 rounded-xl secondary-border flex flex-col justify-center bg-surface-container/60 shadow-[0_0_20px_rgba(227,242,253,0.05)]">
-              <span className="font-headline-sm text-headline-sm text-white uppercase mb-0.5">Pro</span>
-              <span className="font-label-mono text-label-mono text-secondary font-semibold">$99 / 40h</span>
-            </div>
-            <div className="glass-card p-4 rounded-xl border border-white/5 flex flex-col justify-center">
-              <span className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase mb-0.5">Team</span>
-              <span className="font-label-mono text-label-mono text-white/80">$79 / agent</span>
-            </div>
+            {PLANS.map((plan) => (
+              <div
+                key={plan.id}
+                className={
+                  plan.id === "pro"
+                    ? "glass-card p-4 rounded-xl secondary-border flex flex-col justify-center bg-surface-container/60 shadow-[0_0_20px_rgba(227,242,253,0.05)]"
+                    : "glass-card p-4 rounded-xl border border-white/5 flex flex-col justify-center"
+                }
+              >
+                <span
+                  className={
+                    plan.id === "pro"
+                      ? "font-headline-sm text-headline-sm text-white uppercase mb-0.5"
+                      : "font-headline-sm text-headline-sm text-tertiary-fixed uppercase mb-0.5"
+                  }
+                >
+                  {plan.name}
+                </span>
+                <span
+                  className={
+                    plan.id === "pro"
+                      ? "font-label-mono text-label-mono text-secondary font-semibold"
+                      : "font-label-mono text-label-mono text-white/80"
+                  }
+                >
+                  {plan.price}
+                </span>
+              </div>
+            ))}
           </motion.div>
 
           <motion.div

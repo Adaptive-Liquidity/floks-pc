@@ -74,7 +74,7 @@ export function PlanGrid({
           className="button-secondary py-3 px-6 rounded-full font-label-mono text-label-mono uppercase inline-block"
           href={enterpriseContactHref(SUPPORT_EMAIL)}
         >
-          Talk to us
+          Contact us
         </a>
       </article>
       {email ? <p className="sr-only">Checkout email {email}</p> : null}

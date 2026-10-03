@@ -67,10 +67,10 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
           "One paid seat = one Grok Bot = one isolated Staxions Computer. Day-one plans we sell:",
         ],
         bullets: [
-          "Personal — $29 / month — 10 included hours — 1 computer. Extra hours $1.20/h, off by default.",
-          "Pro — $99 / month — 40 shared hours — 2 computers.",
-          "Team — $79 per agent / month — 30 hours per agent — minimum 3 agents.",
-          "Enterprise — contact / paid pilot only. No self-serve checkout.",
+          "Personal — Pricing to be confirmed — 10 included hours — 1 computer. Extra hours stay off by default.",
+          "Pro — Pricing to be confirmed — 40 shared hours — 2 computers.",
+          "Team — Pricing to be confirmed — 30 hours per agent — minimum 3 agents.",
+          "Enterprise — contact us. No self-serve checkout.",
         ],
       },
       {
@@ -87,7 +87,7 @@ export const LEGAL_DOCS: Record<LegalSlug, LegalDoc> = {
       {
         heading: "Hours and sleep",
         paragraphs: [
-          "Hours are included provider running time (the Computer initializing, running, suspending, or resuming). Once it is asleep (suspended) or shut down, that time is not hours. Remaining hours hit zero → the Computer auto-suspends unless you opted in to $1.20/h overage. Idle computers suspend after about 30 minutes.",
+          "Hours are included provider running time (the Computer initializing, running, suspending, or resuming). Once it is asleep (suspended) or shut down, that time is not hours. Remaining hours hit zero → the Computer auto-suspends unless you opted in to overage. Pricing to be confirmed. Idle computers suspend after about 30 minutes.",
         ],
       },
       {

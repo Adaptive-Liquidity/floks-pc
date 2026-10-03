@@ -6,7 +6,7 @@ import { Terminal } from "lucide-react";
 const LOGS = [
   "ILLUSTRATION: This picture is not a live computer.",
   "NODE: Example only. Nothing here is running.",
-  "BOUNDARY: Scoped permissions are described, not armed.",
+  "BOUNDARY: Computer access is described, not armed. Pairing is required.",
   "FILES: A private workspace appears after you pair on /setup.",
 ];
 

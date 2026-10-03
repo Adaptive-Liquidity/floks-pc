@@ -7,8 +7,9 @@ export default function ProductPage() {
   return (
     <MarketingPage eyebrow={PRODUCT_EYEBROW} title={PRODUCT_TITLE}>
       <p>
-        Staxions is an isolated Agent Computer for one Grok Bot. Persistent workspace. Dedicated browser. Private
-        files. Controlled execution. Scoped permissions.
+        Staxions by Asentxia is an isolated Agent Computer for one Grok Bot. Files kept while your computer exists.
+        Dedicated browser. Private files. Shell and browser tools. Scoped, revocable computer access, only on the
+        supported computer-access surface.
       </p>
       <section className="space-y-3">
         <h2 className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase">What it is</h2>
@@ -24,8 +25,8 @@ export default function ProductPage() {
       <section className="space-y-3">
         <h2 className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase">The boundary</h2>
         <p>
-          Pair with a one-time key and scoped tokens. The Bot works inside the computer. It does not inherit
-          ambient access from you, from Grok’s shared native machine, or from another Bot.
+          Pair with a one-time key. The Bot works inside the computer. It does not inherit ambient access from you,
+          from Grok’s shared native machine, or from another Bot. Pairing is required for computer access.
         </p>
       </section>
       <section className="space-y-3">

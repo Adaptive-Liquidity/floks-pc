@@ -1,6 +1,6 @@
 /** Locked public copy. Tests grep this file. Do not reintroduce killed lines. */
 
-import { PLAN_CATALOG } from "./billing/catalog";
+import { PLAN_CATALOG, PUBLIC_PRICE_LABEL } from "./billing/catalog";
 import { SUPPORT_EMAIL } from "./config";
 
 export const HOME_KICKER = "The Agent Computer";
@@ -8,7 +8,7 @@ export const HOME_KICKER = "The Agent Computer";
 export const HOME_HEADLINE = "Your agent has a mind.";
 
 export const HOME_SUB =
-  "Give it somewhere to work. An isolated Agent Computer — persistent workspace, dedicated browser, private files, controlled execution, scoped permissions.";
+  "Give it somewhere to work. An isolated Agent Computer — dedicated browser, private files kept while your computer exists, and shell and browser tools. Scoped, revocable computer access, only on the supported computer-access surface.";
 
 export const HOME_LINE =
   "Not another chat window. Not a temporary sandbox. One Bot, one isolated computer. Work stays in Grok.";
@@ -17,6 +17,7 @@ export const HOME_TOOLS =
   "Same eight tools on every desk. Renews monthly until you cancel.";
 
 export const FOOTER_MARK = "Staxions";
+export const FOOTER_BYLINE = "Staxions by Asentxia";
 export const FOOTER_ORG = "Asentxia Inc.";
 
 export const JOIN_LINE = "Create an account. Then buy a computer. We email a 6-digit code.";
@@ -62,7 +63,7 @@ export const OAUTH_BODY =
   "This proves who paid. It does not pick the Bot. Pairing is on /setup.";
 
 export const HONESTY =
-  "Hours bill while the computer is initializing, running, suspending, or resuming. Asleep and shutdown do not. Unused hours are not cash back. Copy files while it’s up. The disk is not kept after the subscription ends. Cancel from /setup. At the included-hour cap the computer auto-suspends unless you turn on $1.20/h overage. Idle computers suspend after about 30 minutes.";
+  `Hours bill while the computer is initializing, running, suspending, or resuming. Asleep and shutdown do not. Unused hours are not cash back. Copy files while it’s up. The disk is not kept after the subscription ends. Cancel from /setup. At the included-hour cap the computer auto-suspends unless you turn on overage. ${PUBLIC_PRICE_LABEL}. Idle computers suspend after about 30 minutes.`;
 
 export const PLANS = [
   {
@@ -70,7 +71,7 @@ export const PLANS = [
     name: PLAN_CATALOG.personal.name,
     price: PLAN_CATALOG.personal.priceLabel,
     hours: "10 hours",
-    line: "Personal — $29/mo — 10 hours — 1 computer",
+    line: PLAN_CATALOG.personal.line,
     short: PLAN_CATALOG.personal.short,
   },
   {
@@ -78,7 +79,7 @@ export const PLANS = [
     name: PLAN_CATALOG.pro.name,
     price: PLAN_CATALOG.pro.priceLabel,
     hours: "40 hours",
-    line: "Pro — $99/mo — 40 shared hours — 2 computers",
+    line: PLAN_CATALOG.pro.line,
     short: PLAN_CATALOG.pro.short,
   },
   {
@@ -86,7 +87,7 @@ export const PLANS = [
     name: PLAN_CATALOG.team.name,
     price: PLAN_CATALOG.team.priceLabel,
     hours: "30 hours per agent",
-    line: "Team — $79 per agent/mo — 30 hours per agent — minimum 3 agents",
+    line: PLAN_CATALOG.team.line,
     short: PLAN_CATALOG.team.short,
   },
 ] as const;
@@ -146,7 +147,7 @@ export const JOIN_TITLE = "Pick the hours";
 export const JOIN_SUB =
   "One paid seat: one Grok Bot, one isolated computer. Create an account, then buy. Work stays in Grok.";
 export const JOIN_HOURS =
-  "Boot and resume burn hours. Asleep and shutdown do not. Extra hours $1.20/h, off by default.";
+  `Boot and resume burn hours. Asleep and shutdown do not. Extra hours stay off by default. ${PUBLIC_PRICE_LABEL}.`;
 export const PRICING_TITLE = "Pricing";
 export const PRICING_SUB =
   "Personal, Pro, and Team. Enterprise is a conversation. Always-on is not a public plan.";
@@ -178,7 +179,7 @@ export const FAQ_QA: ReadonlyArray<[string, string]> = [
   ["What am I buying?", "A Staxions Agent Computer: an isolated machine for a Grok Bot. Work stays in Grok."],
   [
     "What are the plans?",
-    "Personal $29/mo · 1 computer · 10 hours. Pro $99/mo · 2 computers · 40 shared hours. Team $79 per agent/mo, minimum 3 agents, 30 hours per agent. Enterprise is contact / pilot only. Extra hours $1.20/h, off by default.",
+    `Personal — 1 computer — 10 hours. Pro — 2 computers — 40 shared hours. Team — 30 hours per agent — minimum 3 agents. ${PUBLIC_PRICE_LABEL}. Enterprise is contact us. Extra hours stay off by default.`,
   ],
   [
     "What burns hours?",

@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "motion/react";
-import { Link2Off, MessageSquare, Terminal } from "lucide-react";
+import { HardDrive, Link2Off, MessageSquare, Terminal } from "lucide-react";
 
 export function WhyItMatters() {
   return (
@@ -72,19 +72,17 @@ export function WhyItMatters() {
             </h4>
             <div className="grid grid-cols-3 gap-4 text-center relative z-10">
               <div className="space-y-2">
-                <span className="block text-4xl text-primary-fixed drop-shadow-[0_0_10px_rgba(227,242,253,0.5)]">∞</span>
+                <HardDrive className="mx-auto w-8 h-8 text-primary-fixed drop-shadow-[0_0_10px_rgba(227,242,253,0.5)]" />
                 <p className="font-label-mono text-label-mono text-primary-fixed">
-                  Persistent
-                  <br />
-                  State
+                  Files kept while your computer exists
                 </p>
               </div>
               <div className="space-y-2">
                 <Terminal className="mx-auto w-8 h-8 text-primary-fixed drop-shadow-[0_0_10px_rgba(227,242,253,0.5)]" />
                 <p className="font-label-mono text-label-mono text-primary-fixed">
-                  Full
+                  Shell and
                   <br />
-                  Execution
+                  browser tools
                 </p>
               </div>
               <div className="space-y-2">

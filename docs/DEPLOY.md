@@ -41,14 +41,14 @@ If the table is missing, opening `/setup/computers/:id` must not 500: HMAC + the
 
 ## Plans (edit in one file)
 
-Draft prices live in `web/lib/billing/catalog.ts`. Stripe Price IDs are **not** hardcoded — set env vars:
+Public pages say pricing is to be confirmed. Stripe Price IDs are **not** hardcoded — set env vars. Unapproved cent figures, if retained, stay in `web/lib/billing/internal-draft-prices.ts` and are not rendered.
 
 | Plan | Env var | Suggested Stripe product |
 |------|---------|--------------------------|
-| Personal $29/mo, 1 computer, 10h | `STRIPE_PRICE_PERSONAL` | Recurring monthly Price |
-| Pro $99/mo, 2 computers, 40 shared h | `STRIPE_PRICE_PRO` | Recurring monthly Price |
-| Team $79 / agent / mo, min qty 3, 30h/agent | `STRIPE_PRICE_TEAM` | Recurring monthly Price, quantity at checkout |
-| Enterprise | none | No checkout. “Talk to us” mailto |
+| Personal, 1 computer, 10h. Pricing to be confirmed. | `STRIPE_PRICE_PERSONAL` | Recurring monthly Price |
+| Pro, 2 computers, 40 shared h. Pricing to be confirmed. | `STRIPE_PRICE_PRO` | Recurring monthly Price |
+| Team, min qty 3, 30h/agent. Pricing to be confirmed. | `STRIPE_PRICE_TEAM` | Recurring monthly Price, quantity at checkout |
+| Enterprise | none | No checkout. Contact us mailto |
 
 Always-on is not a public plan. Checkout is a server-created Stripe Checkout Session (`POST /api/checkout`). Success/cancel URLs use `APP_URL` or the request origin — never `floks-pc.com`.
 

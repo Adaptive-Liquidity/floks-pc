@@ -49,7 +49,7 @@ const BOOT_LINES: Line[] = [
   { text: "> ISOLATED LINUX VM.", color: "" },
   { text: "> DEDICATED BROWSER OBSERVE.", color: "" },
   { text: "> PRIVATE FILES MOUNTED.", color: "" },
-  { text: "> SCOPED PERMISSIONS ARMED.", color: "" },
+  { text: "> PAIRING REQUIRED FOR COMPUTER ACCESS.", color: "" },
   { text: "> AWAITING PAIR ON /SETUP...", color: "" },
 ];
 

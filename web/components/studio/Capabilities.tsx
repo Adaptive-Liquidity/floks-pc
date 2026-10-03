@@ -15,9 +15,9 @@ const capabilities = [
   {
     icon: HardDrive,
     tag: "Private files",
-    title: "Persistent workspace",
+    title: "Workspace files",
     description:
-      "Files stay with the work while the computer is up. Sleep does not wipe. When the subscription ends, the disk is not kept.",
+      "Files kept while your computer exists. Sleep does not wipe. When the subscription ends, the disk is not kept.",
     metric: "Sleep-safe",
   },
   {
@@ -25,7 +25,7 @@ const capabilities = [
     tag: "One boundary",
     title: "Isolated computer",
     description:
-      "One paid seat: one Grok Bot, one isolated Linux VM. Scoped permissions you grant. Not a shared chat sandbox.",
+      "One paid seat: one Grok Bot, one isolated Linux VM. Scoped, revocable computer access, only on the supported computer-access surface. Not a shared chat sandbox.",
     metric: "VM isolate",
   },
   {
