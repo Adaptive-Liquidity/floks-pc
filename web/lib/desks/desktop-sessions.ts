@@ -136,19 +136,73 @@ const globalDesktop = globalThis as typeof globalThis & {
   __staxDesktopSessions?: DesktopSessionStore | null;
 };
 
+let missingTableWarned = false;
+
+export function isMissingDesktopSessionsTable(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const code = "code" in err ? err.code : undefined;
+  if (code === "42P01") return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /desktop_sessions/i.test(message) && /does not exist|undefined table/i.test(message);
+}
+
+function warnMissingDesktopSessionsTable(): void {
+  if (missingTableWarned) return;
+  missingTableWarned = true;
+  console.warn(
+    "[desktop] desktop_sessions table is missing; falling back to HMAC + session + expiry. Revoke is best-effort.",
+  );
+}
+
+export function resilientDesktopSessionStore(inner: DesktopSessionStore): DesktopSessionStore {
+  return {
+    async save(row: DesktopSessionRow): Promise<void> {
+      try {
+        await inner.save(row);
+      } catch (err) {
+        if (!isMissingDesktopSessionsTable(err)) throw err;
+        warnMissingDesktopSessionsTable();
+      }
+    },
+    async get(nonce: string): Promise<DesktopSessionRow | null> {
+      try {
+        return await inner.get(nonce);
+      } catch (err) {
+        if (!isMissingDesktopSessionsTable(err)) throw err;
+        warnMissingDesktopSessionsTable();
+        return null;
+      }
+    },
+    async revoke(nonce: string, now: number): Promise<boolean> {
+      try {
+        return await inner.revoke(nonce, now);
+      } catch (err) {
+        if (!isMissingDesktopSessionsTable(err)) throw err;
+        warnMissingDesktopSessionsTable();
+        return false;
+      }
+    },
+  };
+}
+
 export function setDesktopSessionStoreForTests(store: DesktopSessionStore | null): void {
-  globalDesktop.__staxDesktopSessions = store;
+  globalDesktop.__staxDesktopSessions = store ? resilientDesktopSessionStore(store) : store;
 }
 
 export function getDesktopSessionStore(): DesktopSessionStore {
   if (globalDesktop.__staxDesktopSessions) return globalDesktop.__staxDesktopSessions;
   const databaseUrl = process.env.DATABASE_URL?.trim();
   globalDesktop.__staxDesktopSessions = databaseUrl
-    ? new PostgresDesktopSessionStore(databaseUrl)
+    ? resilientDesktopSessionStore(new PostgresDesktopSessionStore(databaseUrl))
     : new MemoryDesktopSessionStore();
   return globalDesktop.__staxDesktopSessions;
 }
 
 export function resetDesktopSessionStoreForTests(): void {
+  missingTableWarned = false;
   globalDesktop.__staxDesktopSessions = new MemoryDesktopSessionStore();
+}
+
+export function resetDesktopSessionFallbackForTests(): void {
+  missingTableWarned = false;
 }

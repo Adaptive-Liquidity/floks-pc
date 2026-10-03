@@ -1,4 +1,4 @@
--- 0010_desktop_sessions.sql
+-- 0011_desktop_sessions.sql
 -- Owner live-screen sessions (nonce + revoke). HMAC still authorizes the token.
 -- Do NOT apply this to a live database from this change. Flag only.
 

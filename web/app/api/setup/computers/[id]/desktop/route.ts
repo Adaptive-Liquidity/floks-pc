@@ -9,7 +9,9 @@ import {
   revokeOwnerDesktopToken,
   rotateOwnerDesktopToken,
 } from "../../../../../../lib/desks/desktop-access";
+import { desktopOwnerRateKey, DESKTOP_OWNER_LIMIT, DESKTOP_OWNER_WINDOW_MS } from "../../../../../../lib/desks/desktop-rate";
 import { getComputerService } from "../../../../../../lib/desks/runtime";
+import { takeRateLimit } from "../../../../../../lib/rate-limit";
 
 function errorCode(err: unknown): string | null {
   if (!err || typeof err !== "object") return null;
@@ -70,6 +72,10 @@ export async function POST(
   if (!computerId) return fail(404, "Computer not found.");
   const owned = await emailOwnsComputer(user.email, computerId);
   if (!owned) return fail(403, "That computer is not on this account.");
+  const email = user.email.trim().toLowerCase();
+  if (!takeRateLimit(desktopOwnerRateKey(email), DESKTOP_OWNER_LIMIT, DESKTOP_OWNER_WINDOW_MS)) {
+    return fail(429, "Too many screen requests. Wait a moment.", { reason: "rate_limited" });
+  }
 
   let parsed: z.infer<typeof BodySchema>;
   try {
@@ -79,7 +85,6 @@ export async function POST(
   }
 
   const service = await getComputerService();
-  const email = user.email.trim().toLowerCase();
 
   try {
     if (parsed.action === "open") {
@@ -240,6 +245,9 @@ export async function POST(
     }
     if (code === "OWNER_ACT_DENIED") {
       return fail(400, err instanceof Error ? err.message : "owner desktop does not allow that action");
+    }
+    if (code === "COMPUTER_ASLEEP") {
+      return fail(402, "Billing needs attention.");
     }
     if (code === "RECOVERY_FAILED") {
       return fail(502, "This computer could not wake.");

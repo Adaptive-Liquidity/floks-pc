@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "react";
+import { DESKTOP_POLL_MS, desktopPollDelay } from "@/lib/desks/desktop-poll";
 
 type DesktopMode = "view" | "control";
 
@@ -85,6 +86,9 @@ export function ComputerScreen({
   const frameRef = useRef<HTMLDivElement | null>(null);
   const tokenRef = useRef<string | null>(null);
   const modeRef = useRef<DesktopMode>("view");
+  const inFlightRef = useRef(false);
+  const lastErrorRef = useRef(false);
+  const lastDelayRef = useRef(DESKTOP_POLL_MS);
 
   useEffect(() => {
     tokenRef.current = token;
@@ -120,31 +124,45 @@ export function ComputerScreen({
   const pullScreen = useCallback(async () => {
     const current = tokenRef.current;
     if (!current) return;
-    const res = await desktopPost(computerId, { action: "screen", token: current });
-    const body = (await res.json()) as {
-      ok?: boolean;
-      message?: string;
-      reason?: string;
-      screenshot?: string;
-      screenWidth?: number;
-      screenHeight?: number;
-      state?: string;
-      needsWake?: boolean;
-    };
-    if (res.status === 401 && (body.reason === "expired" || body.reason === "revoked")) {
-      setToken(null);
-      setMode("view");
-      setMessage(body.message ?? "That screen session expired.");
-      return;
+    if (inFlightRef.current) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    inFlightRef.current = true;
+    try {
+      const res = await desktopPost(computerId, { action: "screen", token: current });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        message?: string;
+        reason?: string;
+        screenshot?: string;
+        screenWidth?: number;
+        screenHeight?: number;
+        state?: string;
+        needsWake?: boolean;
+      };
+      if (res.status === 401 && (body.reason === "expired" || body.reason === "revoked")) {
+        lastErrorRef.current = false;
+        setToken(null);
+        setMode("view");
+        setMessage(body.message ?? "That screen session expired.");
+        return;
+      }
+      if (!res.ok) {
+        lastErrorRef.current = true;
+        setMessage(body.message ?? "The screen is not available.");
+        return;
+      }
+      lastErrorRef.current = false;
+      lastDelayRef.current = DESKTOP_POLL_MS;
+      applyStatus(body);
+      if (typeof body.screenshot === "string") setScreenshot(body.screenshot);
+      if (typeof body.screenWidth === "number") setScreenWidth(body.screenWidth);
+      if (typeof body.screenHeight === "number") setScreenHeight(body.screenHeight);
+    } catch {
+      lastErrorRef.current = true;
+      setMessage("The screen is not available.");
+    } finally {
+      inFlightRef.current = false;
     }
-    if (!res.ok) {
-      setMessage(body.message ?? "The screen is not available.");
-      return;
-    }
-    applyStatus(body);
-    if (typeof body.screenshot === "string") setScreenshot(body.screenshot);
-    if (typeof body.screenWidth === "number") setScreenWidth(body.screenWidth);
-    if (typeof body.screenHeight === "number") setScreenHeight(body.screenHeight);
   }, [applyStatus, computerId]);
 
   useEffect(() => {
@@ -153,11 +171,54 @@ export function ComputerScreen({
 
   useEffect(() => {
     if (!token || needsWake) return;
-    void pullScreen();
-    const id = window.setInterval(() => {
-      void pullScreen();
-    }, 1500);
-    return () => window.clearInterval(id);
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    const schedule = (): void => {
+      const delay = desktopPollDelay({
+        inFlight: inFlightRef.current,
+        hidden: typeof document !== "undefined" && document.visibilityState === "hidden",
+        lastError: lastErrorRef.current,
+        lastDelayMs: lastDelayRef.current,
+      });
+      if (delay === null) return;
+      lastDelayRef.current = delay;
+      timeoutId = window.setTimeout(() => {
+        void run();
+      }, delay);
+    };
+
+    const run = async (): Promise<void> => {
+      if (cancelled) return;
+      await pullScreen();
+      if (cancelled) return;
+      schedule();
+    };
+
+    lastErrorRef.current = false;
+    lastDelayRef.current = DESKTOP_POLL_MS;
+    void run();
+
+    const onVisibility = (): void => {
+      if (cancelled) return;
+      if (typeof document === "undefined") return;
+      if (document.visibilityState === "hidden") {
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+        timeoutId = undefined;
+        return;
+      }
+      lastErrorRef.current = false;
+      lastDelayRef.current = DESKTOP_POLL_MS;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      void run();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [needsWake, pullScreen, token]);
 
   useEffect(() => {

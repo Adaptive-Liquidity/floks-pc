@@ -1441,7 +1441,7 @@ export class ComputerService {
     }
     const kind = await this.classifyProvider(ref);
     if (kind === "up") return this.healToUp(computer);
-    if (!(await this.wakeAdmission(computer.id))) throw new ComputerAsleep();
+    await this.requireWakeAdmission(computer.id);
     const deadline = this.now() + this.wakeBudgetMs();
     computer = this.markWaking(computer);
     await this.persist();
@@ -1835,12 +1835,19 @@ export class ComputerService {
   }
 
   async wakeThisComputer(computerId: string): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
     return this.enqueueDestroy(computerId, () => this.wakeThisComputerLocked(computerId));
+  }
+
+  /** Same entitlement/billing gate MCP uses in ensureAwake. */
+  private async requireWakeAdmission(computerId: string): Promise<void> {
+    if (!(await this.wakeAdmission(computerId))) throw new ComputerAsleep();
   }
 
   private async wakeThisComputerLocked(computerId: string): Promise<Computer> {
     const current = await this.get(computerId);
     if (current.state === "ready" || current.state === "running") return current;
+    await this.requireWakeAdmission(computerId);
     let computer = this.applyTransition(current, "waking");
     await this.persist();
     const ref = this.requireProviderRef(computer);
@@ -1960,6 +1967,7 @@ export class ComputerService {
   }
 
   async recoverThisComputer(computerId: string): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
     return this.enqueueDestroy(computerId, () => this.recoverThisComputerLocked(computerId));
   }
 
@@ -1992,6 +2000,7 @@ export class ComputerService {
 
   private async recoverThisComputerLocked(computerId: string): Promise<Computer> {
     const current = await this.get(computerId);
+    await this.requireWakeAdmission(computerId);
     const latest = current.latestCheckpoint;
     if (!latest || (latest.status !== "ready" && latest.status !== "restored")) {
       throw new CheckpointRequired();
@@ -2353,6 +2362,7 @@ export class ComputerService {
     needsWake: boolean;
     viewable: boolean;
   }> {
+    await this.reloadIfRevisionChanged();
     const computer = await this.get(computerId);
     const needsWake = computer.state === "paused" || computer.state === "stopped";
     const viewable = computer.state === "ready" || computer.state === "running";
@@ -2369,6 +2379,7 @@ export class ComputerService {
     | { ok: true; screen: OperatorObserveResult; state: ComputerState }
     | { ok: false; needsWake: true; state: ComputerState }
   > {
+    await this.reloadIfRevisionChanged();
     const computer = await this.get(computerId);
     if (computer.state === "paused" || computer.state === "stopped") {
       return { ok: false, needsWake: true, state: computer.state };
@@ -2397,6 +2408,7 @@ export class ComputerService {
    * Owner takeover input. Coordinates/keys only — never click_element or open_url.
    */
   async ownerDesktopAct(computerId: string, request: ActionBatch): Promise<ActionResult> {
+    await this.reloadIfRevisionChanged();
     const computer = await this.get(computerId);
     if (computer.state === "paused" || computer.state === "stopped") {
       throw new ObserveRetryable(computer.state);

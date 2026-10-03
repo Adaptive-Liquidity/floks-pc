@@ -5,6 +5,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  ComputerAsleep,
   ComputerError,
   ComputerNotFound,
   ComputerService,
@@ -126,6 +127,36 @@ describe("owner desktop service", () => {
   it("fails closed when the computer is missing", async () => {
     const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
     await assert.rejects(() => service.ownerDesktopStatus("missing"), ComputerNotFound);
+  });
+
+  it("reloads shared state before owner screen reads or acts", async () => {
+    const store = new MemoryControlPlaneStore();
+    const a = new ComputerService(new FakeProvider(), { store });
+    const computer = await a.requestComputer({ birdId: "bird-share", flockId: "flock-share" });
+    const b = new ComputerService(new FakeProvider(), { store });
+    await b.hydrate();
+    assert.equal((await b.ownerDesktopStatus(computer.id)).needsWake, false);
+    await a.pauseThisComputer(computer.id);
+    const status = await b.ownerDesktopStatus(computer.id);
+    assert.equal(status.needsWake, true);
+    assert.equal(status.computer.state, "paused");
+    const watched = await b.ownerDesktopWatch(computer.id);
+    assert.equal(watched.ok, false);
+    if (!watched.ok) assert.equal(watched.needsWake, true);
+    await assert.rejects(
+      () => b.ownerDesktopAct(computer.id, { actions: [{ type: "click_coordinates", x: 4, y: 4 }] }),
+      ObserveRetryable,
+    );
+  });
+
+  it("refuses wake and recover when the seat is not admitted", async () => {
+    const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
+    service.setWakeAdmission(async () => false);
+    const computer = await service.requestComputer({ birdId: "bird-bill", flockId: "flock-bill" });
+    await service.pauseThisComputer(computer.id);
+    await assert.rejects(() => service.wakeThisComputer(computer.id), ComputerAsleep);
+    await assert.rejects(() => service.recoverThisComputer(computer.id), ComputerAsleep);
+    assert.equal((await service.get(computer.id)).state, "paused");
   });
 
   it("serializes concurrent wakes on a paused computer", async () => {

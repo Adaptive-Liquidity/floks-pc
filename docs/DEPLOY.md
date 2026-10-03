@@ -11,6 +11,7 @@ Do **not** promote a Preview to Vercel Production, change DNS, or edit live Stri
 - Cron: `GET /api/cron/computers` every 5 minutes (Pro plan). Set `CRON_SECRET`. Vercel sends `Authorization: Bearer $CRON_SECRET`.
 - Apply SQL in order: `migrations/0001_node_computers.sql` through `0008_stripe_events.sql`. Run `npm run migrate` only with `DATABASE_URL` set, and only after the owner approves that database change.
 - Apply `migrations/0005_pair_reveals.sql` to the preview database before pull request 33 or 34 deploys. Without that column, `/setup` returns 500 for a paying customer.
+- `migrations/0011_desktop_sessions.sql` is the owner live-screen revoke table. **Do not apply it to a live database from this change.** `0010` is reserved for the billing migration on the parallel payments work — do not reuse that filename. If `desktop_sessions` is missing, opening the screen still works (HMAC + signed-in session + expiry). Revoke (close / hand-back) is best-effort and a warning is logged. Apply `0011` only after the owner approves that database change.
 
 ## Kill switch and rollback
 
@@ -28,6 +29,14 @@ Do **not** promote a Preview to Vercel Production, change DNS, or edit live Stri
 Use Vercel Postgres or any Neon-compatible Postgres URL (pooled or direct). The app uses the `pg` client.
 
 Local only: omit `DATABASE_URL` and optionally set `FLOK_SEAT_STORE_PATH=.flok/seats.json`.
+
+## 0011 desktop_sessions (owner live screen)
+
+`migrations/0011_desktop_sessions.sql` adds `desktop_sessions` so close / hand-back revoke is durable across Vercel instances. **Do not apply this to a live database from this PR.** Flag only.
+
+If the table is missing, opening `/setup/computers/:id` must not 500: HMAC + the signed-in session + expiry still authorize the token. Revoke is best-effort and the server logs a warning. Apply `0011` only after the owner approves that database change.
+
+`0010` is taken by the billing migration on the parallel payments work. This file is `0011` so the two do not collide.
 
 ## Plans (edit in one file)
 

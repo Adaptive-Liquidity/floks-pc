@@ -5,10 +5,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.ts";
+import { ComputerAsleep, ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.ts";
 import { MCP_TOOL_NAMES } from "../../src/lib/mcp/tools.ts";
 import { POST as desktopPost } from "../../web/app/api/setup/computers/[id]/desktop/route.ts";
-import { createSeat, getSeatStore, resetSeatStoreForTests } from "../../web/lib/billing/seats.ts";
+import { createSeat, getSeatStore, resetSeatStoreForTests, type SeatRecord, type SeatStatus } from "../../web/lib/billing/seats.ts";
+import { DESKTOP_POLL_MAX_MS, DESKTOP_POLL_MS, desktopPollDelay } from "../../web/lib/desks/desktop-poll.ts";
+import { DESKTOP_OWNER_LIMIT, desktopOwnerRateKey } from "../../web/lib/desks/desktop-rate.ts";
 import {
   desktopBindSecret,
   encodeDesktopToken,
@@ -24,8 +26,12 @@ import {
   MemoryDesktopSessionStore,
   resetDesktopSessionStoreForTests,
   setDesktopSessionStoreForTests,
+  type DesktopSessionRow,
+  type DesktopSessionStore,
 } from "../../web/lib/desks/desktop-sessions.ts";
 import { flockIdForEmail, setComputerServiceForTests } from "../../web/lib/desks/runtime.ts";
+import { admitComputerWake } from "../../web/lib/desks/wake-admission.ts";
+import { resetRateLimitsForTests, takeRateLimit } from "../../web/lib/rate-limit.ts";
 
 const ORIGIN = "https://staxions-preview.vercel.app";
 const EMAIL = "owner@example.com";
@@ -70,7 +76,9 @@ async function seededComputer(bird = "seat:desktop"): Promise<{
   process.env.STAXIONS_BIND_SECRET = BIND;
   resetSeatStoreForTests();
   resetDesktopSessionStoreForTests();
+  resetRateLimitsForTests();
   const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
+  service.setWakeAdmission(admitComputerWake);
   setComputerServiceForTests(service);
   const computer = await service.requestComputer({
     birdId: bird,
@@ -228,7 +236,9 @@ describe("owner desktop HTTP", { concurrency: 1 }, () => {
     process.env.STAXIONS_BIND_SECRET = BIND;
     resetSeatStoreForTests();
     resetDesktopSessionStoreForTests();
+    resetRateLimitsForTests();
     const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
+    service.setWakeAdmission(admitComputerWake);
     setComputerServiceForTests(service);
     const left = await service.requestComputer({ birdId: "seat:left", flockId: flockIdForEmail(EMAIL) });
     const right = await service.requestComputer({ birdId: "seat:right", flockId: flockIdForEmail(EMAIL) });
@@ -259,7 +269,10 @@ describe("owner desktop HTTP", { concurrency: 1 }, () => {
     process.env.STAXIONS_BIND_SECRET = BIND;
     resetSeatStoreForTests();
     resetDesktopSessionStoreForTests();
-    setComputerServiceForTests(new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() }));
+    resetRateLimitsForTests();
+    const ghost = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
+    ghost.setWakeAdmission(admitComputerWake);
+    setComputerServiceForTests(ghost);
     await getSeatStore().upsert(
       createSeat({
         email: EMAIL,
@@ -351,6 +364,7 @@ describe("owner desktop HTTP", { concurrency: 1 }, () => {
     process.env.STAXIONS_BIND_SECRET = BIND;
     resetSeatStoreForTests();
     resetDesktopSessionStoreForTests();
+    resetRateLimitsForTests();
     class Slow extends FakeProvider {
       async observe(): Promise<{ screenWidth: number; screenHeight: number }> {
         await new Promise<void>((resolve) => {
@@ -360,6 +374,7 @@ describe("owner desktop HTTP", { concurrency: 1 }, () => {
       }
     }
     const service = new ComputerService(new Slow(), { store: new MemoryControlPlaneStore() });
+    service.setWakeAdmission(admitComputerWake);
     const original = service.ownerDesktopWatch.bind(service);
     service.ownerDesktopWatch = (id: string) => original(id, { timeoutMs: 20 });
     setComputerServiceForTests(service);
@@ -390,8 +405,123 @@ describe("owner desktop HTTP", { concurrency: 1 }, () => {
     assert.match(screen, /Take control/);
     assert.match(screen, /Hand back/);
     assert.match(screen, /You have control/);
+    assert.match(screen, /visibilitychange/);
+    assert.match(screen, /desktopPollDelay/);
+    assert.match(screen, /inFlightRef/);
+    assert.doesNotMatch(screen, /setInterval/);
     assert.doesNotMatch(screen, /neon|glow|gradient|novnc|runloop\.ai/i);
     assert.doesNotMatch(tools, /computer_takeover|computer_vnc|computer_desktop/);
     assert.equal(MCP_TOOL_NAMES.length, 8);
+  });
+
+  it("refuses wake for past_due, canceled, and over-cap seats via the screen and the service", async () => {
+    const cases: Array<{ bird: string; status: SeatStatus; hoursUsed?: number }> = [
+      { bird: "seat:due", status: "past_due" },
+      { bird: "seat:cancel", status: "canceled" },
+      { bird: "seat:cap", status: "active", hoursUsed: 10 },
+    ];
+    for (const row of cases) {
+      const { service, computerId } = await seededComputer(row.bird);
+      const seats = await getSeatStore().listAll();
+      const seat = seats[0];
+      assert.ok(seat);
+      const next: SeatRecord = {
+        ...seat,
+        status: row.status,
+        hoursUsed: row.hoursUsed ?? seat.hoursUsed,
+        secondsUsed:
+          typeof row.hoursUsed === "number" ? Math.round(row.hoursUsed * 3600) : seat.secondsUsed,
+      };
+      await getSeatStore().upsert(next);
+      await service.pauseThisComputer(computerId);
+      await assert.rejects(() => service.wakeThisComputer(computerId), ComputerAsleep);
+      assert.equal((await service.get(computerId)).state, "paused");
+      const woken = await callDesktop(computerId, { action: "wake" });
+      assert.equal(woken.status, 402);
+      assert.match(String(woken.json.message), /billing needs attention/i);
+    }
+  });
+
+  it("opens the screen when desktop_sessions is missing from the schema", async () => {
+    const { computerId } = await seededComputer("seat:notable");
+    class MissingTableStore implements DesktopSessionStore {
+      async save(): Promise<void> {
+        throw missingTableError();
+      }
+      async get(): Promise<DesktopSessionRow | null> {
+        throw missingTableError();
+      }
+      async revoke(): Promise<boolean> {
+        throw missingTableError();
+      }
+    }
+    const warnings: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+    try {
+      setDesktopSessionStoreForTests(new MissingTableStore());
+      const opened = await callDesktop(computerId, { action: "open" });
+      assert.equal(opened.status, 200);
+      assert.equal(typeof opened.json.token, "string");
+      const screen = await callDesktop(computerId, { action: "screen", token: opened.json.token });
+      assert.equal(screen.status, 200);
+      const closed = await callDesktop(computerId, { action: "close", token: opened.json.token });
+      assert.equal(closed.status, 200);
+      assert.ok(warnings.some((line) => /desktop_sessions/.test(line) && /missing|HMAC/i.test(line)));
+    } finally {
+      console.warn = orig;
+    }
+  });
+
+  it("rate-limits one owner on the desktop route", async () => {
+    const { computerId } = await seededComputer("seat:rl");
+    resetRateLimitsForTests();
+    let limited = 0;
+    let ok = 0;
+    for (let i = 0; i < DESKTOP_OWNER_LIMIT + 1; i++) {
+      const res = await callDesktop(computerId, { action: "open" });
+      if (res.status === 429) limited += 1;
+      if (res.status === 200) ok += 1;
+    }
+    assert.equal(ok, DESKTOP_OWNER_LIMIT);
+    assert.equal(limited, 1);
+    assert.equal(takeRateLimit(desktopOwnerRateKey(EMAIL), DESKTOP_OWNER_LIMIT), false);
+  });
+});
+
+function missingTableError(): Error {
+  const err = new Error('relation "desktop_sessions" does not exist');
+  (err as Error & { code: string }).code = "42P01";
+  return err;
+}
+
+describe("owner desktop poll helpers", () => {
+  it("does not overlap, pauses when hidden, and backs off on errors", () => {
+    assert.equal(
+      desktopPollDelay({ inFlight: true, hidden: false, lastError: false, lastDelayMs: DESKTOP_POLL_MS }),
+      null,
+    );
+    assert.equal(
+      desktopPollDelay({ inFlight: false, hidden: true, lastError: false, lastDelayMs: DESKTOP_POLL_MS }),
+      null,
+    );
+    assert.equal(
+      desktopPollDelay({ inFlight: false, hidden: false, lastError: false, lastDelayMs: 8_000 }),
+      DESKTOP_POLL_MS,
+    );
+    assert.equal(
+      desktopPollDelay({ inFlight: false, hidden: false, lastError: true, lastDelayMs: DESKTOP_POLL_MS }),
+      3_000,
+    );
+    assert.equal(
+      desktopPollDelay({ inFlight: false, hidden: false, lastError: true, lastDelayMs: 8_000 }),
+      16_000 > DESKTOP_POLL_MAX_MS ? DESKTOP_POLL_MAX_MS : 16_000,
+    );
+    assert.equal(
+      desktopPollDelay({ inFlight: false, hidden: false, lastError: true, lastDelayMs: DESKTOP_POLL_MAX_MS }),
+      DESKTOP_POLL_MAX_MS,
+    );
   });
 });
