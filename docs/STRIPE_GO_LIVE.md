@@ -18,7 +18,7 @@ Do **not** set live keys from a code PR. Do **not** apply `migrations/0010_billi
 | `STRIPE_PORTAL_CONFIGURATION_ID` | test Customer Portal configuration | live configuration that allows plan, quantity, cancel |
 | `STAXIONS_BILLING_GRACE_HOURS` | optional, default `72` | same name; default 72 hours |
 | `STAXIONS_BIND_SECRET` | ≥32 chars; signs bot checkout links | new value on Production |
-| `CHECKOUT_DISABLED` | `1` to stop new checkouts | same |
+| `CHECKOUT_DISABLED` | `1` to stop `POST /api/checkout` and `POST /buy` | same |
 | `APP_URL` | Preview origin | public origin |
 
 Draft catalog amounts live in `web/lib/billing/catalog.ts`. Never hard-code a live Price id in git.
@@ -43,7 +43,9 @@ Subscribe to:
 - `charge.dispute.updated`
 - `charge.dispute.closed`
 
-Signature must verify (`Stripe-Signature` + `STRIPE_WEBHOOK_SECRET`). Duplicate deliveries are skipped by event id in `stripe_events` (Postgres when `DATABASE_URL` is set). Unsigned bodies are refused in production.
+Signature must verify (`Stripe-Signature` + `STRIPE_WEBHOOK_SECRET`). Duplicate deliveries are skipped by event id in `stripe_events` (Postgres when `DATABASE_URL` is set). Unsigned bodies are refused in production. Provision and bot bind run before the handler returns 200. If they throw, the event id is released and the handler returns 500 so Stripe retries.
+
+Refund and dispute: a partial refund does not change seat status. A full refund is treated as canceled (grace, then sleep, files kept). A dispute opened marks `past_due`. A dispute won restores `active` if the subscription is otherwise active.
 
 ## Customer Portal (dashboard)
 
@@ -58,7 +60,9 @@ Put that configuration id in `STRIPE_PORTAL_CONFIGURATION_ID`. Stripe emails rec
 
 ## Migration file (do not apply from this PR)
 
-`migrations/0010_billing_grace.sql` adds `grace_until` and `billing_event_at` on `billing_seats`. Apply only after the owner approves that database, after `0009_pending_binds.sql`.
+`migrations/0010_billing_grace.sql` adds `grace_until` and `billing_event_at` on `billing_seats`. Apply it for 72-hour grace to work. The app stays up without it: `/setup`, login, and the Stripe webhook keep reading and writing seats; grace, stale-event ordering, and post-grace sleep are off until those columns exist.
+
+Apply only after the owner approves that database, after `0009_pending_binds.sql`. Do not apply `0010` from this PR.
 
 ## One real TEST-mode purchase
 

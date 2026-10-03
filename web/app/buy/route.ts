@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { csrfOk, requestOrigin } from "../../lib/auth/cookies";
+import { checkoutDisabled } from "../../lib/billing/catalog";
 import { CheckoutNotConfigured, createCheckoutSession } from "../../lib/billing/stripe";
 import { openBuyToken, peekBuyToken } from "../../lib/billing/buy-link";
 
@@ -28,6 +29,9 @@ export async function GET(request: Request): Promise<NextResponse> {
 export async function POST(request: Request): Promise<NextResponse> {
   if (!csrfOk(request, requestOrigin(request.url))) {
     return NextResponse.json({ ok: false }, { status: 403 });
+  }
+  if (checkoutDisabled()) {
+    return NextResponse.json({ error: "checkout_disabled" }, { status: 503 });
   }
   const form = await request.formData();
   const token = String(form.get("t") ?? "");

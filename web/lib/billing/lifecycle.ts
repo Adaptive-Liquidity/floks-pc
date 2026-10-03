@@ -9,6 +9,7 @@ import { getOauthStore } from "../oauth";
 import { getSeatStore, type SeatRecord } from "./seats";
 import { withSeatProvisionLock } from "./provision-lock";
 import { graceExpired, startGrace } from "./grace";
+import { graceColumnsReady } from "./grace-schema";
 import {
   ensureComputersForSeat,
   getComputerService,
@@ -74,6 +75,7 @@ export async function resumeSeatComputers(seat: SeatRecord): Promise<number> {
 
 /** After grace: suspend and keep files. Never destroy from billing. Preview does not need cron. */
 export async function enforceBillingHold(seat: SeatRecord, nowMs: number = Date.now()): Promise<SeatRecord> {
+  if (!graceColumnsReady()) return seat;
   const store = getSeatStore();
   if (seat.status === "active") {
     if (!seat.graceUntil) return seat;

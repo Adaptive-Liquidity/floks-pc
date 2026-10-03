@@ -2,13 +2,29 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.ts";
 import { handleStripeWebhookRequest } from "../../web/lib/billing/webhook.ts";
+import { createBuyLink } from "../../web/lib/billing/buy-link.ts";
+import {
+  MemoryPendingBindStore,
+  getPendingBindStore,
+  setPendingBindStoreForTests,
+} from "../../web/lib/billing/pending-binds.ts";
 import {
   getStripe,
   resetStripeForTests,
 } from "../../web/lib/billing/stripe.ts";
 import { resetStripeEventsForTests } from "../../web/lib/billing/stripe-events.ts";
 import { getSeatStore, resetSeatStoreForTests } from "../../web/lib/billing/seats.ts";
-import { resetDeskRuntimeForTests, setComputerServiceForTests } from "../../web/lib/desks/runtime.ts";
+import { flockIdForEmail, resetDeskRuntimeForTests, setComputerServiceForTests } from "../../web/lib/desks/runtime.ts";
+import {
+  MemoryOauthStore,
+  exchangeCode,
+  getOauthStore,
+  hashToken,
+  issueCode,
+  pkceS256,
+  registerClient,
+  setOauthStoreForTests,
+} from "../../web/lib/oauth.ts";
 import { paidCheckoutEvent, useTestPriceEnv } from "./helpers/stripe-fixtures.ts";
 
 const SECRET = "whsec_test_webhook_secret";
@@ -33,11 +49,15 @@ describe("stripe webhook HTTP", { concurrency: 1 }, () => {
     resetStripeEventsForTests();
     resetSeatStoreForTests();
     resetDeskRuntimeForTests();
+    setPendingBindStoreForTests(new MemoryPendingBindStore());
+    setOauthStoreForTests(new MemoryOauthStore());
     setComputerServiceForTests(new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() }));
   });
 
   afterEach(() => {
     setComputerServiceForTests(null);
+    setPendingBindStoreForTests(new MemoryPendingBindStore());
+    setOauthStoreForTests(new MemoryOauthStore());
     delete process.env.STRIPE_SECRET_KEY;
     delete process.env.STRIPE_WEBHOOK_SECRET;
     process.env.NODE_ENV = "test";
@@ -49,11 +69,7 @@ describe("stripe webhook HTTP", { concurrency: 1 }, () => {
     process.env.NODE_ENV = "production";
     try {
       const event = paidCheckoutEvent({ id: "cs_nosig", email: "a@example.com" });
-      const pending: Promise<void>[] = [];
-      const res = await handleStripeWebhookRequest(signedRequest(JSON.stringify(event), null), (work) => {
-        pending.push(work());
-      });
-      await Promise.all(pending);
+      const res = await handleStripeWebhookRequest(signedRequest(JSON.stringify(event), null));
       assert.equal(res.status, 400);
       assert.equal(((await res.json()) as { ok?: boolean }).ok, false);
     } finally {
@@ -96,11 +112,7 @@ describe("stripe webhook HTTP", { concurrency: 1 }, () => {
     assert.ok(client);
     const payload = JSON.stringify(event);
     const signature = client.webhooks.generateTestHeaderString({ payload, secret: SECRET });
-    const pending: Promise<void>[] = [];
-    const first = await handleStripeWebhookRequest(signedRequest(payload, signature), (work) => {
-      pending.push(work());
-    });
-    await Promise.all(pending);
+    const first = await handleStripeWebhookRequest(signedRequest(payload, signature));
     assert.equal(first.status, 200);
     const body = (await first.json()) as { ok?: boolean; seatId?: string | null };
     assert.equal(body.ok, true);
@@ -114,5 +126,76 @@ describe("stripe webhook HTTP", { concurrency: 1 }, () => {
     assert.equal(((await again.json()) as { duplicate?: boolean }).duplicate, true);
     const seats = await getSeatStore().listByEmail("buyer@example.com");
     assert.equal(seats.length, 1);
+  });
+
+  it("returns 500 when provision fails so Stripe retries and bind completes on one seat", async () => {
+    process.env.STAXIONS_BIND_SECRET = "test-bind-0123456789-abcdef-0123456789";
+    const provider = new FakeProvider();
+    provider.injectFailure("provision", "unavailable");
+    setComputerServiceForTests(new ComputerService(provider, { store: new MemoryControlPlaneStore() }));
+
+    const email = "retrybind@example.com";
+    const subject = "user_retrybind";
+    const client = registerClient(["https://grok.com/callback"]);
+    await getOauthStore().saveClient(client);
+    const verifier = "verifier-value-which-is-long-enough";
+    const redirect = client.redirectUris[0] ?? "";
+    const flock = flockIdForEmail(email);
+    const code = await issueCode({
+      clientId: client.id,
+      redirectUri: redirect,
+      challenge: pkceS256(verifier),
+      subject,
+      flock,
+      email,
+    });
+    const exchanged = await exchangeCode({
+      code,
+      verifier,
+      clientId: client.id,
+      redirectUri: redirect,
+    });
+    assert.ok("token" in exchanged);
+    if (!("token" in exchanged)) return;
+
+    const link = await createBuyLink({
+      origin: "https://example.test",
+      email,
+      subject,
+      flock,
+      clientId: client.id,
+      plan: "personal",
+    });
+    const event = paidCheckoutEvent({
+      id: "cs_retry_bind",
+      email,
+      eventId: "evt_retry_bind",
+      metadata: {
+        oauth_client_id: client.id,
+        subject,
+        flock,
+        bind_nonce: link.nonce,
+      },
+    });
+    const stripe = getStripe();
+    assert.ok(stripe);
+    const payload = JSON.stringify(event);
+    const signature = stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET });
+
+    const first = await handleStripeWebhookRequest(signedRequest(payload, signature));
+    assert.equal(first.status, 500);
+    const afterFail = await getSeatStore().listByEmail(email);
+    assert.equal(afterFail.length, 1);
+    assert.equal(afterFail[0]?.computerId, null);
+    assert.equal((await getPendingBindStore().get(link.nonce))?.usedAt, null);
+
+    const retry = await handleStripeWebhookRequest(signedRequest(payload, signature));
+    assert.equal(retry.status, 200);
+    const seats = await getSeatStore().listByEmail(email);
+    assert.equal(seats.length, 1);
+    assert.ok(seats[0]?.computerId);
+    assert.ok((await getPendingBindStore().get(link.nonce))?.usedAt);
+    const bound = await getOauthStore().getAccess(hashToken(exchanged.token));
+    assert.equal(bound?.computerId, seats[0]?.computerId);
   });
 });

@@ -212,27 +212,12 @@ describe("adversarial stripe billing", { concurrency: 1 }, () => {
     const refunded = await applyStripeEvent(
       stripeEvent(
         "charge.refunded",
-        { customer: "cus_cs_retry", amount_refunded: 2900 },
+        { customer: "cus_cs_retry", amount: 2900, amount_refunded: 2900, refunded: true },
         { id: "evt_refund", created: 1_700_000_400 },
       ),
     );
-    assert.equal(refunded?.status, "past_due");
-    const disputed = await applyStripeEvent(
-      stripeEvent(
-        "charge.dispute.created",
-        { customer: "cus_cs_retry", status: "needs_response" },
-        { id: "evt_dispute", created: 1_700_000_500 },
-      ),
-    );
-    assert.equal(disputed?.status, "past_due");
-    const won = await applyStripeEvent(
-      stripeEvent(
-        "charge.dispute.closed",
-        { customer: "cus_cs_retry", status: "won" },
-        { id: "evt_won", created: 1_700_000_600 },
-      ),
-    );
-    assert.equal(won?.status, "past_due");
+    assert.equal(refunded?.status, "canceled");
+    assert.ok(refunded?.graceUntil);
   });
 
   it("creates a new seat after cancel when the buyer purchases again", async () => {

@@ -175,6 +175,10 @@ export function planFromStripePriceId(
   return null;
 }
 
+export function checkoutDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.CHECKOUT_DISABLED === "1";
+}
+
 export function checkoutBlocked(plan: string, quantity: number): "team_minimum" | null {
   if (plan === "team" && quantity < 3) return "team_minimum";
   return null;

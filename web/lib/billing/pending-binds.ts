@@ -1,4 +1,5 @@
 import { flockIdForEmail } from "../desks/runtime";
+import { normalizeEmail } from "./plans";
 import { getSeatStore } from "./seats";
 import type { CheckoutPlanId } from "./catalog";
 
@@ -19,8 +20,15 @@ export type PendingBindClaim = "ok" | "used" | "expired" | "missing";
 export interface PendingBindStore {
   save(row: PendingBind): Promise<void>;
   get(nonce: string): Promise<PendingBind | null>;
+  listOpenByEmail(email: string, now?: number): Promise<PendingBind[]>;
   claimOpen(nonce: string, now: number): Promise<PendingBindClaim>;
   markUsed(nonce: string, now?: number): Promise<boolean>;
+}
+
+function isOpenPending(row: PendingBind, now: number): boolean {
+  if (row.usedAt !== null) return false;
+  if (row.openedAt !== null) return true;
+  return row.expiresAt > now;
 }
 
 export class MemoryPendingBindStore implements PendingBindStore {
@@ -32,6 +40,12 @@ export class MemoryPendingBindStore implements PendingBindStore {
   async get(nonce: string): Promise<PendingBind | null> {
     const row = this.rows.get(nonce);
     return row ? { ...row } : null;
+  }
+  async listOpenByEmail(email: string, now = Date.now()): Promise<PendingBind[]> {
+    const key = normalizeEmail(email);
+    return [...this.rows.values()]
+      .filter((row) => row.email === key && isOpenPending(row, now))
+      .map((row) => ({ ...row }));
   }
   async claimOpen(nonce: string, now: number): Promise<PendingBindClaim> {
     const row = this.rows.get(nonce);
@@ -85,6 +99,19 @@ export class PostgresPendingBindStore implements PendingBindStore {
   async get(nonce: string): Promise<PendingBind | null> {
     const result = await this.withClient((query) => query(`SELECT * FROM pending_binds WHERE nonce = $1`, [nonce]));
     return mapBind(result.rows[0]);
+  }
+
+  async listOpenByEmail(email: string, now = Date.now()): Promise<PendingBind[]> {
+    const result = await this.withClient((query) =>
+      query(
+        `SELECT * FROM pending_binds
+          WHERE email = $1
+            AND used_at IS NULL
+            AND (opened_at IS NOT NULL OR expires_at > to_timestamp($2 / 1000.0))`,
+        [normalizeEmail(email), now],
+      ),
+    );
+    return result.rows.map((row) => mapBind(row)).filter((row): row is PendingBind => row !== null);
   }
 
   async claimOpen(nonce: string, now: number): Promise<PendingBindClaim> {

@@ -3,20 +3,21 @@ import type Stripe from "stripe";
 import { bindPurchasedComputer } from "./bind-purchase";
 import { enforceBillingHold, provisionSeatComputers, resumeSeatComputers } from "./lifecycle";
 import { claimStripeEvent, releaseStripeEvent } from "./stripe-events";
+import { getPendingBindStore } from "./pending-binds";
 import {
   applyStripeEvent,
   constructStripeEvent,
   parseUnsignedStripeEvent,
   STRIPE_PAID_EVENT_TYPES,
 } from "./stripe";
-import { getSeatStore, type SeatRecord } from "./seats";
+import { DurableStoreRequired, getSeatStore, type SeatRecord } from "./seats";
 
 const PAID = new Set<string>(STRIPE_PAID_EVENT_TYPES);
 
-export type WebhookDefer = (work: () => Promise<void>) => void;
-
-export function deferNow(work: () => Promise<void>): void {
-  void work();
+function checkoutBindNonce(event: Stripe.Event): string {
+  if (event.type !== "checkout.session.completed") return "";
+  const session = event.data.object as Stripe.Checkout.Session;
+  return session.metadata?.bind_nonce?.trim() ?? "";
 }
 
 export async function applySeatRuntime(event: Stripe.Event, seat: SeatRecord): Promise<SeatRecord> {
@@ -30,7 +31,14 @@ export async function applySeatRuntime(event: Stripe.Event, seat: SeatRecord): P
         computerIds: computers.length > 0 ? computers.map((row) => row.id) : seat.computerIds,
       };
     await resumeSeatComputers(fresh);
-    await bindPurchasedComputer(event, fresh, computers);
+    const bound = await bindPurchasedComputer(event, fresh, computers);
+    const nonce = checkoutBindNonce(event);
+    if (nonce && !bound) {
+      const pending = await getPendingBindStore().get(nonce);
+      if (pending && pending.usedAt === null) {
+        throw new Error("purchase bind did not complete");
+      }
+    }
     return fresh;
   }
   if (seat.status === "past_due" || seat.status === "canceled") {
@@ -56,10 +64,7 @@ export async function handleVerifiedStripeEvent(event: Stripe.Event): Promise<{
   }
 }
 
-export async function handleStripeWebhookRequest(
-  request: Request,
-  defer: WebhookDefer = deferNow,
-): Promise<NextResponse> {
+export async function handleStripeWebhookRequest(request: Request): Promise<NextResponse> {
   const raw = await request.text();
   const signature = request.headers.get("stripe-signature");
   let eventId: string | null = null;
@@ -75,20 +80,14 @@ export async function handleStripeWebhookRequest(
       return NextResponse.json({ ok: true, duplicate: true });
     }
     const seat = await applyStripeEvent(event);
-    if (seat) {
-      const captured = event;
-      defer(async () => {
-        try {
-          await applySeatRuntime(captured, seat);
-        } catch (err) {
-          console.error("[stripe.webhook] runtime", err instanceof Error ? err.message : err);
-          await releaseStripeEvent(captured.id);
-        }
-      });
-    }
+    if (seat) await applySeatRuntime(event, seat);
     return NextResponse.json({ ok: true, seatId: seat?.id ?? null });
-  } catch {
+  } catch (err) {
     if (eventId) await releaseStripeEvent(eventId);
-    return NextResponse.json({ ok: false, message: "webhook rejected" }, { status: 400 });
+    if (eventId && !(err instanceof DurableStoreRequired)) {
+      console.error("[stripe.webhook]", err instanceof Error ? err.message : err);
+    }
+    const status = err instanceof DurableStoreRequired ? 400 : eventId ? 500 : 400;
+    return NextResponse.json({ ok: false, message: "webhook rejected" }, { status });
   }
 }

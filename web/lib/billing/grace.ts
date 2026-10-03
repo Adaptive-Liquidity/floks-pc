@@ -1,3 +1,4 @@
+import { graceColumnsReady } from "./grace-schema";
 import type { SeatRecord } from "./seats";
 
 /** Default hold after a failed payment or cancel. Cron is not required. */
@@ -34,6 +35,7 @@ export function graceExpired(
   seat: Pick<SeatRecord, "status" | "graceUntil">,
   nowMs: number = Date.now(),
 ): boolean {
+  if (!graceColumnsReady()) return false;
   if (seat.status !== "past_due" && seat.status !== "canceled") return false;
   if (!seat.graceUntil) return true;
   const until = Date.parse(seat.graceUntil);
@@ -47,6 +49,7 @@ export function graceAllowsAccess(
 ): boolean {
   if (seat.status === "active") return true;
   if (seat.status !== "past_due" && seat.status !== "canceled") return false;
+  if (!graceColumnsReady()) return true;
   return !graceExpired(seat, nowMs);
 }
 
@@ -55,6 +58,7 @@ export function startGrace(
   nowMs: number = Date.now(),
   env: NodeJS.ProcessEnv = process.env,
 ): SeatRecord {
+  if (!graceColumnsReady()) return seat;
   if (seat.graceUntil) return seat;
   const until = new Date(nowMs + billingGraceHours(env) * 3600 * 1000).toISOString();
   return { ...seat, graceUntil: until };

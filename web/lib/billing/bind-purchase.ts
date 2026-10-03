@@ -2,8 +2,9 @@ import type Stripe from "stripe";
 import type { Computer } from "../../../src/lib/computers/index";
 import { flockIdForEmail, getComputerService } from "../desks/runtime";
 import { getOauthStore } from "../oauth";
+import { enforceBillingHold, provisionSeatComputers } from "./lifecycle";
 import { getPendingBindStore } from "./pending-binds";
-import type { SeatRecord } from "./seats";
+import { getSeatStore, type SeatRecord } from "./seats";
 
 /** Mint a capability for a computer this flock already owns. The raw token is not stored. */
 export async function issueBoundCapability(
@@ -68,4 +69,83 @@ export async function bindPurchasedComputer(
     console.error("[stripe.bind]", err instanceof Error ? err.message : "bind failed");
     return false;
   }
+}
+
+function uniqueComputerIds(seat: SeatRecord): string[] {
+  const ids = [...seat.computerIds];
+  if (seat.computerId && !ids.includes(seat.computerId)) ids.unshift(seat.computerId);
+  return [...new Set(ids.filter(Boolean))];
+}
+
+async function computersForSeat(seat: SeatRecord): Promise<Computer[]> {
+  const service = await getComputerService();
+  const out: Computer[] = [];
+  for (const id of uniqueComputerIds(seat)) {
+    try {
+      out.push(await service.get(id));
+    } catch {
+      // Computer may have been removed; skip.
+    }
+  }
+  return out;
+}
+
+function syntheticCheckoutCompleted(seat: SeatRecord, pending: { nonce: string; subject: string; flock: string; clientId: string }): Stripe.Event {
+  return {
+    type: "checkout.session.completed",
+    id: `complete:${pending.nonce}`,
+    created: Math.floor(Date.now() / 1000),
+    data: {
+      object: {
+        id: seat.stripeCheckoutSessionId ?? `cs_pending_${pending.nonce}`,
+        customer: seat.stripeCustomerId,
+        customer_email: seat.email,
+        metadata: {
+          bind_nonce: pending.nonce,
+          subject: pending.subject,
+          flock: pending.flock,
+          oauth_client_id: pending.clientId,
+        },
+      },
+    },
+  } as Stripe.Event;
+}
+
+/** Finish provision + bot bind if the webhook returned before runtime completed. */
+export async function completeOpenPurchase(input: {
+  email?: string | null;
+  flock?: string | null;
+}): Promise<{ seats: number; bound: number }> {
+  const store = getSeatStore();
+  const seats = input.email
+    ? await store.listByEmail(input.email)
+    : input.flock
+      ? (await store.listAll()).filter((seat) => flockIdForEmail(seat.email) === input.flock)
+      : [];
+  let bound = 0;
+  for (const seat of seats) {
+    if (seat.status !== "active") {
+      try {
+        await enforceBillingHold(seat);
+      } catch (err) {
+        console.error("[purchase.complete]", err instanceof Error ? err.message : err);
+      }
+      continue;
+    }
+    try {
+      const provisioned = await provisionSeatComputers(seat);
+      const fresh = (await store.getById(seat.id)) ?? seat;
+      const computers = provisioned.length > 0 ? provisioned : await computersForSeat(fresh);
+      const pending = await getPendingBindStore().listOpenByEmail(fresh.email);
+      const matches = pending.filter((row) => !input.flock || row.flock === input.flock);
+      for (const row of matches) {
+        if (await bindPurchasedComputer(syntheticCheckoutCompleted(fresh, row), fresh, computers)) {
+          bound += 1;
+        }
+      }
+    } catch (err) {
+      console.error("[purchase.complete]", err instanceof Error ? err.message : err);
+    }
+  }
+  return { seats: seats.length, bound };
 }

@@ -15,6 +15,7 @@ import {
   BUY_LINK_TTL_MS,
   NO_COMPUTER_MESSAGE,
   createBuyLink,
+  peekBuyToken,
   readBuyToken,
 } from "../../web/lib/billing/buy-link.ts";
 import { provisionSeatComputers, shutdownSeatComputers } from "../../web/lib/billing/lifecycle.ts";
@@ -391,6 +392,41 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
       if (previousKey === undefined) delete process.env.STRIPE_SECRET_KEY;
       else process.env.STRIPE_SECRET_KEY = previousKey;
       resetStripeForTests();
+    }
+  });
+
+  it("blocks POST /buy when CHECKOUT_DISABLED=1 without consuming the token", async () => {
+    useBindKey();
+    setPendingBindStoreForTests(new MemoryPendingBindStore());
+    const previous = process.env.CHECKOUT_DISABLED;
+    process.env.CHECKOUT_DISABLED = "1";
+    try {
+      const fresh = await createBuyLink({
+        origin: ORIGIN,
+        email: EMAIL,
+        subject: SUBJECT,
+        flock: flockIdForEmail(EMAIL),
+        clientId: "stax_client",
+        plan: "personal",
+      });
+      const token = new URL(fresh.url).searchParams.get("t") ?? "";
+      const posted = await buyPost(
+        new Request(fresh.url, {
+          method: "POST",
+          headers: { origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ t: token }),
+        }),
+      );
+      assert.equal(posted.status, 503);
+      assert.equal(((await posted.json()) as { error?: string }).error, "checkout_disabled");
+      const preview = await buyGet(new Request(fresh.url));
+      assert.equal(preview.status, 200);
+      assert.match(await preview.text(), /Confirm purchase/);
+      const peeked = await peekBuyToken(token);
+      assert.equal(peeked.ok, true);
+    } finally {
+      if (previous === undefined) delete process.env.CHECKOUT_DISABLED;
+      else process.env.CHECKOUT_DISABLED = previous;
     }
   });
 

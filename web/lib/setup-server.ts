@@ -2,7 +2,7 @@ import type Stripe from "stripe";
 import { cookies } from "next/headers";
 import { COOKIE_NAME, loadAuthSession } from "./auth/workos";
 import { getSeatStore } from "./billing/seats";
-import { bindPurchasedComputer } from "./billing/bind-purchase";
+import { bindPurchasedComputer, completeOpenPurchase } from "./billing/bind-purchase";
 import { enforceBillingHold, provisionSeatComputers } from "./billing/lifecycle";
 import { ensureSeatFromCheckout, getStripe, getStripeCheckoutEmail } from "./billing/stripe";
 import { desksForSeats, getComputerService } from "./desks/runtime";
@@ -54,6 +54,11 @@ async function finishPaidCheckoutForSetup(sessionId: string, email: string) {
 
 export async function liveSeatSession(email: string, webhookPending = false): Promise<SeatSession> {
   const store = getSeatStore();
+  try {
+    await completeOpenPurchase({ email });
+  } catch (err) {
+    console.error("[setup.complete]", err instanceof Error ? err.message : err);
+  }
   let seats = await store.listByEmail(email);
   for (const seat of seats) {
     try {

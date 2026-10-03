@@ -467,27 +467,84 @@ export async function applyStripeEvent(event: Stripe.Event): Promise<SeatRecord 
       ),
     );
   }
-  if (
-    event.type === "charge.refunded" ||
-    event.type === "charge.dispute.created" ||
-    event.type === "charge.dispute.updated"
-  ) {
-    const obj = asObject(event.data.object);
-    const customerId = obj ? idFromUnknown(obj.customer) : null;
-    const existing = await findSeatForCustomerOrSubscription(null, customerId);
-    if (!existing) return null;
-    if (event.type === "charge.dispute.updated" && asString(obj?.status) === "won") return existing;
-    return persistHeldSeat(existing, "past_due", event);
+  if (event.type === "charge.refunded") {
+    return applyChargeRefund(event);
   }
-  if (event.type === "charge.dispute.closed") {
-    const obj = asObject(event.data.object);
-    const customerId = obj ? idFromUnknown(obj.customer) : null;
-    const existing = await findSeatForCustomerOrSubscription(null, customerId);
-    if (!existing) return null;
-    if (asString(obj?.status) === "won") return existing;
-    return persistHeldSeat(existing, "past_due", event);
+  if (
+    event.type === "charge.dispute.created" ||
+    event.type === "charge.dispute.updated" ||
+    event.type === "charge.dispute.closed"
+  ) {
+    return applyChargeDispute(event);
   }
   return null;
+}
+
+export function refundKindFromCharge(obj: Record<string, unknown> | null): "none" | "partial" | "full" {
+  if (!obj) return "none";
+  const refunded = obj.refunded === true;
+  const amount = asNumber(obj.amount);
+  const amountRefunded = asNumber(obj.amount_refunded);
+  if (refunded) return "full";
+  if (amountRefunded !== null && amount !== null) {
+    if (amountRefunded <= 0) return "none";
+    if (amountRefunded >= amount) return "full";
+    return "partial";
+  }
+  if (amountRefunded !== null && amountRefunded > 0) return "full";
+  return "none";
+}
+
+async function applyChargeRefund(event: Stripe.Event): Promise<SeatRecord | null> {
+  const obj = asObject(event.data.object);
+  const existing = await findSeatForCustomerOrSubscription(null, obj ? idFromUnknown(obj.customer) : null);
+  if (!existing) return null;
+  if (isStaleBillingEvent(existing, event.created)) return existing;
+  const kind = refundKindFromCharge(obj);
+  if (kind === "none" || kind === "partial") {
+    if (kind === "partial") {
+      return getSeatStore().upsert(withBillingEventAt(existing, event.created));
+    }
+    return existing;
+  }
+  return persistHeldSeat(existing, "canceled", event);
+}
+
+function disputeStatus(obj: Record<string, unknown> | null): string | null {
+  return obj ? asString(obj.status) : null;
+}
+
+async function applyChargeDispute(event: Stripe.Event): Promise<SeatRecord | null> {
+  const obj = asObject(event.data.object);
+  const existing = await findSeatForCustomerOrSubscription(null, obj ? idFromUnknown(obj.customer) : null);
+  if (!existing) return null;
+  if (disputeStatus(obj) === "won") {
+    return restoreSeatAfterWonDispute(existing, event);
+  }
+  return persistHeldSeat(existing, "past_due", event);
+}
+
+async function subscriptionOtherwiseActive(seat: SeatRecord): Promise<boolean> {
+  const client = getStripe();
+  if (!client || !seat.stripeSubscriptionId) {
+    return seat.status !== "canceled";
+  }
+  try {
+    const sub = await client.subscriptions.retrieve(seat.stripeSubscriptionId);
+    return sub.status === "active" || sub.status === "trialing";
+  } catch {
+    return seat.status !== "canceled";
+  }
+}
+
+async function restoreSeatAfterWonDispute(
+  existing: SeatRecord,
+  event: Stripe.Event,
+): Promise<SeatRecord> {
+  if (event && isStaleBillingEvent(existing, event.created)) return existing;
+  if (!(await subscriptionOtherwiseActive(existing))) return existing;
+  const store = getSeatStore();
+  return store.upsert(withBillingEventAt(clearGrace({ ...existing, status: "active" }), event.created));
 }
 
 async function quantityFromSubscriptionItem(subscriptionId: string | null, fallback: number): Promise<number> {
