@@ -201,16 +201,16 @@ function sharedMemory(): MemoryStripeEventStore {
 }
 
 export function getStripeEventStore(): StripeEventStore {
-  if (globalEvents.__staxStripeEvents) return globalEvents.__staxStripeEvents;
   const databaseUrl = process.env.DATABASE_URL?.trim();
-  if (databaseUrl) {
-    globalEvents.__staxStripeEvents = new PostgresStripeEventStore(databaseUrl);
-    return globalEvents.__staxStripeEvents;
-  }
-  if (requiresDurableStore()) {
+  if (requiresDurableStore() && !databaseUrl) {
     throw new DurableStoreRequired(
       "DATABASE_URL is required to claim Stripe events on Vercel and in production. In-memory event ids are not shared across instances.",
     );
+  }
+  if (globalEvents.__staxStripeEvents) return globalEvents.__staxStripeEvents;
+  if (databaseUrl) {
+    globalEvents.__staxStripeEvents = new PostgresStripeEventStore(databaseUrl);
+    return globalEvents.__staxStripeEvents;
   }
   globalEvents.__staxStripeEvents = sharedMemory();
   return globalEvents.__staxStripeEvents;

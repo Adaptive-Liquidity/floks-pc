@@ -109,14 +109,20 @@ export async function recordPermanentBindFailure(nonce: string, reason: string):
 }
 
 async function alreadyBoundToSeat(
-  pending: { subject: string; flock: string; clientId: string },
+  pending: { nonce: string; subject: string; flock: string; clientId: string },
   seat: SeatRecord,
   computers: Computer[],
 ): Promise<boolean> {
   if (pending.flock !== flockIdForEmail(seat.email)) return false;
   if (process.env.FLOK_PER_BOT_KEYS === "true") {
     const service = await getComputerService();
-    return computers.some((row) => row.flockId === pending.flock && Boolean(service.liveBotKey(row.id)));
+    const attached = service.computerIdForCheckoutNonce(pending.nonce);
+    if (!attached) return false;
+    return (
+      computers.some((row) => row.id === attached) ||
+      seat.computerIds.includes(attached) ||
+      seat.computerId === attached
+    );
   }
   const store = getOauthStore();
   for (const computer of computers) {

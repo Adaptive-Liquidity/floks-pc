@@ -1117,6 +1117,12 @@ export class ComputerService {
     await this.persist();
   }
 
+  computerIdForCheckoutNonce(checkoutNonce: string): string | null {
+    const claim = [...this.botClaims.values()].find((row) => row.checkoutNonce === checkoutNonce);
+    if (!claim || claim.status === "denied") return null;
+    return claim.computerId;
+  }
+
   async attachPurchaseToClaim(checkoutNonce: string, computerId: string): Promise<boolean> {
     await this.reloadIfRevisionChanged();
     const claim = [...this.botClaims.values()].find((row) => row.checkoutNonce === checkoutNonce);
