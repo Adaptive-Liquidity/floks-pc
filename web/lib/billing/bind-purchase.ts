@@ -108,7 +108,7 @@ function syntheticCheckoutCompleted(seat: SeatRecord, pending: { nonce: string; 
         },
       },
     },
-  } as Stripe.Event;
+  } as unknown as Stripe.Event;
 }
 
 /** Finish provision + bot bind if the webhook returned before runtime completed. */
