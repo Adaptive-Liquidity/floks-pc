@@ -99,6 +99,7 @@ describe("stripe webhook HTTP", { concurrency: 1 }, () => {
     const previousDb = process.env.DATABASE_URL;
     process.env.NODE_ENV = "production";
     delete process.env.DATABASE_URL;
+    setStripeEventStoreForTests(null);
     try {
       const event = paidCheckoutEvent({ id: "cs_nodb", email: "nodb@example.com", eventId: "evt_nodb" });
       const client = getStripe();

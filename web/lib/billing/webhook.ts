@@ -100,8 +100,12 @@ export async function handleStripeWebhookRequest(request: Request): Promise<Next
     await completeStripeEvent(event.id);
     return NextResponse.json({ ok: true, seatId: seat?.id ?? null });
   } catch (err) {
-    if (eventId) await releaseStripeEvent(eventId);
     if (eventId && !(err instanceof DurableStoreRequired)) {
+      try {
+        await releaseStripeEvent(eventId);
+      } catch {
+        // Best-effort: Stripe retries on 500 even if the lease row cannot be marked failed.
+      }
       console.error("[stripe.webhook]", err instanceof Error ? err.message : err);
     }
     const status = err instanceof DurableStoreRequired ? 400 : eventId ? 500 : 400;
