@@ -1,9 +1,15 @@
 /**
  * L5: rewrite click_element to integer click_coordinates from a fresh AX cache.
  * Never guess. Provider never receives elementId.
+ *
+ * AX bounds are CSS pixels inside the page viewport. The screen click adds the
+ * viewport origin from Browser.getWindowForTarget plus chrome insets, times
+ * devicePixelRatio. That origin is viewportOrigin, in screen pixels. xdotool
+ * receives the screen point. A stubbed origin of +0,+30 clicks 30 pixels below
+ * the CSS point.
  */
 
-import type { Action, Observation } from "./types.js";
+import type { Action, ActionResult, Observation } from "./types.js";
 import { AxNodeSchema, CDP_AX_NODE_CAP, type CdpAxBounds, type CdpAxNode } from "./providers/runloop-cdp.js";
 
 export const AX_CACHE_TTL_MS = 15_000;
@@ -13,6 +19,9 @@ export type AxClickCache = {
   screenWidth: number;
   screenHeight: number;
   nodes: Map<string, CdpAxNode>;
+  /** Screen origin of the page viewport. Defaults to 0,0. */
+  viewportOrigin?: { x: number; y: number };
+  devicePixelRatio?: number;
 };
 
 export type ClickRewrite =
@@ -46,12 +55,20 @@ export function axCacheFromObservation(observation: Observation, now: number): A
     return null;
   }
   if (observation.screenWidth < 1 || observation.screenHeight < 1) return null;
-  return {
+  const cache: AxClickCache = {
     cachedAt: now,
     screenWidth: observation.screenWidth,
     screenHeight: observation.screenHeight,
     nodes,
   };
+  const origin = asRecord(summary.viewportOrigin);
+  if (origin && typeof origin.x === "number" && typeof origin.y === "number") {
+    cache.viewportOrigin = { x: Math.round(origin.x), y: Math.round(origin.y) };
+  }
+  if (typeof summary.devicePixelRatio === "number" && summary.devicePixelRatio > 0) {
+    cache.devicePixelRatio = summary.devicePixelRatio;
+  }
+  return cache;
 }
 
 export function integerClickTarget(bounds: CdpAxBounds): { x: number; y: number } | null {
@@ -89,14 +106,20 @@ export function rewriteClickElement(
       error: "click_element has no box model; refusing to guess",
     };
   }
-  const target = integerClickTarget(node.bounds);
-  if (!target) {
+  const css = integerClickTarget(node.bounds);
+  if (!css) {
     return {
       ok: false,
       code: "CLICK_ELEMENT_UNMAPPED",
       error: "click_element bounds are not integer-mappable",
     };
   }
+  const origin = cache.viewportOrigin ?? { x: 0, y: 0 };
+  const dpr = cache.devicePixelRatio ?? 1;
+  const target = {
+    x: Math.round(origin.x + css.x * dpr),
+    y: Math.round(origin.y + css.y * dpr),
+  };
   if (
     target.x < 0 ||
     target.y < 0 ||
@@ -149,21 +172,33 @@ export function rewriteActSlots(
 
 export function stitchActResults(
   slots: RewriteSlot[],
-  providerResults: Array<{ action: Action; success: boolean; error?: string }>,
+  providerResults: Array<{
+    action: Action;
+    success: boolean;
+    error?: string;
+    code?: string;
+    finalUrl?: string;
+  }>,
 ): {
-  results: Array<{ action: Action; success: boolean; error?: string }>;
+  results: ActionResult["results"];
   failClosed: boolean;
   failCode: string | null;
 } {
   let forwarded = 0;
   let failClosed = false;
   let failCode: string | null = null;
-  const results: Array<{ action: Action; success: boolean; error?: string }> = [];
+  const results: ActionResult["results"] = [];
   for (const slot of slots) {
     if (slot.kind === "fail") {
       failClosed = true;
       if (failCode === null) failCode = slot.code;
-      results.push({ action: slot.action, success: false, error: slot.error });
+      const failed: ActionResult["results"][number] = {
+        action: slot.action,
+        success: false,
+        error: slot.error,
+      };
+      if (slot.code) failed.code = slot.code;
+      results.push(failed);
       continue;
     }
     const row = providerResults[forwarded];
@@ -172,11 +207,11 @@ export function stitchActResults(
       results.push({ action: slot.action, success: false, error: "provider omitted act result" });
       continue;
     }
-    results.push(
-      row.error === undefined
-        ? { action: slot.action, success: row.success }
-        : { action: slot.action, success: row.success, error: row.error },
-    );
+    const copied: ActionResult["results"][number] = { action: slot.action, success: row.success };
+    if (row.error !== undefined) copied.error = row.error;
+    if (row.code !== undefined) copied.code = row.code;
+    if (row.finalUrl !== undefined) copied.finalUrl = row.finalUrl;
+    results.push(copied);
   }
   return { results, failClosed, failCode };
 }

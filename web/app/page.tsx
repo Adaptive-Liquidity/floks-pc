@@ -1,22 +1,25 @@
 import { HonestyStrip } from "@/components/HonestyStrip";
-import { Door } from "@/components/Door";
 import { KitMark } from "@/components/KitMark";
-import { PayPills } from "@/components/PayPills";
-import { HOME_HEADLINE, HOME_KICKER, HOME_LINE, HOME_SUB, HOME_TOOLS } from "@/lib/copy";
+import { Capabilities } from "@/components/studio/Capabilities";
+import { Concept } from "@/components/studio/Concept";
+import { Hero } from "@/components/studio/Hero";
+import { ProcessAndTerminal } from "@/components/studio/ProcessAndTerminal";
+import { StudioCTA } from "@/components/studio/StudioCTA";
+import { WhyItMatters } from "@/components/studio/WhyItMatters";
 
 export default function HomePage() {
   return (
     <>
-      <div style={{ position: "relative" }}>
-        <Door kicker={HOME_KICKER} title={HOME_HEADLINE}>
-          <p className="lede">{HOME_SUB}</p>
-          <p className="lede">{HOME_LINE}</p>
-          <PayPills />
-          <p className="lede">{HOME_TOOLS}</p>
-        </Door>
+      <Hero />
+      <Concept />
+      <WhyItMatters />
+      <Capabilities />
+      <ProcessAndTerminal />
+      <div className="relative">
+        <HonestyStrip />
         <KitMark placement="home" />
       </div>
-      <HonestyStrip />
+      <StudioCTA />
     </>
   );
 }

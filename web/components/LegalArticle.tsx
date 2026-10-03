@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
+import { SUPPORT_EMAIL } from "@/lib/config";
 import { LEGAL_DOCS, LEGAL_NAV, type LegalSlug } from "@/lib/legal";
 
 export function LegalArticle({ slug }: { slug: LegalSlug }) {
   const doc = LEGAL_DOCS[slug];
   return (
-    <article className="paper legal-sheet">
+    <article className="paper legal-sheet glass-card">
       <h1>{doc.headline}</h1>
       {doc.sections.map((section, index) => (
         <section key={`${doc.slug}-${index}`}>
@@ -35,11 +36,12 @@ export function LegalArticle({ slug }: { slug: LegalSlug }) {
 }
 
 function linkify(text: string): ReactNode {
-  const parts = text.split(/(support@floks-pc\.com|\/setup)/g);
+  const escaped = SUPPORT_EMAIL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = text.split(new RegExp(`(${escaped}|/setup)`, "g"));
   return parts.map((part, index) => {
-    if (part === "support@floks-pc.com") {
+    if (part === SUPPORT_EMAIL) {
       return (
-        <a key={`${part}-${index}`} href="mailto:support@floks-pc.com">
+        <a key={`${part}-${index}`} href={`mailto:${SUPPORT_EMAIL}`}>
           {part}
         </a>
       );

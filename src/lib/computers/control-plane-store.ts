@@ -6,8 +6,9 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { z } from "zod";
-import type { CapabilityScope, Computer, ComputerCapability, ComputerPairCode } from "./types.js";
+import type { BotClaim, CapabilityScope, Computer, ComputerCapability, ComputerPairCode } from "./types.js";
 import {
+  BotClaimSchema,
   CapabilityScopeSchema,
   ComputerSchema,
   ComputerCapabilitySchema,
@@ -33,22 +34,43 @@ export const ControlPlaneSnapshotSchema = z.object({
   capabilities: z.array(ComputerCapabilitySchema),
   pairIssueExtras: z.record(z.string(), PairIssueExtrasSchema),
   pairFailuresByIdentity: z.record(z.string(), PairFailureSchema),
+  botClaims: z.array(BotClaimSchema).default([]),
 });
 
 export type ControlPlaneSnapshot = z.infer<typeof ControlPlaneSnapshotSchema>;
 
+export class StaleControlPlane extends Error {
+  constructor() {
+    super("control plane revision changed");
+    this.name = "StaleControlPlane";
+  }
+}
+
 export interface ControlPlaneStore {
   load(): Promise<ControlPlaneSnapshot | null>;
   save(snapshot: ControlPlaneSnapshot): Promise<void>;
+  currentRevision?(): Promise<number>;
+  compareAndSave?(snapshot: ControlPlaneSnapshot, expectedRevision: number): Promise<number>;
 }
 
 export class MemoryControlPlaneStore implements ControlPlaneStore {
   private snapshot: ControlPlaneSnapshot | null = null;
+  private revision = 0;
   async load(): Promise<ControlPlaneSnapshot | null> {
-    return this.snapshot;
+    return this.snapshot ? structuredClone(this.snapshot) : null;
+  }
+  async currentRevision(): Promise<number> {
+    return this.revision;
   }
   async save(snapshot: ControlPlaneSnapshot): Promise<void> {
     this.snapshot = structuredClone(snapshot);
+    this.revision += 1;
+  }
+  async compareAndSave(snapshot: ControlPlaneSnapshot, expectedRevision: number): Promise<number> {
+    if (expectedRevision !== this.revision) throw new StaleControlPlane();
+    this.snapshot = structuredClone(snapshot);
+    this.revision += 1;
+    return this.revision;
   }
 }
 
@@ -137,6 +159,7 @@ export function computersFromSnapshot(snapshot: ControlPlaneSnapshot): Computer[
     createdAt: new Date(c.createdAt),
     updatedAt: new Date(c.updatedAt),
     lastActiveAt: c.lastActiveAt ? new Date(c.lastActiveAt) : null,
+    rebuildConfirmRequired: c.rebuildConfirmRequired === true,
   }));
 }
 
@@ -150,11 +173,28 @@ export function pairCodesFromSnapshot(snapshot: ControlPlaneSnapshot): ComputerP
 }
 
 export function capabilitiesFromSnapshot(snapshot: ControlPlaneSnapshot): ComputerCapability[] {
-  return snapshot.capabilities.map((c) => ({
-    ...c,
-    issuedAt: new Date(c.issuedAt),
-    expiresAt: new Date(c.expiresAt),
-    revokedAt: c.revokedAt ? new Date(c.revokedAt) : null,
-    lastUsedAt: c.lastUsedAt ? new Date(c.lastUsedAt) : null,
+  return snapshot.capabilities.map((c) => {
+    const cap: ComputerCapability = {
+      id: c.id,
+      computerId: c.computerId,
+      birdId: c.birdId,
+      flockId: c.flockId,
+      tokenDigest: c.tokenDigest,
+      scopes: c.scopes,
+      issuedAt: new Date(c.issuedAt),
+      expiresAt: new Date(c.expiresAt),
+      revokedAt: c.revokedAt ? new Date(c.revokedAt) : null,
+      lastUsedAt: c.lastUsedAt ? new Date(c.lastUsedAt) : null,
+    };
+    if (c.botLabel) cap.botLabel = c.botLabel;
+    return cap;
+  });
+}
+
+export function botClaimsFromSnapshot(snapshot: ControlPlaneSnapshot): BotClaim[] {
+  return (snapshot.botClaims ?? []).map((claim) => ({
+    ...claim,
+    createdAt: new Date(claim.createdAt),
+    expiresAt: new Date(claim.expiresAt),
   }));
 }

@@ -4,11 +4,11 @@ import { AuthorizeCard } from "@/components/AuthorizeCard";
 import { OAUTH_LOADING } from "@/lib/copy";
 
 export const metadata: Metadata = {
-  title: "Allow FLOKS",
+  title: "Allow Staxions",
   robots: { index: false, follow: false },
 };
 
-export default function AuthorizePage() {
+export default function ConsentPage() {
   return (
     <Suspense
       fallback={

@@ -20,6 +20,7 @@ import {
   CONTROL_PLANE_SECRET_ENV_KEYS,
   RUNLOOP_WORKSPACE_ROOT,
   isIdempotentShutdownError,
+  mapRunloopDevboxStatus,
 } from "../../src/lib/computers/providers/index.js";
 import {
   DISPLAY_HEIGHT,
@@ -34,6 +35,12 @@ function provider(): RunloopProvider {
 }
 
 describe("RunloopProvider (no network)", () => {
+  it("maps DEVBOX_SHUTDOWN and DEVBOX_SUSPENDED onto stopped and paused", () => {
+    assert.equal(mapRunloopDevboxStatus("DEVBOX_SHUTDOWN"), "stopped");
+    assert.equal(mapRunloopDevboxStatus("DEVBOX_SUSPENDED"), "paused");
+    assert.equal(mapRunloopDevboxStatus("DEVBOX_RUNNING"), "running");
+  });
+
   it("reports provider name runloop", () => {
     assert.equal(provider().name, "runloop");
   });

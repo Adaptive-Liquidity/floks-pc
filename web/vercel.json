@@ -1,0 +1,9 @@
+{
+  "installCommand": "npm ci && npm ci --prefix .. && mkdir -p ../node_modules && ln -sfn \"$(pwd)/node_modules/zod\" ../node_modules/zod && ln -sfn \"$(pwd)/node_modules/@runloop\" ../node_modules/@runloop",
+  "crons": [
+    {
+      "path": "/api/cron/computers",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

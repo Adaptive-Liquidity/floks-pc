@@ -4,7 +4,16 @@
  */
 
 import { capabilityAuth, sharedAccountAuth } from "../computers/capabilities.js";
-import { CapabilityMissing, PairCodeInvalid } from "../computers/errors.js";
+import {
+  BotKeyRequired,
+  CapabilityInvalid,
+  CapabilityMissing,
+  ComputerAsleep,
+  ComputerError,
+  ComputerRebuilt,
+  ComputerStarting,
+  PairCodeInvalid,
+} from "../computers/errors.js";
 import type { ComputerService } from "../computers/service.js";
 import type {
   Action,
@@ -65,10 +74,17 @@ export interface McpRequestContext {
   mcpNameHeader?: string;
   /** Present but never used as Bot identity or authorization. */
   mcpSessionId?: string;
+  /** Set when the OAuth token is already bound to one computer. Ignored when perBotKeys is set. */
+  bound?: { capabilityId: string; flockId: string };
+  /** Account identity. Present only when per-bot keys are on. */
+  account?: { subject: string; flock: string; origin: string };
+  perBotKeys?: boolean;
 }
 
 export interface McpGatewayOptions {
   logger?: McpLogger;
+  /** Per-boot id. Logged with tool calls. Not a secret. */
+  instanceId?: string;
 }
 
 interface ToolOk {
@@ -86,6 +102,7 @@ type ToolOutcome = ToolOk | ToolErr;
 
 export class McpGateway {
   private readonly logger: McpLogger;
+  private readonly instanceId: string;
   private readonly pairThrottle = new PairConnectionThrottle();
 
   constructor(
@@ -93,6 +110,7 @@ export class McpGateway {
     opts: McpGatewayOptions = {},
   ) {
     this.logger = opts.logger ?? silentLogger;
+    this.instanceId = opts.instanceId ?? "";
   }
 
   /** Test helper. */
@@ -207,11 +225,23 @@ export class McpGateway {
     void protocolVersion;
     const name = toolNameFromParams(params);
     const args = argsFromParams(params);
-    this.logger.info("mcp.tools_call", { name });
     if (!name || !isKnownTool(name)) {
+      this.logger.info("mcp.tools_call", {
+        name,
+        instance: this.instanceId,
+        revision: this.service.controlPlaneRevision(),
+        code: "UNKNOWN_TOOL",
+      });
       return toolEnvelope(true, { code: "UNKNOWN_TOOL", message: "unknown tool" });
     }
     const outcome = await this.invokeTool(name, args, ctx);
+    const fields: Record<string, unknown> = {
+      name,
+      instance: this.instanceId,
+      revision: this.service.controlPlaneRevision(),
+    };
+    if (outcome.isError && typeof outcome.payload.code === "string") fields.code = outcome.payload.code;
+    this.logger.info("mcp.tools_call", fields);
     if (outcome.isError === false && outcome.images && outcome.images.length > 0) {
       return toolEnvelope(false, outcome.payload, outcome.images);
     }
@@ -228,26 +258,32 @@ export class McpGateway {
         case "computer_pair":
           return await this.computerPair(args, ctx);
         case "computer_status":
-          return await this.computerStatus(args);
+          return await this.computerStatus(args, ctx);
         case "computer_exec":
-          return await this.computerExec(args);
+          return await this.computerExec(args, ctx);
         case "computer_fs":
-          return await this.computerFs(args);
+          return await this.computerFs(args, ctx);
         case "computer_observe":
-          return await this.computerObserve(args);
+          return await this.computerObserve(args, ctx);
         case "computer_act":
-          return await this.computerAct(args);
+          return await this.computerAct(args, ctx);
         case "handoff_send":
         case "handoff_receive": {
           const parsed = HandoffArgsSchema.parse(args ?? {});
           requireToken(parsed.capability_token);
+          if (parsed.capability_token) {
+            this.service.noteHandoffAttempt({
+              token: parsed.capability_token,
+              operation: name,
+            });
+          }
           return {
             isError: true,
             payload: {
               code: "PHASE_NOT_STARTED",
               phase: "C9",
               message:
-                "Handoffs are not implemented. Explicit Node file sharing is Gate C9. Browser profiles, cookies, keys, .env, and capability tokens are never transferred.",
+                "Handoffs are not available yet. No files, browser profiles, cookies, keys, .env or capability tokens are transferred.",
             },
           };
         }
@@ -264,6 +300,28 @@ export class McpGateway {
 
   private async computerPair(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerPairArgsSchema.parse(args ?? {});
+    if (ctx.perBotKeys) return this.computerPairPerBot(parsed, ctx);
+    if (ctx.bound) {
+      const status = await this.service.status(
+        { kind: "bound", capabilityId: ctx.bound.capabilityId, flockId: ctx.bound.flockId },
+        "",
+      );
+      const viewed = this.service.getCapability(ctx.bound.capabilityId);
+      return {
+        isError: false,
+        payload: {
+          connected: true,
+          computer_handle: viewed.computerId,
+          state: publicToolState(status.state),
+        },
+      };
+    }
+    if (!parsed.pair_code || !parsed.bird_id || !parsed.flock_id) {
+      return {
+        isError: true,
+        payload: { code: "PAIR_CODE_INVALID", message: "pair code required" },
+      };
+    }
     const identity = { birdId: parsed.bird_id, flockId: parsed.flock_id };
     const conn = this.connectionIdentity(ctx);
     try {
@@ -305,18 +363,113 @@ export class McpGateway {
     }
   }
 
-  private async computerStatus(args: unknown): Promise<ToolOutcome> {
-    const parsed = ComputerStatusArgsSchema.parse(args ?? {});
-    const status = await this.service.status(
-      cap(requireToken(parsed.capability_token)),
-      parsed.computer_handle,
-    );
-    const payload: Record<string, unknown> = { state: status.state };
-    if (status.lastActiveAt) payload.last_active_at = status.lastActiveAt.toISOString();
-    return { isError: false, payload };
+  private async computerPairPerBot(
+    parsed: { pair_code?: string | undefined; capability_token?: string | undefined; computer_handle?: string | undefined },
+    ctx: McpRequestContext,
+  ): Promise<ToolOutcome> {
+    const account = ctx.account;
+    if (!account) throw new BotKeyRequired();
+    if (parsed.capability_token) {
+      const op = await operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
+      const status = await this.service.status(op.auth, op.computerId);
+      const cap = this.service.capabilityForToken(parsed.capability_token);
+      return {
+        isError: false,
+        payload: {
+          connected: true,
+          computer_handle: op.computerId,
+          bot_label: cap?.botLabel ?? null,
+          state: publicToolState(status.state),
+        },
+      };
+    }
+    if (parsed.pair_code) {
+      const conn = this.connectionIdentity(ctx);
+      try {
+        this.pairThrottle.assert(conn);
+      } catch {
+        this.logger.warn("mcp.pair_throttled", { connection: conn.authenticated ? "auth" : "unauth" });
+        return {
+          isError: true,
+          payload: { code: "PAIR_THROTTLED", message: "too many pair attempts" },
+        };
+      }
+      let redeemed: Awaited<ReturnType<ComputerService["redeemBotClaim"]>>;
+      try {
+        redeemed = await this.service.redeemBotClaim({ code: parsed.pair_code, flockId: account.flock });
+      } catch (err) {
+        this.pairThrottle.noteFailure(conn);
+        throw err;
+      }
+      if (redeemed.pending) {
+        return {
+          isError: false,
+          payload: {
+            connected: false,
+            pending: true,
+            approve_url: `${account.origin}/connect-bot/${redeemed.claimId}`,
+            ...(redeemed.checkoutOpen ? { message: "Waiting for checkout to finish." } : {}),
+          },
+        };
+      }
+      return {
+        isError: false,
+        payload: {
+          connected: true,
+          capability_token: redeemed.pair.token,
+          computer_handle: redeemed.pair.computerHandle,
+          bot_label: redeemed.botLabel,
+          expires_at: redeemed.pair.expiresAt.toISOString(),
+          scopes: [...redeemed.pair.scopes],
+        },
+      };
+    }
+    const claim = await this.service.createBotClaim({ flockId: account.flock, subject: account.subject });
+    return {
+      isError: false,
+      payload: {
+        connected: false,
+        needs_approval: true,
+        approve_url: `${account.origin}/connect-bot/${claim.claimId}`,
+        pair_code: claim.code,
+        expires_at: claim.expiresAt.toISOString(),
+        message:
+          "Ask your human to open approve_url, name this bot and pick its computer. Then call computer_pair again with this pair_code. Keep pair_code and your capability_token private in your own bot memory, never in shared files or account-wide secrets.",
+      },
+    };
   }
 
-  private async computerExec(args: unknown): Promise<ToolOutcome> {
+  private async computerStatus(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
+    const parsed = ComputerStatusArgsSchema.parse(args ?? {});
+    const op = await operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
+    try {
+      const status = await this.service.status(op.auth, op.computerId);
+      const payload: Record<string, unknown> = { state: publicToolState(status.state) };
+      if (status.lastActiveAt) payload.last_active_at = status.lastActiveAt.toISOString();
+      if (ctx.bound) {
+        payload.connected = true;
+        payload.computer_handle = this.service.getCapability(ctx.bound.capabilityId).computerId;
+      }
+      stampBot(this.service, ctx, parsed.capability_token, payload);
+      return { isError: false, payload };
+    } catch (err) {
+      if (err instanceof ComputerStarting || err instanceof ComputerAsleep) {
+        const payload: Record<string, unknown> = {
+          state: err instanceof ComputerAsleep ? "sleeping" : "starting",
+          ...(err instanceof ComputerStarting ? { retry_after_ms: 15_000 } : {}),
+        };
+        if (ctx.bound) {
+          payload.connected = true;
+          payload.computer_handle = this.service.getCapability(ctx.bound.capabilityId).computerId;
+        }
+        stampBot(this.service, ctx, parsed.capability_token, payload);
+        return { isError: false, payload };
+      }
+      throw err;
+    }
+  }
+
+  private async computerExec(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerExecArgsSchema.parse(args ?? {});
     if (parsed.env && Object.keys(parsed.env).length > MCP_MAX_ENV_KEYS) {
       return {
@@ -329,27 +482,23 @@ export class McpGateway {
     if (parsed.env !== undefined) request.env = parsed.env;
     if (parsed.timeout_ms !== undefined) request.timeoutMs = parsed.timeout_ms;
     if (parsed.mode !== undefined) request.mode = parsed.mode;
-    const result = await this.service.exec(
-      cap(requireToken(parsed.capability_token)),
-      parsed.computer_handle,
-      request,
-    );
+    const op = await operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
+    const result = await this.service.exec(op.auth, op.computerId, request);
     const stdout = clip(result.stdout);
     const stderr = clip(result.stderr);
-    return {
-      isError: false,
-      payload: {
-        exit_code: result.exitCode,
-        stdout: stdout.text,
-        stderr: stderr.text,
-        stdout_truncated: stdout.truncated,
-        stderr_truncated: stderr.truncated,
-        timed_out: result.timedOut,
-      },
+    const payload: Record<string, unknown> = {
+      exit_code: result.exitCode,
+      stdout: stdout.text,
+      stderr: stderr.text,
+      stdout_truncated: stdout.truncated,
+      stderr_truncated: stderr.truncated,
+      timed_out: result.timedOut,
     };
+    stampBot(this.service, ctx, parsed.capability_token, payload);
+    return { isError: false, payload };
   }
 
-  private async computerFs(args: unknown): Promise<ToolOutcome> {
+  private async computerFs(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerFsArgsSchema.parse(args ?? {});
     const request: FsRequest = {
       operation: parsed.operation,
@@ -358,11 +507,8 @@ export class McpGateway {
     if (parsed.content !== undefined) request.content = parsed.content;
     if (parsed.destination !== undefined) request.destination = parsed.destination;
     if (parsed.encoding !== undefined) request.encoding = parsed.encoding;
-    const result = await this.service.filesystem(
-      cap(requireToken(parsed.capability_token)),
-      parsed.computer_handle,
-      request,
-    );
+    const op = await operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
+    const result = await this.service.filesystem(op.auth, op.computerId, request);
     if (!result.ok) {
       return {
         isError: true,
@@ -374,27 +520,35 @@ export class McpGateway {
     }
     const payload: Record<string, unknown> = { ok: true };
     if (result.data !== undefined) payload.data = result.data;
+    stampBot(this.service, ctx, parsed.capability_token, payload);
     return { isError: false, payload };
   }
 
-  private async computerObserve(args: unknown): Promise<ToolOutcome> {
+  private async computerObserve(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerObserveArgsSchema.parse(args ?? {});
     const request: ObserveRequest = {};
     if (parsed.include_screenshot === true) request.includeScreenshot = true;
     if (parsed.include_accessibility === true) request.includeAccessibility = true;
-    const observation = await this.service.observe(
-      cap(requireToken(parsed.capability_token)),
-      parsed.computer_handle,
-      request,
-    );
+    const op = await operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
+    const observation = await this.service.observe(op.auth, op.computerId, request);
     const payload: Record<string, unknown> = {
       screen_width: observation.screenWidth,
       screen_height: observation.screenHeight,
+      coordinate_space: "screen_pixels",
     };
+    if (typeof observation.browserUrl === "string" && observation.browserUrl.length > 0) {
+      payload.browser_url = observation.browserUrl;
+    }
+    if (typeof observation.screenBlank === "boolean") {
+      payload.screen_blank = observation.screenBlank;
+    }
     if (observation.activeWindow !== undefined) {
       payload.active_window = observation.activeWindow;
     }
-    if (parsed.include_accessibility === true && observation.accessibilitySummary !== undefined) {
+    if (observation.accessibilityPending === true) {
+      payload.accessibility_pending = true;
+      payload.retry_after_ms = 10_000;
+    } else if (parsed.include_accessibility === true && observation.accessibilitySummary !== undefined) {
       payload.accessibility_summary = observation.accessibilitySummary;
     }
     const outcome: ToolOk = { isError: false, payload };
@@ -407,33 +561,37 @@ export class McpGateway {
         payload.has_screenshot = false;
       }
     }
+    stampBot(this.service, ctx, parsed.capability_token, payload);
     return outcome;
   }
 
-  private async computerAct(args: unknown): Promise<ToolOutcome> {
+  private async computerAct(args: unknown, ctx: McpRequestContext): Promise<ToolOutcome> {
     const parsed = ComputerActArgsSchema.parse(args ?? {});
-    const result = await this.service.act(
-      cap(requireToken(parsed.capability_token)),
-      parsed.computer_handle,
-      { actions: parsed.actions.map(toAction) },
-    );
-    return {
-      isError: false,
-      payload: {
-        ok: result.ok,
-        results: result.results.map((r) => {
-          const row: Record<string, unknown> = {
-            type: r.action.type,
-            success: r.success,
-          };
-          if (r.error !== undefined) row.error = r.error;
-          return row;
-        }),
-      },
+    const op = await operationAuth(this.service, ctx, parsed.capability_token, parsed.computer_handle);
+    const result = await this.service.act(op.auth, op.computerId, {
+      actions: parsed.actions.map(toAction),
+    });
+    const payload: Record<string, unknown> = {
+      ok: result.ok,
+      results: result.results.map((r) => {
+        const row: Record<string, unknown> = {
+          type: r.action.type,
+          success: r.success,
+        };
+        if (r.error !== undefined) row.error = r.error;
+        if (r.code !== undefined) row.code = r.code;
+        if (r.finalUrl !== undefined) row.final_url = r.finalUrl;
+        return row;
+      }),
     };
+    stampBot(this.service, ctx, parsed.capability_token, payload);
+    return { isError: false, payload };
   }
 
   private toolFailure(err: unknown): ToolErr {
+    if (err instanceof ComputerRebuilt) {
+      this.logger.warn("mcp.computer_rebuilt", {});
+    }
     const pub = publicErrorFromUnknown(err);
     if (pub.code === "INTERNAL") {
       this.logger.error("mcp.tool_internal", {});
@@ -446,8 +604,48 @@ export class McpGateway {
   }
 }
 
+function stampBot(
+  service: { capabilityForToken(token: string): { botLabel?: string | null } | null },
+  ctx: McpRequestContext,
+  token: string | undefined,
+  payload: Record<string, unknown>,
+): void {
+  if (!ctx.perBotKeys) return;
+  payload.bot_label = token ? (service.capabilityForToken(token)?.botLabel ?? null) : null;
+}
+
 function cap(token: string): ComputerOperationAuth {
   return capabilityAuth(token);
+}
+
+const UNRECOGNISED_KEY =
+  "This key is not recognised. Call computer_pair with no arguments to get a new one.";
+
+async function operationAuth(
+  service: {
+    findCapabilityForToken(
+      token: string,
+    ): Promise<{ computerId: string; botLabel?: string | null } | null>;
+  },
+  ctx: McpRequestContext,
+  token: string | undefined,
+  handle: string | undefined,
+): Promise<{ auth: ComputerOperationAuth; computerId: string }> {
+  if (ctx.perBotKeys) {
+    if (!token) throw new BotKeyRequired();
+    const found = await service.findCapabilityForToken(token);
+    if (!found) throw new ComputerError("CAPABILITY_INVALID", UNRECOGNISED_KEY);
+    if (handle && handle !== found.computerId) throw new CapabilityInvalid("computer");
+    return { auth: cap(token), computerId: found.computerId };
+  }
+  if (ctx.bound) {
+    return {
+      auth: { kind: "bound", capabilityId: ctx.bound.capabilityId, flockId: ctx.bound.flockId },
+      computerId: "",
+    };
+  }
+  if (!handle) throw new CapabilityMissing("missing computer");
+  return { auth: cap(requireToken(token)), computerId: handle };
 }
 
 function requireToken(token: string | undefined): string {
@@ -503,6 +701,20 @@ function toolEnvelope(
     isError,
     structuredContent: payload,
   };
+}
+
+function publicToolState(state: string): string {
+  if (state === "paused" || state === "stopped") return "sleeping";
+  if (
+    state === "waking" ||
+    state === "provisioning" ||
+    state === "requested" ||
+    state === "recovering"
+  ) {
+    return "starting";
+  }
+  if (state === "ready" || state === "running") return "running";
+  return state;
 }
 
 function toolNameFromParams(params: unknown): string | undefined {

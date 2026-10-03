@@ -52,6 +52,12 @@ export interface ComputerProvider {
   /** Irreversible destroy */
   destroy(ref: string): Promise<void>;
 
+  /**
+   * Reset provider idle/keep-alive so a plan-length session is not killed
+   * by the vendor's short default lifetime. Optional; FakeProvider omits it.
+   */
+  keepAlive?(ref: string): Promise<void>;
+
   /** Execute a process (prefer argv[] over shell strings) */
   exec(ref: string, request: ExecRequest): Promise<ExecResult>;
 

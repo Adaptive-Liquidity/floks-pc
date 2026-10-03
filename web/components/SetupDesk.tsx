@@ -3,68 +3,47 @@
 import { useEffect, useState } from "react";
 import { useChrome } from "@/components/Chrome";
 import { PayPills } from "@/components/PayPills";
-import { CONNECTOR } from "@/lib/config";
+import { ComputerManageSection } from "@/components/computer/ComputerManageSection";
+import { dashboardStatusFromDesk } from "@/lib/computers/dashboard";
+import { publicConnector, SETUP_ACTIONS } from "@/lib/config";
 import {
-  APPROVE_LABEL,
-  DENY_LABEL,
-  DENY_NOTE,
-  DESK_COPY,
+  ACCOUNT_EMPTY,
+  ACCOUNT_HOME_LINE,
+  CANCELED_HOLD,
   PAST_DUE,
-  PASTE_FALLBACK,
-  USER_CODE_LABEL,
+  SETUP_RECONNECT_BOT,
   WEBHOOK_LAG,
   ZERO_SEATS,
 } from "@/lib/copy";
-import { approvePair, denyPair, type ActionResult } from "@/lib/setup-client";
 import type { SeatSession } from "@/lib/types";
 
 export function SetupDesk({
   session,
   preview,
+  connector = publicConnector(),
 }: {
   session: SeatSession;
   preview: boolean;
+  connector?: ReturnType<typeof publicConnector>;
 }) {
   const { setAuthed } = useChrome();
-  const [code, setCode] = useState(session.desk?.userCode ?? "");
-  const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
+  const desks = session.desks.length ? session.desks : session.desk ? [session.desk] : [];
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setAuthed(true);
-    return () => setAuthed(false);
   }, [setAuthed]);
 
-  async function run(kind: "approve" | "deny", fn: () => Promise<ActionResult>) {
-    if (busy) return;
-    setBusy(kind);
-    setMessage(null);
-    const result = await fn();
-    setBusy(null);
-    if (!result.ok) {
-      setMessage(
-        result.conflict
-          ? "That desk is already bound to a different request."
-          : result.message,
-      );
-      return;
-    }
-    setMessage("Request sent.");
-  }
-
-  const desk = session.desk;
-  const showPay = session.seats === 0 && session.pluginAllowed && !session.webhookPending;
-  const live = desk?.state === "running";
-  const failed = desk?.state === "failed";
-  const showPair = Boolean(desk && (desk.pendingRequest || desk.userCode));
+  const showPay = session.seats === 0 && !session.webhookPending;
+  const emptyAccount = session.seats === 0;
 
   return (
     <div className="paper rack">
       {preview ? (
-        <p className="preview-flag">Preview — not a live seat. session_id did not mint this.</p>
+        <p className="preview-flag">Preview. This is not a live computer.</p>
       ) : null}
       <section className="bay">
-        <p className="kicker">Desk</p>
+        <p className="kicker">Account</p>
         <div className="row">
           <strong>{session.billingEmail}</strong>
           <span className="meta">
@@ -72,89 +51,83 @@ export function SetupDesk({
             {session.periodLabel ? ` · ${session.periodLabel}` : ""}
           </span>
         </div>
+        {emptyAccount ? <p>{ACCOUNT_HOME_LINE}</p> : null}
       </section>
 
-      {session.flockStatus === "past_due" ? (
-        <p className="banner danger">
-          {PAST_DUE}
-        </p>
-      ) : null}
+      {session.flockStatus === "past_due" ? <p className="banner danger">{PAST_DUE}</p> : null}
+      {session.canceledHold ? <p className="banner">{CANCELED_HOLD}</p> : null}
+      {session.reconnectBot ? <p className="banner">{SETUP_RECONNECT_BOT}</p> : null}
       {session.webhookPending ? <p className="banner">{WEBHOOK_LAG}</p> : null}
       {showPay ? (
         <>
           <p className="banner">{ZERO_SEATS}</p>
-          <PayPills />
+          <p className="note">{ACCOUNT_EMPTY}</p>
+          <PayPills email={session.billingEmail} />
         </>
       ) : null}
 
-      {desk ? (
-        <section className={`bay${live ? " live" : ""}${failed ? " fail" : ""}`}>
-          {live ? <span className="lamp" aria-hidden="true" /> : null}
-          <p className="kicker">{desk.state.replace("_", " ")}</p>
-          <p>{DESK_COPY[desk.state]}</p>
-          {session.hoursUsed !== null && session.hoursIncluded !== null ? (
-            <p className="meta">
-              Hours {session.hoursUsed} / {session.hoursIncluded}
+      {emptyAccount ? null : (
+
+      <>
+      {desks.map((desk, index) => (
+          <section key={desk.id} className="bay">
+            <h2>{`Computer ${index + 1}`}</h2>
+            <p>{session.plan ?? "no plan"}</p>
+            <p>{desk.state.replaceAll("_", " ")}</p>
+            <p>
+              {desk.botName
+                ? desk.lastUsedLabel
+                  ? `Bot: ${desk.botName} · last used ${desk.lastUsedLabel}`
+                  : `Bot: ${desk.botName}`
+                : "Bot: none"}
             </p>
-          ) : null}
-          {desk.userCode ? (
-            <div>
-              <p className="kicker">{USER_CODE_LABEL}</p>
-              <p className="user-code">{desk.userCode}</p>
-            </div>
-          ) : null}
-          {showPair ? (
-            <div className="actions">
+            {desk.computerId && !preview ? (
+              <a className="ghost wide" href={`/setup/computers/${desk.computerId}`}>
+                Open screen
+              </a>
+            ) : null}
+            {desk.computerId ? (
+              <ComputerManageSection
+                computerId={desk.computerId}
+                preview={preview}
+                initialStatus={dashboardStatusFromDesk(desk.state)}
+              />
+            ) : null}
+            {desk.computerId ? (
               <button
-                className="key wide"
+                className="ghost wide"
                 type="button"
-                disabled={busy !== null || !code}
-                onClick={() => void run("approve", () => approvePair(code))}
+                onClick={() => {
+                  const computerId = desk.computerId ?? "";
+                  void fetch(SETUP_ACTIONS.disconnect, {
+                    method: "POST",
+                    credentials: "include",
+                    headers: {
+                      "content-type": "application/x-www-form-urlencoded",
+                      Accept: "application/json",
+                    },
+                    body: new URLSearchParams({ computer_id: computerId }),
+                  }).then((res) => {
+                    if (res.ok) window.location.assign("/setup");
+                    else setMessage("Disconnect did not complete.");
+                  });
+                }}
               >
-                {APPROVE_LABEL}
+                Disconnect
               </button>
-              <button
-                className="ghost danger wide"
-                type="button"
-                disabled={busy !== null || !code}
-                onClick={() => void run("deny", () => denyPair(code))}
-              >
-                {DENY_LABEL}
-              </button>
-              <p className="note">{DENY_NOTE}</p>
-            </div>
-          ) : null}
-          <details className="fallback">
-            <summary>{PASTE_FALLBACK}</summary>
-            <input
-              className="code"
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-              aria-label={USER_CODE_LABEL}
-            />
-          </details>
-        </section>
-      ) : null}
+            ) : null}
+          </section>
+        ))}
 
       <section className="bay connector">
         <p className="kicker">Grok plugin connector</p>
         <dl>
           <dt>MCP URL</dt>
-          <dd>{CONNECTOR.mcpUrl}</dd>
-          <dt>client_id</dt>
-          <dd>{CONNECTOR.clientId}</dd>
-          <dt>client secret</dt>
-          <dd>(empty)</dd>
-          <dt>authorize</dt>
-          <dd>{CONNECTOR.authorizeUrl}</dd>
-          <dt>token</dt>
-          <dd>{CONNECTOR.tokenUrl}</dd>
-          <dt>scope</dt>
-          <dd>{CONNECTOR.scope}</dd>
+          <dd>{connector.mcpUrl}</dd>
         </dl>
       </section>
+      </>
+      )}
       {message ? <p className="note">{message}</p> : null}
     </div>
   );

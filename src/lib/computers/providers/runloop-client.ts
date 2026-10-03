@@ -6,6 +6,7 @@
  * RUNLOOP_API_KEY must never appear in create env, exec env, or guest files.
  */
 
+import { z } from "zod";
 import type { Action } from "../types.js";
 
 export const RUNLOOP_WORKSPACE_ROOT = "/home/user/flok";
@@ -13,8 +14,10 @@ export const RUNLOOP_PROVIDER_NAME = "runloop" as const;
 export const DEFAULT_RUNLOOP_BLUEPRINT =
   "runloop/universal-ubuntu-24.04-x86_64-dnd";
 export const DEFAULT_RUNLOOP_ARCH = "x86_64" as const;
-/** Live CI max lifetime. Do not combine with lifecycle.after_idle. */
+/** Default keep-alive. Cron must refresh this; do not treat 15 minutes as a plan cap. */
 export const LIVE_KEEP_ALIVE_SECONDS = 15 * 60;
+/** Highest keep-alive we will request unless FLOK_RUNLOOP_KEEP_ALIVE_SECONDS is set. */
+export const MAX_KEEP_ALIVE_SECONDS = 60 * 60;
 
 export const CONTROL_PLANE_SECRET_ENV_KEYS = [
   "RUNLOOP_API_KEY",
@@ -30,15 +33,97 @@ export type RunloopDevboxState =
   | "deleted"
   | "error";
 
+/** Runloop reports both `shutdown` and `DEVBOX_SHUTDOWN`. */
+export function mapRunloopDevboxStatus(status: string): RunloopDevboxState {
+  const normalized = status.trim().toLowerCase().replace(/^devbox_/, "");
+  switch (normalized) {
+    case "running":
+      return "running";
+    case "suspended":
+    case "suspending":
+      return "paused";
+    case "shutdown":
+    case "stopped":
+      return "stopped";
+    case "failure":
+      return "error";
+    case "provisioning":
+    case "initializing":
+    case "queued":
+    case "scheduled":
+    case "resuming":
+      return "provisioning";
+    default:
+      return "error";
+  }
+}
+
 export interface RunloopCreateParams {
   birdId: string;
   flockId: string;
   blueprint: string;
   architecture: "x86_64" | "arm64";
   keepAliveSeconds: number;
+  /** Used as after_idle.idle_time_seconds when FLOK_RUNLOOP_ON_IDLE=suspend. */
+  idleTimeSeconds?: number;
   labels: Record<string, string>;
   /** Guest environment. Must not contain control-plane secrets. */
   envVars: Record<string, string>;
+}
+
+export type RunloopLaunchParameters =
+  | {
+      architecture: "x86_64" | "arm64";
+      keep_alive_time_seconds: number;
+    }
+  | {
+      architecture: "x86_64" | "arm64";
+      lifecycle: { after_idle: { idle_time_seconds: number; on_idle: "suspend" } };
+    };
+
+const RunloopOnIdleSchema = z.enum(["suspend"]).optional();
+
+/** Empty and unset keep today's keep-alive. Any other value is a bad config. */
+export function parseRunloopOnIdle(env: NodeJS.ProcessEnv = process.env): "suspend" | undefined {
+  const trimmed = env.FLOK_RUNLOOP_ON_IDLE?.trim() ?? "";
+  const parsed = RunloopOnIdleSchema.safeParse(trimmed === "" ? undefined : trimmed);
+  if (!parsed.success) {
+    throw new Error('FLOK_RUNLOOP_ON_IDLE must be unset or "suspend"');
+  }
+  return parsed.data;
+}
+
+/** Suspend-on-idle omits keep_alive. Runloop ignores keep_alive when after_idle is set. */
+export function runloopLaunchParameters(
+  params: RunloopCreateParams,
+  fallbackKeepAlive: number,
+  onIdle?: "suspend",
+): RunloopLaunchParameters {
+  const architecture = params.architecture || DEFAULT_RUNLOOP_ARCH;
+  if (onIdle === "suspend") {
+    return {
+      architecture,
+      lifecycle: {
+        after_idle: {
+          idle_time_seconds: params.idleTimeSeconds ?? (params.keepAliveSeconds || fallbackKeepAlive),
+          on_idle: "suspend",
+        },
+      },
+    };
+  }
+  return {
+    architecture,
+    keep_alive_time_seconds: params.keepAliveSeconds || fallbackKeepAlive,
+  };
+}
+
+/** Launch mode only. No ids, keys, or env values. */
+export function logRunloopLaunch(op: "create" | "restore", launch: RunloopLaunchParameters): void {
+  const line =
+    "lifecycle" in launch
+      ? { op, mode: "suspend" as const, idle_s: launch.lifecycle.after_idle.idle_time_seconds }
+      : { op, mode: "keep_alive" as const, keep_alive_s: launch.keep_alive_time_seconds };
+  process.stderr.write(`runloop.launch ${JSON.stringify(line)}\n`);
 }
 
 export interface RunloopExecResult {
@@ -74,6 +159,8 @@ export interface RunloopDevboxSession {
   resume(): Promise<void>;
   /** Idempotent shutdown. */
   shutdown(): Promise<void>;
+  /** Reset vendor idle/keep-alive. Optional on memory fakes. */
+  keepAlive?(): Promise<void>;
 
   exec(req: {
     argv: string[];
@@ -94,12 +181,18 @@ export interface RunloopDevboxSession {
   snapshotDisk(name: string): Promise<string>;
 
   /** C3B: start or no-op restart of display/WM/VNC. Idempotent. */
-  ensureInteractiveStack(): Promise<void>;
+  ensureInteractiveStack(opts?: { browser?: "strict" | "best-effort" }): Promise<void>;
   screenshot(): Promise<{ width: number; height: number; png: Buffer; activeWindow?: string }>;
   novncLocalOk(): Promise<boolean>;
-  uiAction(action: Action): Promise<void>;
+  uiAction(action: Action): Promise<{ finalUrl?: string } | void>;
   /** Guest Chrome CDP dump. Memory plane has no Chrome and must fail closed. */
-  cdpAxDump(): Promise<{ nodes: unknown[] }>;
+  cdpAxDump(): Promise<{
+    nodes: unknown[];
+    viewportOrigin?: { x: number; y: number };
+    devicePixelRatio?: number;
+  }>;
+  /** Current page URL when CDP is up. Memory plane omits it. */
+  browserUrl?(): Promise<string | undefined>;
 }
 
 export interface RunloopControlPlane {

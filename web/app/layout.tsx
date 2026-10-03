@@ -1,51 +1,69 @@
 import type { Metadata } from "next";
-import { Geist, JetBrains_Mono, Space_Grotesk } from "next/font/google";
+import { cookies } from "next/headers";
+import { Hanken_Grotesk, JetBrains_Mono, Manrope } from "next/font/google";
 import { ChromeProvider } from "@/components/Chrome";
 import { LegalFooter } from "@/components/LegalFooter";
 import { SiteHeader } from "@/components/SiteHeader";
+import { Starfield } from "@/components/studio/Starfield";
+import { COOKIE_NAME } from "@/lib/config";
 import { HOME_HEADLINE, HOME_LINE, HOME_SUB } from "@/lib/copy";
 import "./globals.css";
 
-const sans = Geist({
+const sans = Manrope({
   subsets: ["latin"],
-  variable: "--font-sans",
+  variable: "--font-manrope",
   display: "swap",
 });
 
 const mono = JetBrains_Mono({
   subsets: ["latin"],
-  variable: "--font-mono",
+  variable: "--font-jetbrains",
   display: "swap",
 });
 
-const display = Space_Grotesk({
+const display = Hanken_Grotesk({
   subsets: ["latin"],
-  variable: "--font-display",
+  variable: "--font-hanken",
   display: "swap",
 });
 
 export const metadata: Metadata = {
   title: {
-    default: "FLOKS",
-    template: "%s — FLOKS",
+    default: "Staxions",
+    template: "%s — Staxions",
   },
   description: `${HOME_HEADLINE} ${HOME_SUB} ${HOME_LINE}`,
-  robots: { index: true, follow: true },
+  robots: process.env.SITE_INDEXABLE === "1" ? { index: true, follow: true } : { index: false, follow: false },
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "48x48" },
+      { url: "/staxions-icon-16.png", sizes: "16x16", type: "image/png" },
+      { url: "/staxions-icon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/staxions-icon-64.png", sizes: "64x64", type: "image/png" },
+      { url: "/staxions-icon-128.png", sizes: "128x128", type: "image/png" },
+      { url: "/staxions-icon-256.png", sizes: "256x256", type: "image/png" },
+      { url: "/staxions-icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/staxions-icon-256.png", sizes: "256x256", type: "image/png" }],
+  },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const jar = await cookies();
+  const initialAuthed = Boolean(jar.get(COOKIE_NAME)?.value);
   return (
     <html lang="en">
       <body className={`${sans.variable} ${mono.variable} ${display.variable}`}>
         <a className="skip" href="#content">
           Skip to content
         </a>
-        <ChromeProvider>
+        <ChromeProvider initialAuthed={initialAuthed}>
           <div className="shell">
+            <Starfield />
             <SiteHeader />
             <main id="content" className="main">
               {children}

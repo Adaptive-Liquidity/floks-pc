@@ -37,7 +37,7 @@ Runloop Devbox is **provider v1**, not the product name.
 
 **Gate:** A real Grok Bot calls `computer_observe({ include_accessibility: true })` and receives `accessibility_summary.source === "cdp"` with non-empty nodes from a real Runloop Agent Computer.
 
-**Evidence:** Pair `bird-local` / `flock-local`. Observe returned `source: "cdp"` with 6 nodes; root `RootWebArea` / `FLOKS C3B fixture` with bounds. No screenshot required. No `open_url` required (observe starts Chrome when CDP is down). `capabilities().accessibility` stays `false`.
+**Evidence:** Pair `bird-local` / `flock-local`. Observe returned `source: "cdp"` with 6 nodes; root `RootWebArea` / `FLOKS C3B fixture` with bounds. No screenshot required. No `open_url` required (observe starts Chrome when CDP is down). `capabilities().accessibility` stays `false`. The C3B HTML fixture is test-only. Customer ensures do not write it; a visible browser starts at about:blank. Provision and restore still fail closed if Chrome does not start. Wake and the health probe log `flok-browser ensure failed` and continue; the next observe or act retries strictly.
 
 ---
 
@@ -559,7 +559,7 @@ A real Grok Bot calls `computer_observe({ include_accessibility: true })` and re
 **Evidence**
 - Merge: [Adaptive-Liquidity/floks-pc#17](https://github.com/Adaptive-Liquidity/floks-pc/pull/17) → `bda72e00b67d2667afcdc9fbe1138b6483fb6863`
 - Pair as `bird-local` / `flock-local`
-- Observe returned `source: "cdp"` with 6 nodes; root `RootWebArea` / `FLOKS C3B fixture` with bounds
+- Observe returned `source: "cdp"` with 6 nodes; root `RootWebArea` / `FLOKS C3B fixture` with bounds. That fixture is test-only and is not written onto customer computers.
 - No screenshot required; no `open_url` required (observe may start Chrome when CDP is down)
 - Exactly eight MCP tools; no new tools
 - CDP loopback-only (`127.0.0.1:9222`); no `--no-sandbox`; no `0.0.0.0`
