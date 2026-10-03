@@ -33,16 +33,32 @@ export const LEGAL_TRANSITIONS: Readonly<Record<ComputerState, readonly Computer
   running: ["paused", "stopped", "checkpointing", "recovering", "error", "deleting"],
   paused: ["running", "waking", "stopped", "checkpointing", "recovering", "error", "deleting"],
   stopped: ["running", "ready", "waking", "recovering", "error", "deleting"],
-  waking: ["ready", "running", "recovery_failed", "error", "deleting"],
+  waking: ["ready", "running", "stopped", "recovery_failed", "error", "deleting"], // stopped: park a refused rebuild
   checkpointing: ["ready", "running", "paused", "error", "deleting"],
   recovering: ["ready", "restore_failed", "recovery_failed", "cleanup_needed", "error", "deleting"],
   restore_failed: ["recovering", "cleanup_needed", "deleting"],
-  recovery_failed: ["recovering", "waking", "cleanup_needed", "deleting"],
+  recovery_failed: ["recovering", "waking", "stopped", "cleanup_needed", "deleting"],
   cleanup_needed: ["deleting", "recovering"],
   error: ["recovering", "deleting", "cleanup_needed"],
   deleting: ["deleted", "cleanup_needed"],
   deleted: [],
 } as const;
+
+/** Owner restart is allowed only from these states. */
+export const RESTARTABLE_STATES = [
+  "ready",
+  "running",
+  "paused",
+  "stopped",
+  "waking",
+  "recovery_failed",
+] as const satisfies readonly ComputerState[];
+
+export type RestartableState = (typeof RESTARTABLE_STATES)[number];
+
+export function isRestartableState(state: ComputerState): state is RestartableState {
+  return (RESTARTABLE_STATES as readonly ComputerState[]).includes(state);
+}
 
 export type OsType = "linux" | "windows";
 
@@ -161,6 +177,8 @@ export interface Computer {
   updatedAt: Date;
   latestCheckpoint: ComputerLatestCheckpoint | null;
   recoveryNote: string | null;
+  /** Durable: owner must confirm a wipe-rebuild. Survives Vercel instances. */
+  rebuildConfirmRequired: boolean;
 }
 
 /** Durable checkpoint pointer. No workspace bytes, tokens, or API keys. */

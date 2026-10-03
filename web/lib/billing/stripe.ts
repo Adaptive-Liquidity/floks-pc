@@ -10,6 +10,7 @@ import {
   type CheckoutPlanId,
 } from "./catalog";
 import { applyMeteredSeconds } from "./metering";
+import { resolvePortalConfigurationId } from "./portal";
 import {
   emailsMatch,
   firstPriceIdFromUnknown,
@@ -18,6 +19,13 @@ import {
   planFromPriceId,
   planFromUnknown,
 } from "./plans";
+import {
+  clearGrace,
+  eventCreatedMs,
+  isStaleBillingEvent,
+  startGrace,
+  withBillingEventAt,
+} from "./grace";
 import { createSeat, getSeatStore, type SeatRecord, type SeatStatus } from "./seats";
 
 export { planFromAmount, planFromPriceId };
@@ -33,6 +41,10 @@ export function getStripe(): Stripe | null {
 
 export function resetStripeForTests(): void {
   stripe = undefined;
+}
+
+export function setStripeForTests(client: Stripe | null): void {
+  stripe = client;
 }
 
 export async function getStripeCheckoutEmail(sessionId: string): Promise<string | null> {
@@ -62,9 +74,11 @@ export async function findStripeCustomerIdByEmail(email: string): Promise<string
 export async function createCustomerPortalUrl(customerId: string, returnUrl: string): Promise<string | null> {
   const client = getStripe();
   if (!client) return null;
+  const configuration = await resolvePortalConfigurationId(client);
   const session = await client.billingPortal.sessions.create({
     customer: customerId,
     return_url: returnUrl,
+    ...(configuration ? { configuration } : {}),
   });
   return session.url;
 }
@@ -104,44 +118,98 @@ export function planFromCheckout(
   session: Stripe.Checkout.Session,
   env: NodeJS.ProcessEnv = process.env,
 ): CheckoutPlanId | null {
-  const fromMeta = planFromUnknown(session.metadata?.plan ?? session.metadata?.Plan);
-  if (fromMeta) return fromMeta;
-  return planFromPriceId(priceIdFromCheckout(session), env);
+  const priceId = priceIdFromCheckout(session);
+  const fromPrice = planFromPriceId(priceId, env);
+  if (priceId) return fromPrice;
+  return planFromUnknown(session.metadata?.plan ?? session.metadata?.Plan);
+}
+
+export function isPaidCheckoutSession(session: Stripe.Checkout.Session): boolean {
+  return session.payment_status === "paid" || session.payment_status === "no_payment_required";
 }
 
 export function planFromSubscription(
   sub: Stripe.Subscription,
   env: NodeJS.ProcessEnv = process.env,
 ): CheckoutPlanId | null {
-  const fromMeta = planFromUnknown(sub.metadata?.plan);
-  if (fromMeta) return fromMeta;
   const priceId = firstPriceIdFromUnknown(sub.items.data[0]?.price);
-  return planFromPriceId(priceId, env);
+  const fromPrice = planFromPriceId(priceId, env);
+  if (priceId) return fromPrice;
+  return planFromUnknown(sub.metadata?.plan);
 }
 
-export async function applyCheckoutSession(session: Stripe.Checkout.Session): Promise<SeatRecord | null> {
+function checkoutCustomerId(session: Stripe.Checkout.Session): string | null {
+  if (typeof session.customer === "string" && session.customer.trim()) return session.customer;
+  if (session.customer && typeof session.customer === "object" && "id" in session.customer) {
+    return session.customer.id;
+  }
+  return null;
+}
+
+function checkoutSubscriptionId(session: Stripe.Checkout.Session): string | null {
+  if (typeof session.subscription === "string" && session.subscription.trim()) return session.subscription;
+  if (session.subscription && typeof session.subscription === "object" && "id" in session.subscription) {
+    return session.subscription.id;
+  }
+  return null;
+}
+
+async function findSeatForCheckout(
+  session: Stripe.Checkout.Session,
+  subscriptionId: string | null,
+): Promise<SeatRecord | null> {
+  const store = getSeatStore();
+  const byCheckout = await store.getByCheckoutSession(session.id);
+  if (byCheckout) return byCheckout;
+  if (subscriptionId) {
+    const bySub = await store.getBySubscription(subscriptionId);
+    if (bySub) return bySub;
+  }
+  return null;
+}
+
+export async function applyCheckoutSession(
+  session: Stripe.Checkout.Session,
+  event: Stripe.Event | null = null,
+): Promise<SeatRecord | null> {
   const email = session.customer_details?.email ?? session.customer_email;
   if (!email) return null;
   const expanded = await expandCheckoutIfNeeded(session);
   const plan = planFromCheckout(expanded);
   if (!plan) return null;
   const store = getSeatStore();
-  const existing = await store.getByCheckoutSession(session.id);
-  if (existing) return existing;
-  const customerId =
-    typeof session.customer === "string"
-      ? session.customer
-      : session.customer && typeof session.customer === "object"
-        ? session.customer.id
-        : "";
+  const customerId = checkoutCustomerId(session);
   if (!customerId) return null;
-  const subscriptionId =
-    typeof session.subscription === "string"
-      ? session.subscription
-      : session.subscription && typeof session.subscription === "object"
-        ? session.subscription.id
-        : null;
+  const subscriptionId = checkoutSubscriptionId(session);
+  const existing = await findSeatForCheckout(session, subscriptionId);
+  if (!isPaidCheckoutSession(expanded)) return existing;
   const quantity = quantityFromCheckout(expanded, plan);
+  if (existing) {
+    if (event && isStaleBillingEvent(existing, event.created)) {
+      if (existing.stripeCheckoutSessionId === session.id) return existing;
+      return store.upsert({
+        ...existing,
+        stripeCheckoutSessionId: existing.stripeCheckoutSessionId ?? session.id,
+        stripeSubscriptionId: existing.stripeSubscriptionId ?? subscriptionId,
+      });
+    }
+    const nextStatus: SeatStatus = existing.status === "canceled" ? "canceled" : "active";
+    const next = {
+      ...existing,
+      email: normalizeEmail(email),
+      plan: existing.status === "canceled" ? existing.plan : plan,
+      status: nextStatus,
+      stripeCustomerId: existing.stripeCustomerId || customerId,
+      stripeSubscriptionId: existing.stripeSubscriptionId ?? subscriptionId,
+      stripeCheckoutSessionId: existing.stripeCheckoutSessionId ?? session.id,
+      stripePriceId: priceIdFromCheckout(expanded) ?? existing.stripePriceId,
+      agentQuantity: quantity,
+      maxComputers: computersForPurchase(plan, quantity),
+    };
+    return store.upsert(
+      withBillingEventAt(nextStatus === "active" ? clearGrace(next) : next, event?.created),
+    );
+  }
   const seat = createSeat({
     email,
     plan,
@@ -153,7 +221,7 @@ export async function applyCheckoutSession(session: Stripe.Checkout.Session): Pr
     maxComputers: computersForPurchase(plan, quantity),
     periodStart: session.created ? new Date(session.created * 1000).toISOString() : null,
   });
-  return store.upsert(seat);
+  return store.upsert(withBillingEventAt(seat, event?.created ?? session.created));
 }
 
 async function expandCheckoutIfNeeded(session: Stripe.Checkout.Session): Promise<Stripe.Checkout.Session> {
@@ -236,13 +304,51 @@ function invoiceCustomerId(invoice: Stripe.Invoice): string | null {
   return idFromUnknown(raw.customer);
 }
 
-export async function applySubscription(sub: Stripe.Subscription): Promise<SeatRecord | null> {
+function holdNowMs(event: Stripe.Event | null): number {
+  return eventCreatedMs(event?.created) ?? Date.now();
+}
+
+async function persistHeldSeat(
+  existing: SeatRecord,
+  status: SeatStatus,
+  event: Stripe.Event | null,
+): Promise<SeatRecord> {
+  const store = getSeatStore();
+  if (event && isStaleBillingEvent(existing, event.created)) return existing;
+  if (existing.status === "canceled" && status !== "canceled") return existing;
+  const now = holdNowMs(event);
+  const next = status === "active" ? clearGrace({ ...existing, status }) : startGrace({ ...existing, status }, now);
+  return store.upsert(withBillingEventAt(next, event?.created));
+}
+
+async function findSeatForCustomerOrSubscription(
+  subscriptionId: string | null,
+  customerId: string | null,
+): Promise<SeatRecord | null> {
+  const store = getSeatStore();
+  if (subscriptionId) {
+    const bySub = await store.getBySubscription(subscriptionId);
+    if (bySub) return bySub;
+  }
+  if (!customerId) return null;
+  return (await store.listAll()).find((row) => row.stripeCustomerId === customerId) ?? null;
+}
+
+export async function applySubscription(
+  sub: Stripe.Subscription,
+  event: Stripe.Event | null = null,
+): Promise<SeatRecord | null> {
   const store = getSeatStore();
   const existing = await store.getBySubscription(sub.id);
+  if (existing && event && isStaleBillingEvent(existing, event.created)) return existing;
   const emailRaw =
     typeof sub.customer === "object" && sub.customer && "email" in sub.customer
       ? asString((sub.customer as { email?: unknown }).email)
       : null;
+  if (sub.status === "incomplete" || sub.status === "incomplete_expired" || sub.status === "paused") {
+    if (!existing) return null;
+    return existing;
+  }
   const status: SeatStatus =
     sub.status === "past_due" || sub.status === "unpaid"
       ? "past_due"
@@ -263,7 +369,7 @@ export async function applySubscription(sub: Stripe.Subscription): Promise<SeatR
     const periodChanged = Boolean(period.start && period.start !== existing.periodStart);
     let next: SeatRecord = {
       ...existing,
-      status,
+      status: existing.status === "canceled" && status !== "canceled" ? "canceled" : status,
       plan: nextPlan,
       stripePriceId: priceId,
       agentQuantity: quantity,
@@ -275,7 +381,9 @@ export async function applySubscription(sub: Stripe.Subscription): Promise<SeatR
     if (periodChanged) {
       next = applyMeteredSeconds({ ...next, secondsUsed: 0, hoursUsed: 0 }, 0, new Date().toISOString());
     }
-    return store.upsert(next);
+    if (next.status === "active") next = clearGrace(next);
+    else next = startGrace(next, holdNowMs(event));
+    return store.upsert(withBillingEventAt(next, event?.created));
   }
   const customerId = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
   const created = createSeat({
@@ -290,55 +398,153 @@ export async function applySubscription(sub: Stripe.Subscription): Promise<SeatR
     periodEnd: period.end,
   });
   const entry = PLAN_CATALOG[created.plan];
-  return store.upsert({
-    ...created,
-    agentQuantity: quantity,
-    maxComputers: created.plan === "team" ? quantity : entry.computers,
-    hoursIncluded:
-      created.plan === "team" ? (entry.hoursPerAgent ?? entry.includedHours) * quantity : entry.includedHours,
-  });
+  const held = status === "active" ? created : startGrace(created, holdNowMs(event));
+  return store.upsert(
+    withBillingEventAt(
+      {
+        ...held,
+        agentQuantity: quantity,
+        maxComputers: created.plan === "team" ? quantity : entry.computers,
+        hoursIncluded:
+          created.plan === "team" ? (entry.hoursPerAgent ?? entry.includedHours) * quantity : entry.includedHours,
+      },
+      event?.created,
+    ),
+  );
 }
+
+export const STRIPE_PAID_EVENT_TYPES = [
+  "checkout.session.completed",
+  "invoice.paid",
+  "invoice.payment_succeeded",
+] as const;
 
 export async function applyStripeEvent(event: Stripe.Event): Promise<SeatRecord | null> {
   if (event.type === "checkout.session.completed") {
-    return applyCheckoutSession(event.data.object as Stripe.Checkout.Session);
+    return applyCheckoutSession(event.data.object as Stripe.Checkout.Session, event);
+  }
+  if (event.type === "checkout.session.expired" || event.type === "checkout.session.async_payment_failed") {
+    return null;
   }
   if (
     event.type === "customer.subscription.updated" ||
     event.type === "customer.subscription.created" ||
     event.type === "customer.subscription.deleted"
   ) {
-    return applySubscription(event.data.object as Stripe.Subscription);
+    return applySubscription(event.data.object as Stripe.Subscription, event);
   }
-  if (event.type === "invoice.paid" || event.type === "invoice.payment_failed") {
+  if (
+    event.type === "invoice.paid" ||
+    event.type === "invoice.payment_succeeded" ||
+    event.type === "invoice.payment_failed"
+  ) {
     const invoice = event.data.object as Stripe.Invoice;
-    const store = getSeatStore();
-    const subId = invoiceSubscriptionId(invoice);
-    const customerId = invoiceCustomerId(invoice);
-    const existing =
-      (subId ? await store.getBySubscription(subId) : null) ??
-      (customerId
-        ? (await store.listAll()).find((row) => row.stripeCustomerId === customerId) ?? null
-        : null);
+    const existing = await findSeatForCustomerOrSubscription(
+      invoiceSubscriptionId(invoice),
+      invoiceCustomerId(invoice),
+    );
     if (!existing) return null;
-    if (existing.status === "canceled") return existing;
     if (event.type === "invoice.payment_failed") {
-      return store.upsert({ ...existing, status: "past_due" });
+      return persistHeldSeat(existing, "past_due", event);
     }
-    const quantity = await quantityFromSubscriptionItem(subId, existing.agentQuantity);
+    if (existing.status === "canceled") return existing;
+    if (isStaleBillingEvent(existing, event.created)) return existing;
+    const quantity = await quantityFromSubscriptionItem(invoiceSubscriptionId(invoice), existing.agentQuantity);
     const entry = PLAN_CATALOG[existing.plan];
     const maxComputers = existing.plan === "team" ? quantity : entry.computers;
     const hoursIncluded =
       existing.plan === "team" ? (entry.hoursPerAgent ?? entry.includedHours) * quantity : entry.includedHours;
-    return store.upsert({
-      ...existing,
-      status: "active",
-      agentQuantity: quantity,
-      maxComputers,
-      hoursIncluded,
-    });
+    return getSeatStore().upsert(
+      withBillingEventAt(
+        clearGrace({
+          ...existing,
+          status: "active",
+          agentQuantity: quantity,
+          maxComputers,
+          hoursIncluded,
+        }),
+        event.created,
+      ),
+    );
+  }
+  if (event.type === "charge.refunded") {
+    return applyChargeRefund(event);
+  }
+  if (
+    event.type === "charge.dispute.created" ||
+    event.type === "charge.dispute.updated" ||
+    event.type === "charge.dispute.closed"
+  ) {
+    return applyChargeDispute(event);
   }
   return null;
+}
+
+export function refundKindFromCharge(obj: Record<string, unknown> | null): "none" | "partial" | "full" {
+  if (!obj) return "none";
+  const refunded = obj.refunded === true;
+  const amount = asNumber(obj.amount);
+  const amountRefunded = asNumber(obj.amount_refunded);
+  if (refunded) return "full";
+  if (amountRefunded !== null && amount !== null) {
+    if (amountRefunded <= 0) return "none";
+    if (amountRefunded >= amount) return "full";
+    return "partial";
+  }
+  if (amountRefunded !== null && amountRefunded > 0) return "full";
+  return "none";
+}
+
+async function applyChargeRefund(event: Stripe.Event): Promise<SeatRecord | null> {
+  const obj = asObject(event.data.object);
+  const existing = await findSeatForCustomerOrSubscription(null, obj ? idFromUnknown(obj.customer) : null);
+  if (!existing) return null;
+  if (isStaleBillingEvent(existing, event.created)) return existing;
+  const kind = refundKindFromCharge(obj);
+  if (kind === "none" || kind === "partial") {
+    if (kind === "partial") {
+      return getSeatStore().upsert(withBillingEventAt(existing, event.created));
+    }
+    return existing;
+  }
+  return persistHeldSeat(existing, "canceled", event);
+}
+
+function disputeStatus(obj: Record<string, unknown> | null): string | null {
+  return obj ? asString(obj.status) : null;
+}
+
+async function applyChargeDispute(event: Stripe.Event): Promise<SeatRecord | null> {
+  const obj = asObject(event.data.object);
+  const existing = await findSeatForCustomerOrSubscription(null, obj ? idFromUnknown(obj.customer) : null);
+  if (!existing) return null;
+  if (disputeStatus(obj) === "won") {
+    return restoreSeatAfterWonDispute(existing, event);
+  }
+  return persistHeldSeat(existing, "past_due", event);
+}
+
+async function subscriptionOtherwiseActive(seat: SeatRecord): Promise<boolean> {
+  const client = getStripe();
+  if (!client || !seat.stripeSubscriptionId) {
+    return seat.status !== "canceled";
+  }
+  try {
+    const sub = await client.subscriptions.retrieve(seat.stripeSubscriptionId);
+    return sub.status === "active" || sub.status === "trialing";
+  } catch {
+    return seat.status !== "canceled";
+  }
+}
+
+async function restoreSeatAfterWonDispute(
+  existing: SeatRecord,
+  event: Stripe.Event,
+): Promise<SeatRecord> {
+  if (event && isStaleBillingEvent(existing, event.created)) return existing;
+  if (!(await subscriptionOtherwiseActive(existing))) return existing;
+  const store = getSeatStore();
+  return store.upsert(withBillingEventAt(clearGrace({ ...existing, status: "active" }), event.created));
 }
 
 async function quantityFromSubscriptionItem(subscriptionId: string | null, fallback: number): Promise<number> {

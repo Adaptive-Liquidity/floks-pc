@@ -3,6 +3,7 @@ import {
   hoursForPurchase,
   type CheckoutPlanId,
 } from "./catalog";
+import { graceExpired } from "./grace";
 import type { SeatRecord, SeatStatus } from "./seats";
 
 export type ComputerRuntimeState =
@@ -19,7 +20,7 @@ export type ComputerRuntimeState =
 export type MeterDecision =
   | { action: "none"; reason: "not_billable" | "already_stopped" }
   | { action: "meter"; addSeconds: number }
-  | { action: "suspend"; reason: "hours_empty" | "idle"; addSeconds: number }
+  | { action: "suspend"; reason: "hours_empty" | "idle" | "canceled" | "past_due"; addSeconds: number }
   | { action: "shutdown"; reason: "canceled" | "past_due" };
 
 const BILLABLE = new Set(["running", "ready", "provisioning", "waking", "requested"]);
@@ -69,7 +70,7 @@ export function shouldSuspendForIdle(input: {
 export function decideMetering(input: {
   seat: Pick<
     SeatRecord,
-    "status" | "hoursIncluded" | "secondsUsed" | "overageEnabled" | "lastMeteredAt"
+    "status" | "hoursIncluded" | "secondsUsed" | "overageEnabled" | "lastMeteredAt" | "graceUntil"
   >;
   computerState: ComputerRuntimeState | null;
   lastActiveAt: string | null;
@@ -77,24 +78,21 @@ export function decideMetering(input: {
   idleMinutes?: number;
 }): MeterDecision {
   const status: SeatStatus = input.seat.status;
-  if (status === "canceled") {
-    return input.computerState && input.computerState !== "stopped" && input.computerState !== "deleted"
-      ? { action: "shutdown", reason: "canceled" }
-      : { action: "none", reason: "already_stopped" };
-  }
-  if (status === "past_due") {
-    return input.computerState && input.computerState !== "stopped" && input.computerState !== "deleted"
-      ? { action: "shutdown", reason: "past_due" }
+  if (status === "canceled" || status === "past_due") {
+    if (!graceExpired(input.seat, input.nowMs)) {
+      return { action: "none", reason: "not_billable" };
+    }
+    return input.computerState && input.computerState !== "paused" && input.computerState !== "stopped" && input.computerState !== "deleted"
+      ? { action: "suspend", reason: status, addSeconds: 0 }
       : { action: "none", reason: "already_stopped" };
   }
 
-  const addSeconds = isBillableState(input.computerState)
-    ? secondsBetween(input.seat.lastMeteredAt, input.nowMs)
-    : 0;
+  const metered = isBillableState(input.computerState);
+  const addSeconds = metered ? secondsBetween(input.seat.lastMeteredAt, input.nowMs) : 0;
   const nextUsed = input.seat.secondsUsed + addSeconds;
   const nextSeat = { ...input.seat, secondsUsed: nextUsed };
 
-  if (shouldSuspendForCap(nextSeat) && isBillableState(input.computerState)) {
+  if (shouldSuspendForCap(nextSeat) && metered) {
     return { action: "suspend", reason: "hours_empty", addSeconds };
   }
   const idleInput: { lastActiveAt: string | null; nowMs: number; idleMinutes?: number } = {
@@ -102,7 +100,7 @@ export function decideMetering(input: {
     nowMs: input.nowMs,
   };
   if (input.idleMinutes !== undefined) idleInput.idleMinutes = input.idleMinutes;
-  if (isBillableState(input.computerState) && shouldSuspendForIdle(idleInput)) {
+  if (metered && shouldSuspendForIdle(idleInput)) {
     return { action: "suspend", reason: "idle", addSeconds };
   }
   if (addSeconds > 0) return { action: "meter", addSeconds };

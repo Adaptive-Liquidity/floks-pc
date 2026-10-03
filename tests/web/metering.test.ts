@@ -83,30 +83,84 @@ describe("usage metering and suspend", () => {
     if (decision.action === "suspend") assert.equal(decision.reason, "idle");
   });
 
-  it("shuts down canceled or past-due seats", () => {
+  it("suspends canceled or past-due seats only after grace", () => {
     const canceled = createSeat({
       email: "x@example.com",
       plan: "personal",
       stripeCustomerId: "cus_x",
       status: "canceled",
+      graceUntil: "2026-09-29T00:00:00.000Z",
     });
     assert.equal(
       decideMetering({
         seat: canceled,
         computerState: "running",
         lastActiveAt: "2026-09-28T00:00:00.000Z",
-        nowMs: Date.now(),
+        nowMs: Date.parse("2026-09-28T12:00:00.000Z"),
       }).action,
-      "shutdown",
+      "none",
     );
+    const after = decideMetering({
+      seat: canceled,
+      computerState: "running",
+      lastActiveAt: "2026-09-28T00:00:00.000Z",
+      nowMs: Date.parse("2026-09-29T00:00:01.000Z"),
+    });
+    assert.equal(after.action, "suspend");
+    if (after.action === "suspend") assert.equal(after.reason, "canceled");
     const pastDue = { ...canceled, status: "past_due" as const };
     const past = decideMetering({
       seat: pastDue,
       computerState: "paused",
       lastActiveAt: "2026-09-28T00:00:00.000Z",
-      nowMs: Date.now(),
+      nowMs: Date.parse("2026-09-29T00:00:01.000Z"),
     });
-    assert.equal(past.action, "shutdown");
-    if (past.action === "shutdown") assert.equal(past.reason, "past_due");
+    assert.equal(past.action, "none");
+  });
+
+  it("meters by runtime state only, ignoring a leftover rebuild flag", () => {
+    const seat = createSeat({
+      email: "rebuild@example.com",
+      plan: "personal",
+      stripeCustomerId: "cus_r",
+      lastMeteredAt: "2026-09-28T00:00:00.000Z",
+    });
+    const nowMs = Date.parse("2026-09-28T01:00:00.000Z");
+    const ready = decideMetering({
+      seat,
+      computerState: "ready",
+      lastActiveAt: "2026-09-28T00:30:00.000Z",
+      nowMs,
+      idleMinutes: 180,
+    });
+    assert.equal(ready.action, "meter");
+    if (ready.action === "meter") assert.equal(ready.addSeconds, 3600);
+
+    const waking = decideMetering({
+      seat,
+      computerState: "waking",
+      lastActiveAt: "2026-09-28T00:30:00.000Z",
+      nowMs,
+      idleMinutes: 180,
+    });
+    assert.equal(waking.action, "meter");
+
+    const parked = decideMetering({
+      seat,
+      computerState: "stopped",
+      lastActiveAt: "2026-09-28T00:00:00.000Z",
+      nowMs,
+    });
+    assert.equal(parked.action, "none");
+
+    const idleReady = decideMetering({
+      seat,
+      computerState: "ready",
+      lastActiveAt: "2026-09-28T00:00:00.000Z",
+      nowMs,
+      idleMinutes: 30,
+    });
+    assert.equal(idleReady.action, "suspend");
+    if (idleReady.action === "suspend") assert.equal(idleReady.reason, "idle");
   });
 });

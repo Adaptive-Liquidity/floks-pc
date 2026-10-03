@@ -123,6 +123,7 @@ describe("public site lock", () => {
     assert.match(copy, /Asleep and shutdown do not/);
     assert.match(copy, /Unused hours are not cash back/);
     assert.match(copy, /This page isn’t here\./);
+    assert.match(copy, /Reconnect your bot/);
     assert.match(copy, /Approve isn’t working\./);
     assert.doesNotMatch(copy, /Distributed Cognitive Architecture/);
     assert.doesNotMatch(copy, /Open the magic link from your billing email/);
@@ -204,6 +205,7 @@ describe("public site lock", () => {
     assert.match(read("components/SetupGate.tsx"), /\/signup/);
     assert.match(read("components/SetupDesk.tsx"), /ACCOUNT_EMPTY/);
     assert.match(read("components/SetupDesk.tsx"), /ACCOUNT_HOME_LINE/);
+    assert.match(read("components/SetupDesk.tsx"), /SETUP_RECONNECT_BOT/);
     assert.match(read("app/login/route.ts"), /authKitScreenHint/);
     assert.match(read("app/signup/route.ts"), /sign-up/);
     assert.match(read("lib/auth/workos.ts"), /screenHint: options\.screenHint \?\? "sign-in"/);

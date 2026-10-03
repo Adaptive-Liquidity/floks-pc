@@ -9,13 +9,15 @@ Do **not** promote a Preview to Vercel Production, change DNS, or edit live Stri
 - Root Directory: `web`
 - `web/vercel.json` installs `web` **and** the repo root so `../src` can resolve `zod`.
 - Cron: `GET /api/cron/computers` every 5 minutes (Pro plan). Set `CRON_SECRET`. Vercel sends `Authorization: Bearer $CRON_SECRET`.
-- Apply SQL in order: `migrations/0001_node_computers.sql` through `0008_stripe_events.sql`. Run `npm run migrate` only with `DATABASE_URL` set, and only after the owner approves that database change.
+- Apply SQL in order: `migrations/0001_node_computers.sql` through `0011_desktop_sessions.sql`. Run `npm run migrate` only with `DATABASE_URL` set, and only after the owner approves that database change. `0010_billing_grace.sql` and `0011_desktop_sessions.sql` are FILES in this PR — do not apply them to a live database from the PR. Apply `0010` for 72-hour grace to work. The app stays up without it: seat reads, login, `/setup`, and webhooks do not 500 if those columns are missing. Without `0010`, grace is zero and `past_due` / `canceled` are held immediately.
+- `migrations/0012_computer_activity_events.sql` is **owner-applied**. Do not apply it from this PR. When `DATABASE_URL` is set, activity writes go to Postgres; until this file is applied the table is missing (`42P01`) and the log is empty. It does not fall back to in-memory.
 - Apply `migrations/0005_pair_reveals.sql` to the preview database before pull request 33 or 34 deploys. Without that column, `/setup` returns 500 for a paying customer.
+- `migrations/0011_desktop_sessions.sql` is the owner live-screen revoke table. **Do not apply it to a live database from this change.** `0010` is reserved for the billing migration on the parallel payments work — do not reuse that filename. If `desktop_sessions` is missing, opening the screen still works (HMAC + signed-in session + expiry). Revoke (close / hand-back) is best-effort and a warning is logged. Apply `0011` only after the owner approves that database change.
 
 ## Kill switch and rollback
 
-- Stop new purchases: set `CHECKOUT_DISABLED=1` on the Vercel environment for this branch, then redeploy. Vercel applies environment changes on the next deployment. After that, `POST /api/checkout` returns 503.
-- Pause Stripe deliveries in the Stripe dashboard for the webhook endpoint. The handler inserts the event id into `stripe_events` before applying it. If apply throws, that row is deleted so Stripe can retry. A row that remains is a finished delivery and the next copy of that id is skipped. `invoice.paid` does not turn a canceled seat back on.
+- Stop new purchases: set `CHECKOUT_DISABLED=1` on the Vercel environment for this branch, then redeploy. Vercel applies environment changes on the next deployment. After that, `POST /api/checkout` and `POST /buy` return 503. The buy-link token is not consumed while checkout is disabled.
+- Pause Stripe deliveries in the Stripe dashboard for the webhook endpoint. The handler inserts the event id into `stripe_events` as `processing` with `claimed_at` before applying it (after `0010`). Seat write, provision, and bot bind run before the 200. If apply, provision, or a transient bind/DB error throws, the row is marked `failed` and the handler returns 500 so Stripe retries. Complete and release with a token only succeed for that claimant (`id` + `claimed_at`; release also matches a null `claimed_at`). A pre-`0010` claim has no token: complete sets `done` by id, release deletes or marks `failed` by id. An in-flight copy of the same id returns 409 while `processing` is younger than five minutes. A `processing` row older than five minutes can be reclaimed if the first worker died. During the deploy window, rows written by older code after `0010` default to `processing`, so a redelivery gets 409 for five minutes and is then reprocessed (idempotent). If the database recorded the r4-era `0010` file (`status DEFAULT 'done'`), apply `ALTER TABLE stripe_events ALTER COLUMN status SET DEFAULT 'processing'` by hand — re-running `0010` will not change that default. Permanent bind failures (expired nonce, mismatch, no live login token) keep the seat and computer, record `failed_at` / `fail_reason` on `pending_binds`, return 200, and tell `/setup` to reconnect the bot — unless that bot is already bound to this seat, which is success. Before `0010`, a used nonce with no live binding also shows reconnect; after `0010`, `used_at` alone does not. A `past_due` or `canceled` seat with a live binding does not show reconnect. A `done` row is a finished delivery. `0010` backfills existing event rows as `done` and defaults new rows to `processing` with `claimed_at` now. Lease SQL is always tried first (no cached missing-column path that would write new events as `done`). Without `0010` the handler falls back to insert-or-skip. `invoice.paid` does not turn a canceled seat back on. Partial refunds do not change seat status. A full refund is treated as canceled (grace, then sleep, files kept). A dispute opened marks `past_due`. A dispute won restores `active` if the subscription is otherwise active.
 - This launch URL is a Preview alias. Rollback is: in Vercel, point `staxions-preview.vercel.app` back at the previous deployment, or revert the commit on `cursor/aistudio-authkit-desks-a695`. Instant Rollback applies to Production deployments only.
 - If this stack is merged to `main`, tag the previous tip first: `git tag pre-staxions-main 08438f55`. After the merge commit, undo it with `git revert -m 1 <merge-commit>`. Do not force-push `main`.
 - Moving to `asentxia.com` later changes `APP_URL`, the WorkOS redirect, the Stripe webhook URL, and `SITE_INDEXABLE`. It does not require a code change if those four are the only host switches.
@@ -28,6 +30,14 @@ Do **not** promote a Preview to Vercel Production, change DNS, or edit live Stri
 Use Vercel Postgres or any Neon-compatible Postgres URL (pooled or direct). The app uses the `pg` client.
 
 Local only: omit `DATABASE_URL` and optionally set `FLOK_SEAT_STORE_PATH=.flok/seats.json`.
+
+## 0011 desktop_sessions (owner live screen)
+
+`migrations/0011_desktop_sessions.sql` adds `desktop_sessions` so close / hand-back revoke is durable across Vercel instances. **Do not apply this to a live database from this PR.** Flag only.
+
+If the table is missing, opening `/setup/computers/:id` must not 500: HMAC + the signed-in session + expiry still authorize the token. Revoke is best-effort and the server logs a warning. Apply `0011` only after the owner approves that database change.
+
+`0010` is taken by the billing migration on the parallel payments work. This file is `0011` so the two do not collide.
 
 ## Plans (edit in one file)
 
@@ -56,8 +66,16 @@ Register these events (test endpoint on Preview, live endpoint on Production):
 - `customer.subscription.deleted`
 - `invoice.payment_failed`
 - `invoice.paid`
+- `invoice.payment_succeeded` (alias of paid on some API versions)
+- `checkout.session.expired`
+- `charge.refunded`
+- `charge.dispute.created`
+- `charge.dispute.updated`
+- `charge.dispute.closed`
 
 Set `STRIPE_WEBHOOK_SECRET` to that endpoint’s signing secret (`whsec_…`). Preview and Production need different secrets if they use different Stripe modes.
+
+Payment failure and cancel start a 72-hour grace (`STAXIONS_BILLING_GRACE_HOURS`) only after `0010` is applied. After grace the computer sleeps and files stay. Billing events never delete a computer immediately. Successful `invoice.paid` resumes access. Preview does not run Vercel Cron; grace is enforced on the webhook, `/setup`, and the next computer use. Without `0010` the app stays up and grace is zero: `past_due` and `canceled` are held immediately. A missing grace-column probe is retried every 60 seconds so applying `0010` under a running process turns grace on. Stripe event lease columns are not negatively cached: the next claim after `0010` lands uses the lease path. During the deploy window, older writers after `0010` insert rows that default to `processing`; Stripe sees 409 for five minutes, then the redelivery is reprocessed.
 
 ## WorkOS AuthKit
 
@@ -92,6 +110,8 @@ A config mismatch now renders a clear HTML error on `/callback` and `/setup?erro
 | `STRIPE_PRICE_PERSONAL` | yes to sell Personal | Test Price id `price_…` |
 | `STRIPE_PRICE_PRO` | yes to sell Pro | Test Price id |
 | `STRIPE_PRICE_TEAM` | yes to sell Team | Test Price id |
+| `STRIPE_PORTAL_CONFIGURATION_ID` | recommended | Dashboard Customer Portal config that allows plan, quantity, and cancel |
+| `STAXIONS_BILLING_GRACE_HOURS` | optional | Default `72` |
 | `SUPPORT_EMAIL` | optional | Default `contact@asentxia.com` |
 | `CRON_SECRET` | yes if cron is used | Vercel cron bearer |
 | `STAXIONS_IDLE_MINUTES` | optional | Default `30` |
@@ -126,7 +146,7 @@ Same names. Use `sk_live_…`, live Price ids, live webhook secret, Production W
 
 1. Create Stripe **test** products/prices for Personal / Pro / Team. Copy the `price_…` ids into Preview env vars.
 2. Add a test webhook to `/api/webhooks/stripe` with the events above. Copy `whsec_…` to Preview.
-3. Provision Neon or Vercel Postgres. Set `DATABASE_URL`. Apply `0001` through `0008`, and apply `0005` before pull request 33 or 34 deploys.
+3. Provision Neon or Vercel Postgres. Set `DATABASE_URL`. Apply `0001` through `0010` only after the owner approves that database. `0010` is a file in this PR and was not applied to any live database. Apply `0010` for 72-hour grace. Without it the app stays up and grace is zero (immediate hold).
 4. Fix WorkOS: one Client ID + API key pair per Vercel environment. Add the Preview callback URL.
 5. Set `APP_URL` to the Preview origin (not floks-pc.com).
 6. For a real computer on Preview: `FLOK_WEB_PROVIDER=runloop`, `RUNLOOP_API_KEY`, `FLOK_RUNLOOP_BLUEPRINT`.

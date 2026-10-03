@@ -95,13 +95,14 @@ describe("idle suspend keeps the disk", () => {
     assert.equal((await service.get(hoursComputer.id)).state, "paused");
   });
 
-  it("cancel still shuts the devbox down", async () => {
+  it("cancel suspends after grace and never deletes immediately", async () => {
     resetDeskRuntimeForTests();
     resetSeatStoreForTests();
     const plane = new CountingPlane();
     const service = new ComputerService(providerFor(plane));
     setComputerServiceForTests(service);
     const computer = await service.requestComputer({ birdId: "bird-cancel", flockId: "flock-cancel" });
+    const now = Date.now();
     await getSeatStore().upsert(
       createSeat({
         email: "cancel@example.com",
@@ -110,11 +111,19 @@ describe("idle suspend keeps the disk", () => {
         status: "canceled",
         computerId: computer.id,
         computerIds: [computer.id],
+        graceUntil: new Date(now + 60_000).toISOString(),
       }),
     );
-    await runComputerMaintenance(Date.now());
-    assert.equal(plane.counts.shutdowns >= 1, true);
+    await runComputerMaintenance(now);
+    assert.equal(plane.counts.shutdowns, 0);
     assert.equal(plane.counts.suspends, 0);
-    assert.equal((await service.get(computer.id)).state, "deleted");
+    await getSeatStore().upsert({
+      ...(await getSeatStore().listByEmail("cancel@example.com"))[0]!,
+      graceUntil: new Date(now - 1_000).toISOString(),
+    });
+    await runComputerMaintenance(now);
+    assert.equal(plane.counts.suspends >= 1, true);
+    assert.equal(plane.counts.shutdowns, 0);
+    assert.equal((await service.get(computer.id)).state, "paused");
   });
 });

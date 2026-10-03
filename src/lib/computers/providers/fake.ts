@@ -68,6 +68,11 @@ export class FakeProvider implements ComputerProvider {
     this.failures.set(method, mode);
   }
 
+  /** Provider refs that are not deleted. Used to prove replace races leave one box. */
+  liveRefs(): string[] {
+    return [...this.machines.values()].filter((m) => m.state !== "deleted").map((m) => m.ref);
+  }
+
   /** Clear all injected failures and all machines (for test isolation). */
   reset(): void {
     this.machines.clear();

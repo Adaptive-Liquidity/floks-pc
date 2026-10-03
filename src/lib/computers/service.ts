@@ -21,6 +21,7 @@
 import { randomBytes } from "node:crypto";
 import type { ComputerProvider } from "./providers/provider.js";
 import type {
+  Action,
   ActionBatch,
   ActionResult,
   BotClaim,
@@ -45,6 +46,7 @@ import type {
   PairResult,
   SharedAccountAuth,
 } from "./types.js";
+import { isRestartableState } from "./types.js";
 import {
   BetaInviteRequired,
   BetaStoreRequired,
@@ -72,7 +74,18 @@ import {
   ProviderNeedsReplacement,
   ProviderUnavailable,
   QuotaExceeded,
+  RebuildConfirmRequired,
+  InvalidActivityCursor,
+  ControlPlaneBusy,
+  RestartNotAvailable,
 } from "./errors.js";
+import {
+  DASHBOARD_EVENT_KINDS,
+  decodeActivityCursor,
+  paginateActivityEvents,
+  toActivityEvent,
+  type ActivityStore,
+} from "./activity-store.js";
 import {
   BETA_COST_WARNING,
   BETA_LIMITATIONS,
@@ -138,6 +151,31 @@ function newId(): string {
 const PAIR_FAILURE_WINDOW_MS = PAIR_CODE_TTL_MS;
 /** Per presented Node identity, not per shared MCP account. */
 export const PAIR_IDENTITY_FAILURE_LIMIT = 10;
+export const OWNER_DESKTOP_WATCH_TIMEOUT_MS = 20_000;
+
+const OWNER_DESKTOP_ACTIONS = new Set(["click_coordinates", "type", "key", "scroll"]);
+
+function isOwnerDesktopAction(action: Action): boolean {
+  return OWNER_DESKTOP_ACTIONS.has(action.type);
+}
+
+function withOwnerDesktopTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new ComputerError("OWNER_DESKTOP_TIMEOUT", "Watching the screen timed out."));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
 
 interface PairIssueExtras {
   scopes: CapabilityScope[];
@@ -192,12 +230,15 @@ export class ComputerService {
   private readonly now: () => number;
   private readonly wakeTimeoutMs: number;
   private readonly sleepFn: (ms: number) => Promise<void>;
+  private readonly activityStore: ActivityStore | undefined;
+  private activityPersist: Promise<void> = Promise.resolve();
   private wakeAdmission: (computerId: string) => Promise<boolean> = async () => true;
 
   constructor(
     private readonly provider: ComputerProvider,
     opts?: {
       store?: ControlPlaneStore;
+      activityStore?: ActivityStore;
       ownerId?: string | null;
       workspaceId?: string | null;
       beta?: BetaPolicy;
@@ -208,6 +249,7 @@ export class ComputerService {
     },
   ) {
     this.store = opts?.store;
+    this.activityStore = opts?.activityStore;
     this.ownerId = opts?.ownerId ?? null;
     this.workspaceId = opts?.workspaceId ?? null;
     this.beta = opts?.beta ?? DISABLED_BETA_POLICY;
@@ -297,7 +339,7 @@ export class ComputerService {
   private overlay(mine: ControlPlaneSnapshot, base: ControlPlaneSnapshot | null): void {
     this.overlayRecords(
       computersFromSnapshot(mine),
-      new Map((base?.computers ?? []).map((row) => [row.id, row])),
+      new Map((base ? computersFromSnapshot(base) : []).map((row) => [row.id, row])),
       (row) => this.computers.get(row.id),
       (row) => {
         this.computers.set(row.id, row);
@@ -389,7 +431,8 @@ export class ComputerService {
           this.committed = structuredClone(mine);
           return;
         } catch (err) {
-          if (!(err instanceof StaleControlPlane) || attempt === 7) throw err;
+          if (!(err instanceof StaleControlPlane)) throw err;
+          if (attempt === 7) throw new ControlPlaneBusy();
           const base = this.committed;
           await this.hydrate();
           this.overlay(mine, base);
@@ -472,6 +515,7 @@ export class ComputerService {
       updatedAt: now,
       latestCheckpoint: null,
       recoveryNote: null,
+      rebuildConfirmRequired: false,
     };
 
     this.computers.set(id, computer);
@@ -558,7 +602,9 @@ export class ComputerService {
 
   private async patchComputer(
     computerId: string,
-    patch: Partial<Pick<Computer, "latestCheckpoint" | "recoveryNote" | "providerRef">>,
+    patch: Partial<
+      Pick<Computer, "latestCheckpoint" | "recoveryNote" | "providerRef" | "rebuildConfirmRequired">
+    >,
   ): Promise<Computer> {
     const current = await this.get(computerId);
     const updated: Computer = {
@@ -584,6 +630,50 @@ export class ComputerService {
 
   listOperatorEvents(): OperatorEvent[] {
     return this.operatorEvents.map((e) => ({ ...e }));
+  }
+
+  async listActivityEvents(
+    computerId: string,
+    opts?: { cursor?: string | null; limit?: number },
+  ): Promise<{ events: OperatorEvent[]; nextCursor: string | null }> {
+    await this.activityPersist;
+    const limit = opts?.limit ?? 20;
+    const cursor = opts?.cursor ?? null;
+    if (cursor && !decodeActivityCursor(cursor)) {
+      throw new InvalidActivityCursor();
+    }
+    if (this.activityStore) {
+      return this.activityStore.list(computerId, {
+        cursor,
+        limit,
+        kinds: DASHBOARD_EVENT_KINDS,
+        nowMs: this.now(),
+      });
+    }
+    return paginateActivityEvents(
+      this.operatorEvents.filter((event) => event.computerId === computerId),
+      { cursor, limit, kinds: DASHBOARD_EVENT_KINDS, nowMs: this.now() },
+    );
+  }
+
+  /** Metadata-only handoff attempt. Never stores paths, bytes, or tokens. */
+  noteHandoffAttempt(input: {
+    token: string;
+    operation: "handoff_send" | "handoff_receive";
+  }): void {
+    try {
+      const cap = this.capabilityForToken(input.token);
+      this.recordOperatorEvent({
+        computerId: cap?.computerId ?? null,
+        birdId: cap?.birdId ?? null,
+        kind: "handoff",
+        operation: input.operation,
+        success: false,
+        errorCode: "PHASE_NOT_STARTED",
+      });
+    } catch {
+      /* logging must not change the tool result */
+    }
   }
 
   operatorSnapshot(): OperatorSnapshot {
@@ -1117,6 +1207,12 @@ export class ComputerService {
     await this.persist();
   }
 
+  computerIdForCheckoutNonce(checkoutNonce: string): string | null {
+    const claim = [...this.botClaims.values()].find((row) => row.checkoutNonce === checkoutNonce);
+    if (!claim || claim.status === "denied") return null;
+    return claim.computerId;
+  }
+
   async attachPurchaseToClaim(checkoutNonce: string, computerId: string): Promise<boolean> {
     await this.reloadIfRevisionChanged();
     const claim = [...this.botClaims.values()].find((row) => row.checkoutNonce === checkoutNonce);
@@ -1366,6 +1462,8 @@ export class ComputerService {
     if (computer.state === "deleted" || computer.state === "deleting") {
       throw new ComputerNotFound(computer.id);
     }
+    // Gate is side-effect-free. Decide before taking the per-computer lock.
+    await this.requireWakeAdmission(computer.id);
     if (!computer.providerRef) return computer;
     if ((await this.classifyProvider(computer.providerRef)) === "up") {
       return this.healToUp(computer);
@@ -1375,14 +1473,13 @@ export class ComputerService {
 
   /** Move a stored state onto an already-running provider. Does not call pause/stop/wake. */
   private async healToUp(computer: Computer): Promise<Computer> {
-    if (
-      computer.state === "ready" ||
-      computer.state === "running" ||
-      computer.state === "error" ||
-      computer.state === "deleting" ||
-      computer.state === "deleted"
-    ) {
+    if (computer.state === "error" || computer.state === "deleting" || computer.state === "deleted") {
       return computer;
+    }
+    if (computer.state === "ready" || computer.state === "running") {
+      return computer.rebuildConfirmRequired
+        ? this.patchComputer(computer.id, { rebuildConfirmRequired: false })
+        : computer;
     }
     const steps: ComputerState[] =
       computer.state === "recovery_failed"
@@ -1396,6 +1493,9 @@ export class ComputerService {
     for (const to of steps) {
       if (!canTransition(current.state, to)) return current;
       current = this.applyTransition(current, to);
+    }
+    if (current.state === "ready" || current.state === "running") {
+      return this.patchComputer(current.id, { rebuildConfirmRequired: false });
     }
     if (current.state !== computer.state) await this.persist();
     return current;
@@ -1413,9 +1513,9 @@ export class ComputerService {
     if (computer.state === "deleted" || computer.state === "deleting") {
       throw new ComputerNotFound(computer.id);
     }
+    await this.requireWakeAdmission(computer.id);
     const kind = await this.classifyProvider(ref);
     if (kind === "up") return this.healToUp(computer);
-    if (!(await this.wakeAdmission(computer.id))) throw new ComputerAsleep();
     const deadline = this.now() + this.wakeBudgetMs();
     computer = this.markWaking(computer);
     await this.persist();
@@ -1425,7 +1525,11 @@ export class ComputerService {
         await this.withinDeadline(this.provider.wake(liveRef), deadline);
       } catch (err) {
         if (err instanceof ComputerStarting || !this.shouldReplaceDevbox(err)) throw err;
-        computer = await this.replaceDevbox(computer);
+        const latest = await this.get(computer.id);
+        if (latest.rebuildConfirmRequired) {
+          await this.refuseRebuildWithoutConfirm(latest, "rebuild");
+        }
+        computer = await this.replaceDevbox(latest);
         this.axByComputer.delete(computer.id);
         await this.healToUp(await this.get(computer.id));
         this.recordOperatorEvent({
@@ -1486,23 +1590,122 @@ export class ComputerService {
     return /DEVBOX_SHUTDOWN|cannot resume/i.test(message);
   }
 
-  private async replaceDevbox(computer: Computer): Promise<Computer> {
-    const oldRef = computer.providerRef;
-    const created = await this.provider.provision({
+  /**
+   * Park a refused wake on stopped before REBUILD_CONFIRM_REQUIRED.
+   * Never leave `waking`. Stopped is not a billable state.
+   */
+  private async parkStoppedPendingRebuild(computerId: string): Promise<Computer> {
+    const current = await this.get(computerId);
+    const parked =
+      current.state !== "stopped" && canTransition(current.state, "stopped")
+        ? this.applyTransition(current, "stopped")
+        : current;
+    return this.patchComputer(parked.id, { rebuildConfirmRequired: true });
+  }
+
+  private async refuseRebuildWithoutConfirm(
+    computer: Computer,
+    operation: string,
+  ): Promise<never> {
+    await this.parkStoppedPendingRebuild(computer.id);
+    this.recordOperatorEvent({
+      computerId: computer.id,
       birdId: computer.birdId,
-      flockId: computer.flockId,
-      osType: computer.osType,
-      ...(computer.computerClass ? { computerClass: computer.computerClass } : {}),
-      ...(computer.cpu !== null ? { cpu: computer.cpu } : {}),
-      ...(computer.memoryMb !== null ? { memoryMb: computer.memoryMb } : {}),
-      ...(computer.diskGb !== null ? { diskGb: computer.diskGb } : {}),
-      ...(computer.baseImageVersion ? { baseImageVersion: computer.baseImageVersion } : {}),
+      kind: "lifecycle",
+      operation,
+      success: false,
+      errorCode: "REBUILD_CONFIRM_REQUIRED",
     });
-    const updated = await this.patchComputer(computer.id, { providerRef: created.providerRef });
+    throw new RebuildConfirmRequired();
+  }
+
+  private async destroyCreatedReplacement(
+    ref: string,
+    computer: Pick<Computer, "id" | "birdId">,
+    succeeded: boolean,
+  ): Promise<void> {
+    try {
+      await this.provider.destroy(ref);
+      this.recordOperatorEvent({
+        computerId: computer.id,
+        birdId: computer.birdId,
+        kind: "cleanup",
+        operation: "replace_orphan",
+        success: succeeded,
+        errorCode: succeeded ? null : "REPLACE_ORPHAN_DESTROYED",
+      });
+    } catch {
+      this.recordOperatorEvent({
+        computerId: computer.id,
+        birdId: computer.birdId,
+        kind: "cleanup",
+        operation: "replace_orphan",
+        success: false,
+        errorCode: "REPLACE_ORPHAN_DESTROY_FAILED",
+      });
+      const stored = this.committed
+        ? computersFromSnapshot(this.committed).find((row) => row.id === computer.id)
+        : undefined;
+      if (stored) this.computers.set(computer.id, stored);
+      await this.patchComputer(computer.id, {
+        recoveryNote: "Replacement leftover could not be destroyed.",
+      }).catch(() => undefined);
+    }
+  }
+
+  private async replaceDevbox(
+    computer: Computer,
+    opts?: { ownerConfirmed?: boolean },
+  ): Promise<Computer> {
+    if (computer.rebuildConfirmRequired && opts?.ownerConfirmed !== true) {
+      await this.parkStoppedPendingRebuild(computer.id);
+      throw new RebuildConfirmRequired();
+    }
+    await this.reloadIfRevisionChanged();
+    const current = await this.get(computer.id);
+    if (current.rebuildConfirmRequired && opts?.ownerConfirmed !== true) {
+      await this.parkStoppedPendingRebuild(current.id);
+      throw new RebuildConfirmRequired();
+    }
+    const oldRef = current.providerRef;
+    const created = await this.provider.provision({
+      birdId: current.birdId,
+      flockId: current.flockId,
+      osType: current.osType,
+      ...(current.computerClass ? { computerClass: current.computerClass } : {}),
+      ...(current.cpu !== null ? { cpu: current.cpu } : {}),
+      ...(current.memoryMb !== null ? { memoryMb: current.memoryMb } : {}),
+      ...(current.diskGb !== null ? { diskGb: current.diskGb } : {}),
+      ...(current.baseImageVersion ? { baseImageVersion: current.baseImageVersion } : {}),
+    });
+    try {
+      await this.reloadIfRevisionChanged();
+      const latest = await this.get(current.id);
+      if (oldRef && latest.providerRef !== oldRef) {
+        await this.destroyCreatedReplacement(created.providerRef, current, false);
+        throw new ControlPlaneBusy();
+      }
+      const updated: Computer = {
+        ...latest,
+        providerRef: created.providerRef,
+        rebuildConfirmRequired: false,
+        updatedAt: new Date(this.now()),
+      };
+      this.computers.set(current.id, updated);
+      await this.persistExact();
+    } catch (err) {
+      if (!(err instanceof ControlPlaneBusy)) {
+        await this.destroyCreatedReplacement(created.providerRef, current, false);
+      }
+      await this.hydrate().catch(() => undefined);
+      if (err instanceof ControlPlaneBusy) throw err;
+      if (err instanceof StaleControlPlane) throw new ControlPlaneBusy();
+      throw err;
+    }
     if (oldRef && oldRef !== created.providerRef) {
       await this.provider.destroy(oldRef).catch(() => undefined);
     }
-    return updated;
+    return await this.get(computer.id);
   }
 
   private async observeWhenReady(ref: string, request: ObserveRequest): Promise<Observation> {
@@ -1772,6 +1975,7 @@ export class ComputerService {
   }
 
   async pauseThisComputer(computerId: string): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
     return this.enqueueDestroy(computerId, () => this.pauseThisComputerLocked(computerId));
   }
 
@@ -1800,7 +2004,7 @@ export class ComputerService {
     this.recordOperatorEvent({
       computerId: paused.id,
       birdId: paused.birdId,
-      kind: "status",
+      kind: "lifecycle",
       operation: "pause",
       success: true,
       errorCode: null,
@@ -1809,18 +2013,29 @@ export class ComputerService {
   }
 
   async wakeThisComputer(computerId: string): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
+    await this.requireWakeAdmission(computerId);
     return this.enqueueDestroy(computerId, () => this.wakeThisComputerLocked(computerId));
+  }
+
+  /** Same entitlement/billing gate MCP uses in ensureAwake. */
+  private async requireWakeAdmission(computerId: string): Promise<void> {
+    if (!(await this.wakeAdmission(computerId))) throw new ComputerAsleep();
   }
 
   private async wakeThisComputerLocked(computerId: string): Promise<Computer> {
     const current = await this.get(computerId);
+    await this.requireWakeAdmission(computerId);
     if (current.state === "ready" || current.state === "running") return current;
-    let computer = this.applyTransition(current, "waking");
+    let computer = current.state === "waking" ? current : this.applyTransition(current, "waking");
     await this.persist();
     const ref = this.requireProviderRef(computer);
     try {
       await this.provider.wake(ref);
-    } catch {
+    } catch (err) {
+      if (this.shouldReplaceDevbox(err)) {
+        await this.refuseRebuildWithoutConfirm(computer, "wake");
+      }
       computer = this.applyTransition(await this.get(computerId), "recovery_failed");
       await this.patchComputer(computer.id, {
         recoveryNote: "wake failed",
@@ -1828,7 +2043,7 @@ export class ComputerService {
       this.recordOperatorEvent({
         computerId: computer.id,
         birdId: computer.birdId,
-        kind: "status",
+        kind: "lifecycle",
         operation: "wake",
         success: false,
         errorCode: "RECOVERY_FAILED",
@@ -1837,7 +2052,10 @@ export class ComputerService {
     }
     try {
       await this.provider.healthProbe(ref);
-    } catch {
+    } catch (err) {
+      if (this.shouldReplaceDevbox(err)) {
+        await this.refuseRebuildWithoutConfirm(await this.get(computerId), "wake");
+      }
       computer = this.applyTransition(await this.get(computerId), "recovery_failed");
       await this.patchComputer(computer.id, {
         recoveryNote: "wake health probe failed",
@@ -1845,7 +2063,7 @@ export class ComputerService {
       this.recordOperatorEvent({
         computerId: computer.id,
         birdId: computer.birdId,
-        kind: "status",
+        kind: "lifecycle",
         operation: "wake",
         success: false,
         errorCode: "RECOVERY_FAILED",
@@ -1853,12 +2071,95 @@ export class ComputerService {
       throw new ComputerError("RECOVERY_FAILED", "wake health probe failed");
     }
     computer = this.applyTransition(await this.get(computerId), "ready");
-    await this.patchComputer(computer.id, { recoveryNote: null });
+    await this.patchComputer(computer.id, { recoveryNote: null, rebuildConfirmRequired: false });
     this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,
-      kind: "status",
+      kind: "lifecycle",
       operation: "wake",
+      success: true,
+      errorCode: null,
+    });
+    return await this.get(computerId);
+  }
+
+  /**
+   * Owner reboot. Stop then wake so the disk stays when the provider can resume.
+   * A rebuild that would wipe files requires confirmRebuild.
+   */
+  async restartThisComputer(
+    computerId: string,
+    opts?: { confirmRebuild?: boolean },
+  ): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
+    return this.enqueueDestroy(computerId, () =>
+      this.restartThisComputerLocked(computerId, opts),
+    );
+  }
+
+  private async restartThisComputerLocked(
+    computerId: string,
+    opts?: { confirmRebuild?: boolean },
+  ): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
+    let computer = await this.get(computerId);
+    if (computer.state === "deleted" || computer.state === "deleting") {
+      throw new ComputerNotFound(computerId);
+    }
+    await this.requireWakeAdmission(computerId);
+    if (!isRestartableState(computer.state)) {
+      throw new RestartNotAvailable(computer.state);
+    }
+    if (computer.state === "waking" || computer.state === "recovery_failed") {
+      computer = this.applyTransition(computer, "stopped");
+      await this.persist();
+    } else if (computer.state !== "stopped") {
+      computer = await this.transition(computerId, "stopped");
+    }
+    const ref = this.requireProviderRef(computer);
+    try {
+      await this.provider.wake(ref);
+      await this.provider.healthProbe(ref);
+    } catch (err) {
+      if (this.shouldReplaceDevbox(err)) {
+        if (opts?.confirmRebuild !== true) {
+          await this.refuseRebuildWithoutConfirm(computer, "restart");
+        }
+        computer = await this.replaceDevbox(await this.get(computerId), { ownerConfirmed: true });
+        this.axByComputer.delete(computer.id);
+        await this.healToUp(computer);
+        this.recordOperatorEvent({
+          computerId: computer.id,
+          birdId: computer.birdId,
+          kind: "lifecycle",
+          operation: "restart",
+          success: true,
+          errorCode: "COMPUTER_REBUILT",
+        });
+        return await this.get(computerId);
+      }
+      const failed = await this.get(computerId);
+      if (canTransition(failed.state, "recovery_failed")) {
+        this.applyTransition(failed, "recovery_failed");
+        await this.patchComputer(failed.id, { recoveryNote: "restart failed" });
+      }
+      this.recordOperatorEvent({
+        computerId,
+        birdId: computer.birdId,
+        kind: "lifecycle",
+        operation: "restart",
+        success: false,
+        errorCode: err instanceof ComputerError ? err.code : "RESTART_FAILED",
+      });
+      throw err;
+    }
+    computer = await this.healToUp(await this.get(computerId));
+    await this.patchComputer(computer.id, { recoveryNote: null, rebuildConfirmRequired: false });
+    this.recordOperatorEvent({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "lifecycle",
+      operation: "restart",
       success: true,
       errorCode: null,
     });
@@ -1934,6 +2235,7 @@ export class ComputerService {
   }
 
   async recoverThisComputer(computerId: string): Promise<Computer> {
+    await this.reloadIfRevisionChanged();
     return this.enqueueDestroy(computerId, () => this.recoverThisComputerLocked(computerId));
   }
 
@@ -1966,6 +2268,7 @@ export class ComputerService {
 
   private async recoverThisComputerLocked(computerId: string): Promise<Computer> {
     const current = await this.get(computerId);
+    await this.requireWakeAdmission(computerId);
     const latest = current.latestCheckpoint;
     if (!latest || (latest.status !== "ready" && latest.status !== "restored")) {
       throw new CheckpointRequired();
@@ -2233,19 +2536,34 @@ export class ComputerService {
     success: boolean;
     errorCode: string | null;
   }): void {
-    this.operatorEvents.push({
+    const event: OperatorEvent = {
       id: newId(),
-      at: new Date().toISOString(),
+      at: new Date(this.now()).toISOString(),
       computerId: input.computerId,
       birdId: input.birdId,
       kind: input.kind,
       operation: input.operation,
       success: input.success,
       errorCode: input.errorCode,
-    });
+    };
+    this.operatorEvents.push(event);
     if (this.operatorEvents.length > OPERATOR_EVENT_CAP) {
       this.operatorEvents.splice(0, this.operatorEvents.length - OPERATOR_EVENT_CAP);
     }
+    if (!this.activityStore || input.kind === "status") return;
+    const store = this.activityStore;
+    this.activityPersist = this.activityPersist
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await store.append(toActivityEvent(event));
+          if (Math.floor(this.now() / 1000) % 17 === 0) {
+            await store.purgeExpired(this.now()).catch(() => 0);
+          }
+        } catch {
+          /* durable log must not fail the computer action */
+        }
+      });
   }
 
   pairStatus(computerId: string): OperatorPairStatus {
@@ -2317,6 +2635,112 @@ export class ComputerService {
     if (observation.activeWindow) result.activeWindow = observation.activeWindow;
     if (hasScreenshot && screenshot) result.screenshotBase64 = screenshot;
     return result;
+  }
+
+  /**
+   * Owner dashboard: status only. Does not wake. Paused/stopped offer wake.
+   */
+  async ownerDesktopStatus(computerId: string): Promise<{
+    computer: Computer;
+    needsWake: boolean;
+    viewable: boolean;
+  }> {
+    await this.reloadIfRevisionChanged();
+    const computer = await this.get(computerId);
+    const needsWake = computer.state === "paused" || computer.state === "stopped";
+    const viewable = computer.state === "ready" || computer.state === "running";
+    return { computer, needsWake, viewable };
+  }
+
+  /**
+   * Owner live view. Does not auto-wake. Screenshot is returned once and not stored.
+   */
+  async ownerDesktopWatch(
+    computerId: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<
+    | { ok: true; screen: OperatorObserveResult; state: ComputerState }
+    | { ok: false; needsWake: true; state: ComputerState }
+  > {
+    await this.reloadIfRevisionChanged();
+    const computer = await this.get(computerId);
+    if (computer.state === "paused" || computer.state === "stopped") {
+      return { ok: false, needsWake: true, state: computer.state };
+    }
+    if (computer.state !== "ready" && computer.state !== "running") {
+      throw new ObserveRetryable(computer.state);
+    }
+    const ref = this.requireProviderRef(computer);
+    await this.touch(computer);
+    const timeoutMs = opts?.timeoutMs ?? OWNER_DESKTOP_WATCH_TIMEOUT_MS;
+    const observation = await withOwnerDesktopTimeout(
+      this.provider.observe(ref, {
+        includeScreenshot: true,
+        includeAccessibility: false,
+      }),
+      timeoutMs,
+    );
+    return {
+      ok: true,
+      screen: this.toOperatorObserve(observation),
+      state: computer.state,
+    };
+  }
+
+  /**
+   * Owner takeover input. Coordinates/keys only — never click_element or open_url.
+   */
+  async ownerDesktopAct(computerId: string, request: ActionBatch): Promise<ActionResult> {
+    await this.reloadIfRevisionChanged();
+    const computer = await this.get(computerId);
+    if (computer.state === "paused" || computer.state === "stopped") {
+      throw new ObserveRetryable(computer.state);
+    }
+    if (computer.state !== "ready" && computer.state !== "running") {
+      throw new ObserveRetryable(computer.state);
+    }
+    for (const action of request.actions) {
+      if (!isOwnerDesktopAction(action)) {
+        throw new ComputerError(
+          "OWNER_ACT_DENIED",
+          `owner desktop does not allow ${action.type}`,
+        );
+      }
+    }
+    const ref = this.requireProviderRef(computer);
+    await this.touch(computer);
+    const result = await this.provider.act(ref, request);
+    this.recordOperatorEvent({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "browser",
+      operation: "owner-act",
+      success: result.ok,
+      errorCode: result.ok ? null : "OWNER_ACT_FAILED",
+    });
+    return result;
+  }
+
+  noteOwnerDesktop(input: {
+    computerId: string;
+    operation:
+      | "owner-view-start"
+      | "owner-view-stop"
+      | "owner-takeover-start"
+      | "owner-takeover-stop";
+    success: boolean;
+    errorCode?: string | null;
+  }): void {
+    const computer = this.computers.get(input.computerId);
+    const takeover = input.operation.startsWith("owner-takeover");
+    this.recordOperatorEvent({
+      computerId: input.computerId,
+      birdId: computer?.birdId ?? null,
+      kind: takeover ? "browser" : "observe",
+      operation: input.operation,
+      success: input.success,
+      errorCode: input.errorCode ?? null,
+    });
   }
 }
 

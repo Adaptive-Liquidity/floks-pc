@@ -5,6 +5,7 @@ import { mcpNegotiatedProtocol } from "../../../src/lib/mcp/http";
 import { publicOriginFromRequest } from "../../lib/auth/callback";
 import { protocolForPurchase, purchaseToolResult } from "../../lib/billing/bot-purchase";
 import { getComputerService } from "../../lib/desks/runtime";
+import { wakeDecisionForComputer } from "../../lib/desks/wake-admission";
 import { bindPairFlock } from "../../lib/mcp-flock";
 import { MCP_INSTANCE_ID, vercelMcpLogger } from "../../lib/mcp-log";
 import { accessClaims, getOauthStore, hashToken } from "../../lib/oauth";
@@ -84,6 +85,22 @@ export async function POST(request: Request): Promise<Response> {
       return NextResponse.json(purchased, {
         headers: { "Mcp-Protocol-Version": mcpNegotiatedProtocol(purchased, protocol) },
       });
+    }
+  }
+  const method =
+    body && typeof body === "object" && !Array.isArray(body) && typeof (body as { method?: unknown }).method === "string"
+      ? (body as { method: string }).method
+      : "";
+  if (method === "tools/call" && bound) {
+    try {
+      const service = await getComputerService();
+      const cap = service.getCapability(bound.capabilityId);
+      const decision = await wakeDecisionForComputer(cap.computerId);
+      if (!decision.allow) {
+        return NextResponse.json({ ok: false, reason: decision.reason }, { status: decision.status });
+      }
+    } catch {
+      // Capability lookup failures stay on the existing JSON-RPC path.
     }
   }
   const result = await (await sharedGateway()).handleJsonRpc(body, {

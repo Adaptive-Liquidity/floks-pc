@@ -25,8 +25,17 @@ export function mapComputerState(input: {
   hoursUsed: number;
   hoursIncluded: number;
   seatStatus: "active" | "past_due" | "canceled";
+  graceActive?: boolean;
 }): DeskState {
-  if (input.seatStatus === "canceled") return "shut_down";
+  if (input.seatStatus === "canceled") {
+    if (input.graceActive) {
+      // fall through to the live computer state during grace
+    } else if (input.computerState && !SHUT_DOWN.has(input.computerState)) {
+      return "sleeping";
+    } else {
+      return "shut_down";
+    }
+  }
   if (input.hoursIncluded > 0 && input.hoursUsed >= input.hoursIncluded) return "hours_empty";
   if (!input.computerState) return "unused";
   if (FAILED.has(input.computerState)) return "failed";

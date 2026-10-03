@@ -84,6 +84,9 @@ describe("launch guards", () => {
       "0007_oauth.sql",
       "0008_stripe_events.sql",
       "0009_pending_binds.sql",
+      "0010_billing_grace.sql",
+      "0011_desktop_sessions.sql",
+      "0012_computer_activity_events.sql",
     ]);
   });
 

@@ -47,7 +47,7 @@ export type {
   TakeoverGrant,
 } from "./types.js";
 
-export { LEGAL_TRANSITIONS, CAPABILITY_SCOPES } from "./types.js";
+export { LEGAL_TRANSITIONS, CAPABILITY_SCOPES, RESTARTABLE_STATES, isRestartableState } from "./types.js";
 
 export {
   BotClaimSchema,
@@ -101,7 +101,11 @@ export {
   ProviderNeedsReplacement,
   ProviderUnavailable,
   QuotaExceeded,
+  RebuildConfirmRequired,
+  InvalidActivityCursor,
   RestoreUnsupported,
+  ControlPlaneBusy,
+  RestartNotAvailable,
 } from "./errors.js";
 
 export type { ComputerProvider } from "./providers/provider.js";
@@ -173,6 +177,29 @@ export type {
 export { digestEquals, sha256Hex } from "./digest.js";
 
 export { ComputerService, PAIR_IDENTITY_FAILURE_LIMIT } from "./service.js";
+export {
+  ACTIVITY_PAGE_DEFAULT,
+  ACTIVITY_PAGE_MAX,
+  ACTIVITY_RETENTION_DAYS,
+  ACTIVITY_RETENTION_MS,
+  ActivityEventSchema,
+  DASHBOARD_EVENT_KINDS,
+  MemoryActivityStore,
+  activityStoreFromEnv,
+  decodeActivityCursor,
+  encodeActivityCursor,
+  isRoundTripIsoTimestamp,
+  isDashboardEventKind,
+  paginateActivityEvents,
+  toActivityEvent,
+} from "./activity-store.js";
+export type {
+  ActivityEvent,
+  ActivityListOptions,
+  ActivityPage,
+  ActivityStore,
+  DashboardEventKind,
+} from "./activity-store.js";
 export {
   BETA_COST_WARNING,
   BETA_LIMITATIONS,

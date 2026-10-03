@@ -274,6 +274,25 @@ export class ComputerRebuilt extends ComputerError {
   }
 }
 
+/** Restart would provision a blank machine. The owner must confirm first. */
+export class RebuildConfirmRequired extends ComputerError {
+  constructor() {
+    super(
+      "REBUILD_CONFIRM_REQUIRED",
+      "This computer would be rebuilt and its files deleted. The owner must confirm on the dashboard.",
+    );
+    this.name = "RebuildConfirmRequired";
+  }
+}
+
+/** Activity list cursor is not a valid (at, id) page token. */
+export class InvalidActivityCursor extends ComputerError {
+  constructor() {
+    super("INVALID_ACTIVITY_CURSOR", "Invalid activity page.");
+    this.name = "InvalidActivityCursor";
+  }
+}
+
 /** The vendor machine cannot be resumed. The seat needs a new devbox with the same computer id. */
 export class ProviderNeedsReplacement extends ComputerError {
   constructor(provider: string) {
@@ -289,5 +308,28 @@ export class CleanupFailed extends ComputerError {
       "Destroy failed; computer is cleanup_needed. Retry with the captured providerRef only.",
     );
     this.name = "CleanupFailed";
+  }
+}
+
+/** Shared control plane changed under this instance. Caller should reload and retry. */
+export class ControlPlaneBusy extends ComputerError {
+  readonly retryable = true;
+  constructor() {
+    super("CONTROL_PLANE_BUSY", "This computer is busy. Try again in a moment.", {
+      retryable: true,
+    });
+    this.name = "ControlPlaneBusy";
+  }
+}
+
+/** Restart is only legal from stopped, waking, recovery_failed, ready, running, or paused. */
+export class RestartNotAvailable extends ComputerError {
+  constructor(state: string) {
+    super(
+      "RESTART_NOT_AVAILABLE",
+      "This computer is working on it. Try again in a minute.",
+      { state },
+    );
+    this.name = "RestartNotAvailable";
   }
 }

@@ -1127,3 +1127,30 @@ input.code {
     box-shadow: none;
   }
 }
+
+.screen-frame {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background: #050505;
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+  position: relative;
+}
+
+.screen-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.screen-frame.control {
+  cursor: crosshair;
+}
+
+.screen-wait {
+  margin: 0;
+  padding: 24px;
+  color: var(--muted);
+}
