@@ -194,6 +194,10 @@ describe("ensure-bot-user script contract", () => {
     assert.match(ENSURE_UI_BROWSER_PY, /\.flok-browser/);
     assert.match(ENSURE_UI_BROWSER_PY, /\.flok-root/);
     assert.match(ENSURE_UI_BROWSER_PY, /quarantine-/);
+    assert.match(ENSURE_UI_BROWSER_PY, /kill_old_workspace_chrome/);
+    assert.match(ENSURE_UI_BROWSER_PY, /--user-data-dir=\/home\/user\/flok\/\.browser/);
+    assert.match(ENSURE_UI_BROWSER_PY, /os\.kill/);
+    assert.match(ENSURE_UI_BROWSER_PY, /st\.st_uid==0/);
     assert.doesNotMatch(ENSURE_BOT_USER_SH, /chown -hP -R "\$UI_USER:\$UI_USER" "\$WS\/\.browser"/);
     assert.doesNotMatch(ENSURE_BOT_USER_SH, /chmod 700 "\$WS\/\.browser"/);
     assert.doesNotMatch(ENSURE_BOT_USER_SH, /chown [^-].*"\$WS"/);
@@ -787,7 +791,9 @@ describe("customer fs guest scripts are nofollow and not root file API", () => {
     assert.match(sdk, /fs-spec-\[0-9a-f-\]\{36\}/);
     assert.match(sdk, /st_nlink/);
     assert.match(sdk, /st_uid/);
-    assert.match(sdk, /os\.unlink\(path\)/);
+    assert.match(sdk, /SPEC_DIR/);
+    assert.match(sdk, /dir_fd=dirfd/);
+    assert.match(sdk, /os\.unlink\(name, dir_fd=dirfd\)/);
     assert.equal(specWrite.includes("CONTROL_PLANE_FS_SPEC_PATH"), false);
     assert.equal(specWrite.includes("/var/lib/flok/fs-spec.json"), false);
     assert.equal(specWrite.includes("if [ -L"), false);

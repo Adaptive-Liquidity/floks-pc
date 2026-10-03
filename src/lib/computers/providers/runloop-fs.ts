@@ -37,11 +37,17 @@ export function utf8RoundtripEquals(body: Buffer): boolean {
 /** Stated computer_fs write/read cap. Above this the provider returns FILE_TOO_LARGE. */
 export const GUEST_FS_MAX_BYTES = 1_000_000;
 
-function openatWalk(root: string): string {
+/**
+ * Privileged screenshot / profile reads under `/home/flok-ui/.flok-browser`.
+ * A 1440×900 PNG24 is routinely over the customer 1MB cap.
+ */
+export const GUEST_PRIV_FS_MAX_BYTES = 16_000_000;
+
+function openatWalk(root: string, maxBytes: number): string {
   return [
     "import os,stat,sys,errno",
     `ROOT=${JSON.stringify(root)}`,
-    `MAX=${GUEST_FS_MAX_BYTES}`,
+    `MAX=${maxBytes}`,
     "def die(msg, code=1):",
     "    sys.stderr.write(msg); sys.exit(code)",
     "def denied_err(e):",
@@ -116,8 +122,8 @@ function openatWalk(root: string): string {
     "        die('io error')",
     "    finally:",
     "        os.close(dirfd)",
-    "def read_capped(fd):",
-    "    chunks=[]; remain=MAX+1",
+    "def read_capped(fd, cap=MAX):",
+    "    chunks=[]; remain=cap+1",
     "    while remain>0:",
     "        b=os.read(fd, 65536 if remain>65536 else remain)",
     "        if not b: break",
@@ -127,8 +133,8 @@ function openatWalk(root: string): string {
   ].join("\n");
 }
 
-const OPENAT_WALK = openatWalk("/home/user/flok");
-const PRIV_OPENAT_WALK = openatWalk("/home/flok-ui/.flok-browser");
+const OPENAT_WALK = openatWalk("/home/user/flok", GUEST_FS_MAX_BYTES);
+const PRIV_OPENAT_WALK = openatWalk("/home/flok-ui/.flok-browser", GUEST_PRIV_FS_MAX_BYTES);
 
 export const GUEST_NOFOLLOW_STAT_PY = [
   OPENAT_WALK,

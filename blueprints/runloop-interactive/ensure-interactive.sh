@@ -47,7 +47,7 @@ def has_marker(dirfd):
     except OSError: return False
     try:
         st=os.fstat(mfd)
-        return stat.S_ISREG(st.st_mode) and st.st_nlink==1
+        return stat.S_ISREG(st.st_mode) and st.st_nlink==1 and st.st_uid==0
     finally:
         os.close(mfd)
 def write_marker(dirfd):
@@ -77,6 +77,43 @@ def ensure_child_dir(dirfd, name, uid, gid, mode):
     cfd=os.open(name, NOFOLLOW, dir_fd=dirfd)
     try: fown(cfd, uid, gid, mode)
     finally: os.close(cfd)
+def kill_old_workspace_chrome():
+    needle='--user-data-dir=/home/user/flok/.browser'
+    self=os.getpid()
+    pids=[]
+    try: names=os.listdir('/proc')
+    except OSError: return
+    for name in names:
+        if not name.isdigit() or int(name)==self: continue
+        try:
+            if os.stat('/proc/'+name).st_uid!=UI_UID: continue
+            cmd=open('/proc/%s/cmdline'%name,'rb').read().replace(b'\x00',b' ').decode('utf-8','replace')
+            if needle in cmd and 'google-chrome' in cmd: pids.append(int(name))
+        except OSError: continue
+    for pid in pids:
+        try: os.kill(pid, 15)
+        except OSError: pass
+    deadline=time.time()+3
+    while time.time()<deadline and pids:
+        live=[]
+        for pid in pids:
+            try:
+                os.kill(pid, 0); live.append(pid)
+            except OSError: pass
+        if not live: return
+        pids=live; time.sleep(0.1)
+    for pid in pids:
+        try: os.kill(pid, 9)
+        except OSError: pass
+    deadline=time.time()+1
+    while time.time()<deadline and pids:
+        live=[]
+        for pid in pids:
+            try:
+                os.kill(pid, 0); live.append(pid)
+            except OSError: pass
+        if not live: return
+        pids=live; time.sleep(0.05)
 def ensure_dir(path, uid, gid, mode):
     parent=os.path.dirname(path); name=os.path.basename(path)
     try:
@@ -131,6 +168,7 @@ try:
             os.close(bfd)
 finally:
     os.close(home_fd)
+kill_old_workspace_chrome()
 try: wst=os.lstat(os.path.join(WS, WS_BROWSER))
 except FileNotFoundError: wst=None
 if wst is not None:
@@ -204,7 +242,7 @@ def has_marker(dirfd):
     except OSError: return False
     try:
         st=os.fstat(mfd)
-        return stat.S_ISREG(st.st_mode) and st.st_nlink==1
+        return stat.S_ISREG(st.st_mode) and st.st_nlink==1 and st.st_uid==0
     finally:
         os.close(mfd)
 def write_marker(dirfd):
@@ -234,6 +272,43 @@ def ensure_child_dir(dirfd, name, uid, gid, mode):
     cfd=os.open(name, NOFOLLOW, dir_fd=dirfd)
     try: fown(cfd, uid, gid, mode)
     finally: os.close(cfd)
+def kill_old_workspace_chrome():
+    needle='--user-data-dir=/home/user/flok/.browser'
+    self=os.getpid()
+    pids=[]
+    try: names=os.listdir('/proc')
+    except OSError: return
+    for name in names:
+        if not name.isdigit() or int(name)==self: continue
+        try:
+            if os.stat('/proc/'+name).st_uid!=UI_UID: continue
+            cmd=open('/proc/%s/cmdline'%name,'rb').read().replace(b'\x00',b' ').decode('utf-8','replace')
+            if needle in cmd and 'google-chrome' in cmd: pids.append(int(name))
+        except OSError: continue
+    for pid in pids:
+        try: os.kill(pid, 15)
+        except OSError: pass
+    deadline=time.time()+3
+    while time.time()<deadline and pids:
+        live=[]
+        for pid in pids:
+            try:
+                os.kill(pid, 0); live.append(pid)
+            except OSError: pass
+        if not live: return
+        pids=live; time.sleep(0.1)
+    for pid in pids:
+        try: os.kill(pid, 9)
+        except OSError: pass
+    deadline=time.time()+1
+    while time.time()<deadline and pids:
+        live=[]
+        for pid in pids:
+            try:
+                os.kill(pid, 0); live.append(pid)
+            except OSError: pass
+        if not live: return
+        pids=live; time.sleep(0.05)
 def ensure_dir(path, uid, gid, mode):
     parent=os.path.dirname(path); name=os.path.basename(path)
     try:
@@ -288,6 +363,7 @@ try:
             os.close(bfd)
 finally:
     os.close(home_fd)
+kill_old_workspace_chrome()
 try: wst=os.lstat(os.path.join(WS, WS_BROWSER))
 except FileNotFoundError: wst=None
 if wst is not None:

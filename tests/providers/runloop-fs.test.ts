@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   GUEST_FS_MAX_BYTES,
+  GUEST_PRIV_FS_MAX_BYTES,
   GUEST_NOFOLLOW_COPY_PY,
   GUEST_NOFOLLOW_DELETE_PY,
   GUEST_NOFOLLOW_LIST_PY,
@@ -20,6 +21,7 @@ import {
   GUEST_NOFOLLOW_READ_B64_PY,
   GUEST_NOFOLLOW_STAT_PY,
   GUEST_NOFOLLOW_WRITE_STDIN_PY,
+  GUEST_PRIV_READ_B64_PY,
   bufferFromBase64Stdout,
   bufferFromDownload,
   bufferFromUtf8Read,
@@ -86,15 +88,21 @@ describe("L1 Runloop guest file helpers", () => {
     assert.match(GUEST_NOFOLLOW_WRITE_STDIN_PY, /file too large/);
     assert.match(GUEST_NOFOLLOW_READ_B64_PY, /read_capped/);
     assert.match(GUEST_NOFOLLOW_READ_B64_PY, /file too large/);
+    assert.match(GUEST_NOFOLLOW_READ_B64_PY, /def read_capped\(fd, cap=MAX\)/);
     assert.equal(GUEST_NOFOLLOW_WRITE_STDIN_PY.includes("sys.argv[2]"), false);
     assert.equal(GUEST_NOFOLLOW_WRITE_STDIN_PY.includes("b64decode"), false);
     assert.equal(GUEST_FS_MAX_BYTES, 1_000_000);
+    assert.equal(GUEST_PRIV_FS_MAX_BYTES, 16_000_000);
+    assert.match(GUEST_NOFOLLOW_READ_B64_PY, /MAX=1000000/);
+    assert.match(GUEST_PRIV_READ_B64_PY, /MAX=16000000/);
+    assert.match(GUEST_PRIV_READ_B64_PY, /ROOT="\/home\/flok-ui\/\.flok-browser"/);
+    assert.match(GUEST_PRIV_READ_B64_PY, /def read_capped\(fd, cap=MAX\)/);
   });
 });
 
 describe("guest write stdin + openat (local python3)", () => {
-  function patchRoot(code: string, root: string): string {
-    return code.replace('ROOT="/home/user/flok"', `ROOT=${JSON.stringify(root)}`);
+  function patchRoot(code: string, root: string, from = "/home/user/flok"): string {
+    return code.replace(`ROOT=${JSON.stringify(from)}`, `ROOT=${JSON.stringify(root)}`);
   }
 
   function runGuest(
@@ -146,8 +154,48 @@ describe("guest write stdin + openat (local python3)", () => {
       const readOver = runGuest(GUEST_NOFOLLOW_READ_B64_PY, root, [planted]);
       assert.notEqual(readOver.status, 0);
       assert.match(readOver.stderr, /file too large/);
+      const customerHuge = Buffer.alloc(1_000_001, 0x47);
+      writeFileSync(join(root, "customer-huge.bin"), customerHuge);
+      const customerRead = runGuest(GUEST_NOFOLLOW_READ_B64_PY, root, [join(root, "customer-huge.bin")]);
+      assert.notEqual(customerRead.status, 0);
+      assert.match(customerRead.stderr, /file too large/);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("privileged read of 1.4 MB under .flok-browser succeeds; customer 1_000_001 is FILE_TOO_LARGE", () => {
+    const privRoot = mkdtempSync(join(tmpdir(), "flok-priv-"));
+    const customerRoot = mkdtempSync(join(tmpdir(), "flok-cust-"));
+    try {
+      const shot = join(privRoot, "obs-shot.png");
+      const body = Buffer.alloc(1_400_000, 0x50);
+      body[0] = 0x89;
+      body[1] = 0x50;
+      body[2] = 0x4e;
+      body[body.length - 1] = 0x0a;
+      writeFileSync(shot, body);
+      const priv = spawnSync(
+        "python3",
+        [
+          "-c",
+          patchRoot(GUEST_PRIV_READ_B64_PY, privRoot, "/home/flok-ui/.flok-browser"),
+          shot,
+        ],
+        { encoding: undefined, maxBuffer: 4_000_000 },
+      );
+      assert.equal(priv.status, 0, (priv.stderr ?? Buffer.alloc(0)).toString("utf8"));
+      const got = bufferFromBase64Stdout((priv.stdout ?? Buffer.alloc(0)).toString("utf8"));
+      assert.equal(got.equals(body), true);
+
+      const hugePath = join(customerRoot, "already-huge.bin");
+      writeFileSync(hugePath, Buffer.alloc(1_000_001, 0x51));
+      const customer = runGuest(GUEST_NOFOLLOW_READ_B64_PY, customerRoot, [hugePath]);
+      assert.notEqual(customer.status, 0);
+      assert.match(customer.stderr, /file too large/);
+    } finally {
+      rmSync(privRoot, { recursive: true, force: true });
+      rmSync(customerRoot, { recursive: true, force: true });
     }
   });
 
