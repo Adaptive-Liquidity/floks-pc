@@ -5,6 +5,8 @@
 
 import { capabilityAuth, sharedAccountAuth } from "../computers/capabilities.js";
 import {
+  ActivityHistoryUnavailable,
+  ActivityOutcomeUncertain,
   BotKeyRequired,
   CapabilityInvalid,
   CapabilityMissing,
@@ -160,6 +162,11 @@ export class McpGateway {
     } catch (err) {
       if (err instanceof McpProtocolError) {
         const id = isJsonRpcNotification(parsed) ? null : parsed.id;
+        await this.noteRejected({
+          operation: "jsonrpc",
+          errorCode: err.publicCode,
+          preAuth: false,
+        });
         return jsonRpcError(id, err.rpcCode, err.message, err.publicCode);
       }
       throw err;
@@ -174,9 +181,15 @@ export class McpGateway {
       return await this.dispatch(parsed.id, parsed.method, parsed.params, ctx);
     } catch (err) {
       if (err instanceof McpProtocolError) {
+        await this.noteRejected({
+          operation: "jsonrpc",
+          errorCode: err.publicCode,
+          preAuth: false,
+        });
         return jsonRpcError(parsed.id, err.rpcCode, err.message, err.publicCode);
       }
       this.logger.error("mcp.dispatch_failed", { method: parsed.method });
+      await this.noteRejected({ operation: "jsonrpc", errorCode: "INTERNAL", preAuth: false });
       return jsonRpcError(parsed.id, JSONRPC_INTERNAL, "internal error", "INTERNAL");
     }
   }
@@ -232,6 +245,7 @@ export class McpGateway {
         revision: this.service.controlPlaneRevision(),
         code: "UNKNOWN_TOOL",
       });
+      await this.noteRejected({ operation: "unknown_tool", errorCode: "UNKNOWN_TOOL", preAuth: false });
       return toolEnvelope(true, { code: "UNKNOWN_TOOL", message: "unknown tool" });
     }
     const outcome = await this.invokeTool(name, args, ctx);
@@ -272,7 +286,7 @@ export class McpGateway {
           const parsed = HandoffArgsSchema.parse(args ?? {});
           requireToken(parsed.capability_token);
           if (parsed.capability_token) {
-            this.service.noteHandoffAttempt({
+            await this.service.noteHandoffAttempt({
               token: parsed.capability_token,
               operation: name,
             });
@@ -294,7 +308,33 @@ export class McpGateway {
         }
       }
     } catch (err) {
+      if (err instanceof ActivityOutcomeUncertain) return this.toolFailure(err);
+      if (!(err instanceof ActivityHistoryUnavailable)) {
+        const token = presentedCapabilityToken(args);
+        await this.noteRejected({
+          operation: name,
+          errorCode: publicErrorFromUnknown(err).code,
+          tool: name,
+          ...(token ? { token } : {}),
+          preAuth: false,
+        });
+      }
       return this.toolFailure(err);
+    }
+  }
+
+  /** Denied and rejected calls. Never throws to the MCP response path. */
+  async noteRejected(input: {
+    operation: string;
+    errorCode: string;
+    tool?: string;
+    token?: string;
+    preAuth?: boolean;
+  }): Promise<void> {
+    try {
+      await this.service.noteDeniedCall(input);
+    } catch {
+      /* noteDeniedCall already alerts; a rejection must still be returned */
     }
   }
 
@@ -589,6 +629,19 @@ export class McpGateway {
   }
 
   private toolFailure(err: unknown): ToolErr {
+    if (err instanceof ActivityOutcomeUncertain) {
+      return {
+        isError: true,
+        payload: {
+          code: "UNCERTAIN",
+          message: err.message,
+          operation_id: err.operationId,
+          attempt_id: err.attemptId,
+          effect: "occurred",
+          retry: false,
+        },
+      };
+    }
     if (err instanceof ComputerRebuilt) {
       this.logger.warn("mcp.computer_rebuilt", {});
     }
@@ -612,6 +665,12 @@ function stampBot(
 ): void {
   if (!ctx.perBotKeys) return;
   payload.bot_label = token ? (service.capabilityForToken(token)?.botLabel ?? null) : null;
+}
+
+function presentedCapabilityToken(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const token = (args as { capability_token?: unknown }).capability_token;
+  return typeof token === "string" && token.length > 0 && token.length <= 256 ? token : undefined;
 }
 
 function cap(token: string): ComputerOperationAuth {

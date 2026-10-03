@@ -1,9 +1,12 @@
 /**
- * Owner-dashboard activity events. Metadata only.
+ * Tool-level activity history. Metadata only.
+ * Coverage is one row per MCP tool call or owner control, not each command
+ * inside an exec. This is not a signed or tamper-evident log.
  * Never persist tokens, pair codes, command output, screenshots, cookies,
  * or page contents.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { z } from "zod";
 import type { OperatorEvent, OperatorEventKind } from "../operator/view.js";
 
@@ -11,6 +14,7 @@ export const ACTIVITY_RETENTION_DAYS = 30;
 export const ACTIVITY_RETENTION_MS = ACTIVITY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 export const ACTIVITY_PAGE_MAX = 50;
 export const ACTIVITY_PAGE_DEFAULT = 20;
+export const ACTIVITY_HISTORY_COVERAGE = "tool" as const;
 
 /** Kinds shown on the owner dashboard. Status polls stay out of this list. */
 export const DASHBOARD_EVENT_KINDS = [
@@ -26,6 +30,56 @@ export const DASHBOARD_EVENT_KINDS = [
 ] as const satisfies readonly OperatorEventKind[];
 
 export type DashboardEventKind = (typeof DASHBOARD_EVENT_KINDS)[number];
+
+export const ACTIVITY_STAGES = ["intent", "outcome", "denial", "emergency"] as const;
+export type ActivityStage = (typeof ACTIVITY_STAGES)[number];
+
+export const ACTIVITY_OUTCOMES = ["succeeded", "failed", "denied", "UNCERTAIN"] as const;
+export type ActivityOutcome = (typeof ACTIVITY_OUTCOMES)[number];
+
+/** Dashboard list hides bare intents. Those rows are the reconciliation signal. */
+export const ACTIVITY_VISIBLE_STAGES = ["outcome", "denial", "emergency"] as const;
+
+const EMERGENCY_ACTIVITY_OPERATIONS = new Set([
+  "pause",
+  "stop",
+  "suspend",
+  "revoke",
+  "revoke_capability",
+  "revoke_bound",
+]);
+
+export function isEmergencyActivityOperation(operation: string): boolean {
+  return EMERGENCY_ACTIVITY_OPERATIONS.has(operation);
+}
+
+export function isVisibleActivityStage(stage: string | null | undefined): boolean {
+  return stage == null || (ACTIVITY_VISIBLE_STAGES as readonly string[]).includes(stage);
+}
+
+const SAFE_ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
+
+/** Keep a stable code, or replace anything that could carry a secret. */
+export function sanitizeActivityErrorCode(code: string | null | undefined): string | null {
+  if (code == null || code.length === 0) return null;
+  return SAFE_ERROR_CODE.test(code) ? code : "UNSANITIZED";
+}
+
+export const ActivityMetadataSchema = z
+  .object({
+    coverage: z.literal(ACTIVITY_HISTORY_COVERAGE),
+    tool: z.string().regex(/^[a-z0-9_]{1,64}$/).optional(),
+    method: z.string().regex(/^[a-z0-9_./-]{1,64}$/).optional(),
+    fsOperation: z.string().regex(/^[a-z0-9_]{1,32}$/).optional(),
+    actionCount: z.number().int().min(0).max(50).optional(),
+    argvCount: z.number().int().min(0).max(64).optional(),
+    exitCode: z.number().int().min(-128).max(255).optional(),
+    timedOut: z.boolean().optional(),
+    effect: z.enum(["none", "occurred"]).optional(),
+  })
+  .strict();
+
+export type ActivityMetadata = z.infer<typeof ActivityMetadataSchema>;
 
 export const ActivityEventSchema = z.object({
   id: z.string().min(1).max(64),
@@ -47,9 +101,63 @@ export const ActivityEventSchema = z.object({
   operation: z.string().min(1).max(128),
   success: z.boolean(),
   errorCode: z.string().min(1).max(128).nullable(),
+  tenantId: z.string().min(1).max(256).nullable().optional(),
+  actorId: z.string().min(1).max(256).nullable().optional(),
+  ownerId: z.string().min(1).max(256).nullable().optional(),
+  requestId: z.string().min(1).max(80).nullable().optional(),
+  operationId: z.string().min(1).max(80).nullable().optional(),
+  attemptId: z.string().min(1).max(80).nullable().optional(),
+  stage: z.enum(ACTIVITY_STAGES).nullable().optional(),
+  outcome: z.enum(ACTIVITY_OUTCOMES).nullable().optional(),
+  recordedAt: z.string().min(1).max(64).optional(),
+  metadata: ActivityMetadataSchema.optional(),
 });
 
 export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
+
+export type ActivityCapacityReason = "missing_table" | "missing_column" | "write_failed";
+
+export class ActivityStoreError extends Error {
+  readonly reason: ActivityCapacityReason;
+
+  constructor(reason: ActivityCapacityReason, message: string) {
+    super(message);
+    this.name = "ActivityStoreError";
+    this.reason = reason;
+  }
+}
+
+const recentAlerts: Array<{ reason: ActivityCapacityReason; at: string }> = [];
+
+/** In-process signal for a missing or failing activity history sink. Not a pager. */
+export function noteActivityCapacityAlert(reason: ActivityCapacityReason): void {
+  const at = new Date().toISOString();
+  recentAlerts.push({ reason, at });
+  if (recentAlerts.length > 50) recentAlerts.shift();
+  console.error(JSON.stringify({ event: "activity.history.capacity", reason, at }));
+}
+
+export function recentActivityCapacityAlerts(): readonly { reason: ActivityCapacityReason; at: string }[] {
+  return recentAlerts.slice();
+}
+
+export function activityFailureReason(err: unknown): ActivityCapacityReason {
+  if (err instanceof ActivityStoreError) return err.reason;
+  const code =
+    err && typeof err === "object" && "code" in err && typeof err.code === "string" ? err.code : "";
+  if (code === "42P01") return "missing_table";
+  if (code === "42703") return "missing_column";
+  return "write_failed";
+}
+
+export interface ActivityAttribution {
+  tenantId: string | null;
+  actorId: string | null;
+  ownerId: string | null;
+  requestId: string;
+}
+
+export const activityAttribution = new AsyncLocalStorage<ActivityAttribution>();
 
 export interface ActivityPage {
   events: ActivityEvent[];
@@ -61,6 +169,7 @@ export interface ActivityListOptions {
   limit: number;
   kinds?: readonly OperatorEventKind[];
   nowMs?: number;
+  tenantId?: string | null;
 }
 
 export interface ActivityStore {
@@ -112,7 +221,9 @@ export function paginateActivityEvents(
   const cutoff = nowMs - ACTIVITY_RETENTION_MS;
   const cursor = opts.cursor ? decodeActivityCursor(opts.cursor) : null;
   const filtered = events.filter((event) => {
+    if (!isVisibleActivityStage(event.stage)) return false;
     if (!kinds.includes(event.kind)) return false;
+    if (opts.tenantId && event.tenantId != null && event.tenantId !== opts.tenantId) return false;
     const atMs = Date.parse(event.at);
     if (Number.isFinite(atMs) && atMs < cutoff) return false;
     if (!cursor) return true;
@@ -131,7 +242,20 @@ export function paginateActivityEvents(
   };
 }
 
-export function toActivityEvent(event: OperatorEvent): ActivityEvent {
+export function toActivityEvent(
+  event: OperatorEvent & {
+    tenantId?: string | null;
+    actorId?: string | null;
+    ownerId?: string | null;
+    requestId?: string | null;
+    operationId?: string | null;
+    attemptId?: string | null;
+    stage?: ActivityStage | null;
+    outcome?: ActivityOutcome | null;
+    recordedAt?: string;
+    metadata?: ActivityMetadata;
+  },
+): ActivityEvent {
   return ActivityEventSchema.parse({
     id: event.id,
     at: event.at,
@@ -140,7 +264,17 @@ export function toActivityEvent(event: OperatorEvent): ActivityEvent {
     kind: event.kind,
     operation: event.operation,
     success: event.success,
-    errorCode: event.errorCode,
+    errorCode: sanitizeActivityErrorCode(event.errorCode),
+    ...(event.tenantId !== undefined ? { tenantId: event.tenantId } : {}),
+    ...(event.actorId !== undefined ? { actorId: event.actorId } : {}),
+    ...(event.ownerId !== undefined ? { ownerId: event.ownerId } : {}),
+    ...(event.requestId !== undefined ? { requestId: event.requestId } : {}),
+    ...(event.operationId !== undefined ? { operationId: event.operationId } : {}),
+    ...(event.attemptId !== undefined ? { attemptId: event.attemptId } : {}),
+    ...(event.stage !== undefined ? { stage: event.stage } : {}),
+    ...(event.outcome !== undefined ? { outcome: event.outcome } : {}),
+    ...(event.recordedAt !== undefined ? { recordedAt: event.recordedAt } : {}),
+    ...(event.metadata !== undefined ? { metadata: event.metadata } : {}),
   });
 }
 

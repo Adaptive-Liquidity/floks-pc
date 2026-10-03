@@ -96,7 +96,7 @@ export async function POST(
         mode: "view",
       });
       if (!issued.ok) return fail(503, "Screen sessions are not configured.");
-      service.noteOwnerDesktop({
+      await service.noteOwnerDesktop({
         computerId,
         operation: "owner-view-start",
         success: true,
@@ -156,7 +156,7 @@ export async function POST(
         mode: "control",
       });
       if (!rotated.ok) return tokenDenied(rotated.reason);
-      service.noteOwnerDesktop({
+      await service.noteOwnerDesktop({
         computerId,
         operation: "owner-takeover-start",
         success: true,
@@ -178,7 +178,7 @@ export async function POST(
         mode: "view",
       });
       if (!rotated.ok) return tokenDenied(rotated.reason);
-      service.noteOwnerDesktop({
+      await service.noteOwnerDesktop({
         computerId,
         operation: "owner-takeover-stop",
         success: true,
@@ -219,13 +219,13 @@ export async function POST(
       const wasControl = session.payload.mode === "control";
       await revokeOwnerDesktopToken(parsed.token);
       if (wasControl) {
-        service.noteOwnerDesktop({
+        await service.noteOwnerDesktop({
           computerId,
           operation: "owner-takeover-stop",
           success: true,
         });
       }
-      service.noteOwnerDesktop({
+      await service.noteOwnerDesktop({
         computerId,
         operation: "owner-view-stop",
         success: true,
@@ -251,6 +251,20 @@ export async function POST(
     }
     if (code === "RECOVERY_FAILED") {
       return fail(502, "This computer could not wake.");
+    }
+    if (code === "ACTIVITY_HISTORY_UNAVAILABLE") {
+      return fail(503, "Activity history could not be recorded, so this action was not run.");
+    }
+    if (code === "UNCERTAIN") {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "UNCERTAIN",
+          message: err instanceof Error ? err.message : "The computer effect may have occurred.",
+          retry: false,
+        },
+        { status: 409 },
+      );
     }
     console.error("[desktop]", err instanceof Error ? err.message : err);
     return fail(500, "The screen is not available.");

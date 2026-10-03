@@ -76,14 +76,23 @@ import {
   QuotaExceeded,
   RebuildConfirmRequired,
   InvalidActivityCursor,
+  ActivityHistoryUnavailable,
+  ActivityOutcomeUncertain,
   ControlPlaneBusy,
   RestartNotAvailable,
 } from "./errors.js";
 import {
   DASHBOARD_EVENT_KINDS,
+  activityAttribution,
+  activityFailureReason,
   decodeActivityCursor,
+  isEmergencyActivityOperation,
+  noteActivityCapacityAlert,
   paginateActivityEvents,
   toActivityEvent,
+  type ActivityMetadata,
+  type ActivityOutcome,
+  type ActivityStage,
   type ActivityStore,
 } from "./activity-store.js";
 import {
@@ -231,7 +240,6 @@ export class ComputerService {
   private readonly wakeTimeoutMs: number;
   private readonly sleepFn: (ms: number) => Promise<void>;
   private readonly activityStore: ActivityStore | undefined;
-  private activityPersist: Promise<void> = Promise.resolve();
   private wakeAdmission: (computerId: string) => Promise<boolean> = async () => true;
 
   constructor(
@@ -636,18 +644,19 @@ export class ComputerService {
     computerId: string,
     opts?: { cursor?: string | null; limit?: number },
   ): Promise<{ events: OperatorEvent[]; nextCursor: string | null }> {
-    await this.activityPersist;
     const limit = opts?.limit ?? 20;
     const cursor = opts?.cursor ?? null;
     if (cursor && !decodeActivityCursor(cursor)) {
       throw new InvalidActivityCursor();
     }
     if (this.activityStore) {
+      const known = this.computers.get(computerId);
       return this.activityStore.list(computerId, {
         cursor,
         limit,
         kinds: DASHBOARD_EVENT_KINDS,
         nowMs: this.now(),
+        ...(known ? { tenantId: known.flockId } : {}),
       });
     }
     return paginateActivityEvents(
@@ -657,22 +666,21 @@ export class ComputerService {
   }
 
   /** Metadata-only handoff attempt. Never stores paths, bytes, or tokens. */
-  noteHandoffAttempt(input: {
+  async noteHandoffAttempt(input: {
     token: string;
     operation: "handoff_send" | "handoff_receive";
-  }): void {
+  }): Promise<void> {
     try {
       const cap = this.capabilityForToken(input.token);
-      this.recordOperatorEvent({
-        computerId: cap?.computerId ?? null,
-        birdId: cap?.birdId ?? null,
-        kind: "handoff",
+      await this.noteDeniedCall({
         operation: input.operation,
-        success: false,
         errorCode: "PHASE_NOT_STARTED",
+        tool: input.operation,
+        kind: "handoff",
+        ...(cap ? { computerId: cap.computerId, birdId: cap.birdId } : {}),
       });
     } catch {
-      /* logging must not change the tool result */
+      /* a denied handoff stays denied even when history is down */
     }
   }
 
@@ -733,7 +741,7 @@ export class ComputerService {
             recoveryNote: "idle cleanup failed; retry with captured providerRef only",
           });
         }
-        this.recordOperatorEvent({
+        await this.recordOperatorEvent({
           computerId: computer.id,
           birdId: computer.birdId,
           kind: "cleanup",
@@ -810,22 +818,40 @@ export class ComputerService {
   ): Promise<OperatorObserveResult> {
     const computer = await this.get(computerId);
     this.assertObserveAvailable(computer);
-    const ref = this.requireProviderRef(computer);
-    await this.touch(computer);
-    const observation = await this.provider.observe(ref, {
-      includeAccessibility: request.includeAccessibility ?? true,
-      includeScreenshot: request.includeScreenshot ?? true,
-    });
-    const result = this.toOperatorObserve(observation);
-    this.recordOperatorEvent({
+    const attempt = await this.beginConsequential({
       computerId: computer.id,
       birdId: computer.birdId,
       kind: "observe",
       operation: "observe",
-      success: true,
-      errorCode: null,
+      metadata: { coverage: "tool", tool: "computer_observe" },
     });
-    return result;
+    let effectStarted = false;
+    try {
+      effectStarted = true;
+      const ref = this.requireProviderRef(computer);
+      await this.touch(computer);
+      const observation = await this.provider.observe(ref, {
+        includeAccessibility: request.includeAccessibility ?? true,
+        includeScreenshot: request.includeScreenshot ?? true,
+      });
+      const result = this.toOperatorObserve(observation);
+      await this.finishConsequential(attempt, {
+        success: true,
+        errorCode: null,
+        effectOccurred: true,
+        metadata: { coverage: "tool", tool: "computer_observe", effect: "occurred" },
+      });
+      return result;
+    } catch (err) {
+      if (err instanceof ActivityOutcomeUncertain || err instanceof ActivityHistoryUnavailable) throw err;
+      await this.finishConsequential(attempt, {
+        success: false,
+        errorCode: err instanceof ComputerError ? err.code : "FAILED",
+        effectOccurred: effectStarted,
+        metadata: { coverage: "tool", tool: "computer_observe", effect: effectStarted ? "occurred" : "none" },
+      });
+      throw err;
+    }
   }
 
   /**
@@ -878,7 +904,7 @@ export class ComputerService {
     if (current.state === "deleted") return current;
     try {
       const deleted = await this.transition(computerId, "deleted");
-      this.recordOperatorEvent({
+      await this.recordOperatorEvent({
         computerId: deleted.id,
         birdId: deleted.birdId,
         kind: "cleanup",
@@ -895,7 +921,7 @@ export class ComputerService {
           recoveryNote: "destroy failed; retry with captured providerRef only",
         });
       }
-      this.recordOperatorEvent({
+      await this.recordOperatorEvent({
         computerId: computer.id,
         birdId: computer.birdId,
         kind: "cleanup",
@@ -1041,6 +1067,13 @@ export class ComputerService {
       throw new PairCodeInvalid("identity mismatch");
     }
 
+    const attempt = await this.beginConsequential({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "pair",
+      operation: "pair",
+      metadata: { coverage: "tool", tool: "computer_pair" },
+    });
     const consumed: ComputerPairCode = { ...record, usedAt: new Date() };
     this.pairCodes.set(id, consumed);
 
@@ -1064,14 +1097,17 @@ export class ComputerService {
     this.capabilitiesByDigest.set(cap.tokenDigest, cap.id);
     await this.persist();
 
-    this.recordOperatorEvent({
-      computerId: computer.id,
-      birdId: computer.birdId,
-      kind: "pair",
-      operation: "pair",
-      success: true,
-      errorCode: null,
-    });
+    try {
+      await this.finishConsequential(attempt, {
+        success: true,
+        errorCode: null,
+        effectOccurred: true,
+        metadata: { coverage: "tool", tool: "computer_pair", effect: "occurred" },
+      });
+    } catch (err) {
+      if (err instanceof ActivityOutcomeUncertain) throw err;
+      throw err;
+    }
 
     return {
       token: minted.token,
@@ -1394,9 +1430,19 @@ export class ComputerService {
   /** Drop every capability and unused pair code on this computer. */
   async revokeBoundComputer(computerId: string): Promise<void> {
     await this.reloadIfRevisionChanged();
-    await this.get(computerId);
+    const computer = await this.get(computerId);
     this.revokeAllForComputer(computerId);
     await this.persist();
+    await this.recordOperatorEvent({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "lifecycle",
+      operation: "revoke_bound",
+      success: true,
+      errorCode: null,
+      durability: "emergency",
+      effectOccurred: true,
+    });
   }
 
   /**
@@ -1433,6 +1479,16 @@ export class ComputerService {
       revokedAt: new Date(),
     });
     await this.persist();
+    await this.recordOperatorEvent({
+      computerId: cap.computerId,
+      birdId: cap.birdId,
+      kind: "lifecycle",
+      operation: "revoke_capability",
+      success: true,
+      errorCode: null,
+      durability: "emergency",
+      effectOccurred: true,
+    });
   }
 
   /** Stored capability (digest only). Never contains the raw token. */
@@ -1532,7 +1588,7 @@ export class ComputerService {
         computer = await this.replaceDevbox(latest);
         this.axByComputer.delete(computer.id);
         await this.healToUp(await this.get(computer.id));
-        this.recordOperatorEvent({
+        await this.recordOperatorEvent({
           computerId: computer.id,
           birdId: computer.birdId,
           kind: "cleanup",
@@ -1608,7 +1664,7 @@ export class ComputerService {
     operation: string,
   ): Promise<never> {
     await this.parkStoppedPendingRebuild(computer.id);
-    this.recordOperatorEvent({
+    await this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,
       kind: "lifecycle",
@@ -1626,7 +1682,7 @@ export class ComputerService {
   ): Promise<void> {
     try {
       await this.provider.destroy(ref);
-      this.recordOperatorEvent({
+      await this.recordOperatorEvent({
         computerId: computer.id,
         birdId: computer.birdId,
         kind: "cleanup",
@@ -1635,7 +1691,7 @@ export class ComputerService {
         errorCode: succeeded ? null : "REPLACE_ORPHAN_DESTROYED",
       });
     } catch {
-      this.recordOperatorEvent({
+      await this.recordOperatorEvent({
         computerId: computer.id,
         birdId: computer.birdId,
         kind: "cleanup",
@@ -1774,7 +1830,7 @@ export class ComputerService {
         result.providerDetail = providerStatus.providerDetail;
       }
     }
-    this.recordOperatorEvent({
+    await this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,
       kind: "status",
@@ -1791,43 +1847,26 @@ export class ComputerService {
     request: ExecRequest,
   ): Promise<ExecResult> {
     await this.reloadIfRevisionChanged();
-    // Validate request at service boundary (schema-level enforcement)
     const validatedRequest = ExecRequestSchema.parse(request) as ExecRequest;
-
     const required: CapabilityScope[] =
       validatedRequest.mode === "shell" ? ["exec", "shell"] : ["exec"];
     const authorized = this.authorize(auth, computerId, required);
-    const computer = await this.ensureAwake(authorized.computer);
-    const ref = this.requireProviderRef(computer);
-    await this.touch(computer);
+    const computer = authorized.computer;
     const root = workspaceRootForProvider(computer.provider);
+    let cwd: string | undefined;
     try {
-      const cwd =
+      cwd =
         validatedRequest.cwd !== undefined
           ? canonicalizeWorkspacePath(validatedRequest.cwd, root)
           : undefined;
-      const execResult = await this.provider.exec(
-        ref,
-        cwd !== undefined ? { ...validatedRequest, cwd } : validatedRequest,
-      );
-      this.recordOperatorEvent({
-        computerId: computer.id,
-        birdId: computer.birdId,
-        kind: "exec",
-        operation: "exec",
-        success: execResult.exitCode === 0 && !execResult.timedOut,
-        errorCode: execResult.timedOut ? "TIMEOUT" : execResult.exitCode === 0 ? null : "EXEC_FAILED",
-      });
-      return execResult;
     } catch (err) {
       if (err instanceof PathEscape) {
-        this.recordOperatorEvent({
+        await this.noteDeniedCall({
+          operation: "exec",
+          errorCode: "PATH_ESCAPE",
+          tool: "computer_exec",
           computerId: computer.id,
           birdId: computer.birdId,
-          kind: "exec",
-          operation: "exec",
-          success: false,
-          errorCode: "PATH_ESCAPE",
         });
         return {
           exitCode: 126,
@@ -1836,6 +1875,54 @@ export class ComputerService {
           timedOut: false,
         };
       }
+      throw err;
+    }
+    const attempt = await this.beginConsequential({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "exec",
+      operation: "exec",
+      metadata: { coverage: "tool", tool: "computer_exec", argvCount: validatedRequest.argv.length },
+    });
+    let effectStarted = false;
+    try {
+      effectStarted = true;
+      const awake = await this.ensureAwake(computer);
+      const ref = this.requireProviderRef(awake);
+      await this.touch(awake);
+      const execResult = await this.provider.exec(
+        ref,
+        cwd !== undefined ? { ...validatedRequest, cwd } : validatedRequest,
+      );
+      const exitCode = Math.trunc(execResult.exitCode);
+      await this.finishConsequential(attempt, {
+        success: execResult.exitCode === 0 && !execResult.timedOut,
+        errorCode: execResult.timedOut ? "TIMEOUT" : execResult.exitCode === 0 ? null : "EXEC_FAILED",
+        effectOccurred: true,
+        metadata: {
+          coverage: "tool",
+          tool: "computer_exec",
+          argvCount: validatedRequest.argv.length,
+          ...(exitCode >= -128 && exitCode <= 255 ? { exitCode } : {}),
+          timedOut: execResult.timedOut,
+          effect: "occurred",
+        },
+      });
+      return execResult;
+    } catch (err) {
+      if (err instanceof ActivityOutcomeUncertain || err instanceof ActivityHistoryUnavailable) throw err;
+      if (err instanceof ComputerAsleep || err instanceof ComputerNotFound) effectStarted = false;
+      await this.finishConsequential(attempt, {
+        success: false,
+        errorCode: err instanceof ComputerError ? err.code : "FAILED",
+        effectOccurred: effectStarted,
+        metadata: {
+          coverage: "tool",
+          tool: "computer_exec",
+          argvCount: validatedRequest.argv.length,
+          effect: effectStarted ? "occurred" : "none",
+        },
+      });
       throw err;
     }
   }
@@ -1848,42 +1935,77 @@ export class ComputerService {
     await this.reloadIfRevisionChanged();
     const validatedRequest = FsRequestSchema.parse(request) as FsRequest;
     const authorized = this.authorize(auth, computerId, "fs");
-    const computer = await this.ensureAwake(authorized.computer);
-    const ref = this.requireProviderRef(computer);
-    await this.touch(computer);
+    const computer = authorized.computer;
     const root = workspaceRootForProvider(computer.provider);
+    let path: string;
+    let destination: string | undefined;
     try {
-      const path = canonicalizeWorkspacePath(validatedRequest.path, root);
-      const destination =
+      path = canonicalizeWorkspacePath(validatedRequest.path, root);
+      destination =
         validatedRequest.destination !== undefined
           ? canonicalizeWorkspacePath(validatedRequest.destination, root)
           : undefined;
+    } catch (err) {
+      if (err instanceof PathEscape) {
+        await this.noteDeniedCall({
+          operation: `fs:${validatedRequest.operation}`,
+          errorCode: "PATH_ESCAPE",
+          tool: "computer_fs",
+          computerId: computer.id,
+          birdId: computer.birdId,
+        });
+        return { ok: false, errorCode: "PATH_ESCAPE" };
+      }
+      throw err;
+    }
+    const attempt = await this.beginConsequential({
+      computerId: computer.id,
+      birdId: computer.birdId,
+      kind: "file",
+      operation: `fs:${validatedRequest.operation}`,
+      metadata: {
+        coverage: "tool",
+        tool: "computer_fs",
+        fsOperation: validatedRequest.operation,
+      },
+    });
+    let effectStarted = false;
+    try {
+      effectStarted = true;
+      const awake = await this.ensureAwake(computer);
+      const ref = this.requireProviderRef(awake);
+      await this.touch(awake);
       const fsResult = await this.provider.filesystem(ref, {
         ...validatedRequest,
         path,
         ...(destination !== undefined ? { destination } : {}),
       });
-      this.recordOperatorEvent({
-        computerId: computer.id,
-        birdId: computer.birdId,
-        kind: "file",
-        operation: `fs:${validatedRequest.operation}`,
+      await this.finishConsequential(attempt, {
         success: fsResult.ok,
         errorCode: fsResult.errorCode ?? null,
+        effectOccurred: true,
+        metadata: {
+          coverage: "tool",
+          tool: "computer_fs",
+          fsOperation: validatedRequest.operation,
+          effect: "occurred",
+        },
       });
       return fsResult;
     } catch (err) {
-      if (err instanceof PathEscape) {
-        this.recordOperatorEvent({
-          computerId: computer.id,
-          birdId: computer.birdId,
-          kind: "file",
-          operation: `fs:${validatedRequest.operation}`,
-          success: false,
-          errorCode: "PATH_ESCAPE",
-        });
-        return { ok: false, errorCode: "PATH_ESCAPE" };
-      }
+      if (err instanceof ActivityOutcomeUncertain || err instanceof ActivityHistoryUnavailable) throw err;
+      if (err instanceof ComputerAsleep || err instanceof ComputerNotFound) effectStarted = false;
+      await this.finishConsequential(attempt, {
+        success: false,
+        errorCode: err instanceof ComputerError ? err.code : "FAILED",
+        effectOccurred: effectStarted,
+        metadata: {
+          coverage: "tool",
+          tool: "computer_fs",
+          fsOperation: validatedRequest.operation,
+          effect: effectStarted ? "occurred" : "none",
+        },
+      });
       throw err;
     }
   }
@@ -1895,26 +2017,50 @@ export class ComputerService {
   ): Promise<Observation> {
     await this.reloadIfRevisionChanged();
     const authorized = this.authorize(auth, computerId, "observe");
-    const computer = await this.ensureAwake(authorized.computer);
-    const ref = this.requireProviderRef(computer);
-    const live = await this.classifyProvider(ref);
-    if (live !== "up") throw new ObserveRetryable(live);
-    await this.touch(computer);
-    const observation = await this.observeWhenReady(ref, request);
-    if (request.includeAccessibility === true && !observation.accessibilityPending) {
-      const cache = axCacheFromObservation(observation, this.now());
-      if (cache) this.axByComputer.set(computer.id, cache);
-      else this.axByComputer.delete(computer.id);
-    }
-    this.recordOperatorEvent({
+    const computer = authorized.computer;
+    const attempt = await this.beginConsequential({
       computerId: computer.id,
       birdId: computer.birdId,
       kind: "observe",
       operation: "observe",
-      success: true,
-      errorCode: null,
+      metadata: { coverage: "tool", tool: "computer_observe" },
     });
-    return observation;
+    let effectStarted = false;
+    try {
+      effectStarted = true;
+      const awake = await this.ensureAwake(computer);
+      const ref = this.requireProviderRef(awake);
+      const live = await this.classifyProvider(ref);
+      if (live !== "up") throw new ObserveRetryable(live);
+      await this.touch(awake);
+      const observation = await this.observeWhenReady(ref, request);
+      if (request.includeAccessibility === true && !observation.accessibilityPending) {
+        const cache = axCacheFromObservation(observation, this.now());
+        if (cache) this.axByComputer.set(awake.id, cache);
+        else this.axByComputer.delete(awake.id);
+      }
+      await this.finishConsequential(attempt, {
+        success: true,
+        errorCode: null,
+        effectOccurred: true,
+        metadata: { coverage: "tool", tool: "computer_observe", effect: "occurred" },
+      });
+      return observation;
+    } catch (err) {
+      if (err instanceof ActivityOutcomeUncertain || err instanceof ActivityHistoryUnavailable) throw err;
+      if (err instanceof ComputerAsleep || err instanceof ComputerNotFound) effectStarted = false;
+      await this.finishConsequential(attempt, {
+        success: false,
+        errorCode: err instanceof ComputerError ? err.code : "FAILED",
+        effectOccurred: effectStarted,
+        metadata: {
+          coverage: "tool",
+          tool: "computer_observe",
+          effect: effectStarted ? "occurred" : "none",
+        },
+      });
+      throw err;
+    }
   }
 
   async act(
@@ -1924,42 +2070,78 @@ export class ComputerService {
   ): Promise<ActionResult> {
     await this.reloadIfRevisionChanged();
     const authorized = this.authorize(auth, computerId, "act");
-    const computer = await this.ensureAwake(authorized.computer);
-    const ref = this.requireProviderRef(computer);
-    await this.touch(computer);
-    const slots = rewriteActSlots(
-      request.actions,
-      this.axByComputer.get(computer.id) ?? null,
-      this.now(),
-    );
-    const forwarded = slots.filter((slot) => slot.kind === "forward").map((slot) => slot.action);
-    if (forwarded.length === 0) {
-      const stitched = stitchActResults(slots, []);
-      this.recordOperatorEvent({
-        computerId: computer.id,
-        birdId: computer.birdId,
-        kind: "fail-closed",
-        operation: "click_element",
-        success: false,
-        errorCode: stitched.failCode ?? "ELEMENT_STALE",
-      });
-      return { ok: false, results: stitched.results };
-    }
-    const actResult = await this.provider.act(ref, { actions: forwarded });
-    const stitched = stitchActResults(slots, actResult.results);
-    if (actResult.results.some((row) => row.success)) {
-      this.axByComputer.delete(computer.id);
-    }
-    const ok = stitched.results.every((row) => row.success);
-    this.recordOperatorEvent({
+    const computer = authorized.computer;
+    const attempt = await this.beginConsequential({
       computerId: computer.id,
       birdId: computer.birdId,
-      kind: stitched.failClosed ? "fail-closed" : "browser",
-      operation: stitched.failClosed ? "click_element" : "act",
-      success: ok,
-      errorCode: stitched.failClosed ? (stitched.failCode ?? "ELEMENT_STALE") : null,
+      kind: "browser",
+      operation: "act",
+      metadata: { coverage: "tool", tool: "computer_act", actionCount: request.actions.length },
     });
-    return { ok, results: stitched.results };
+    let effectStarted = false;
+    try {
+      effectStarted = true;
+      const awake = await this.ensureAwake(computer);
+      const ref = this.requireProviderRef(awake);
+      await this.touch(awake);
+      const slots = rewriteActSlots(
+        request.actions,
+        this.axByComputer.get(awake.id) ?? null,
+        this.now(),
+      );
+      const forwarded = slots.filter((slot) => slot.kind === "forward").map((slot) => slot.action);
+      if (forwarded.length === 0) {
+        const stitched = stitchActResults(slots, []);
+        await this.finishConsequential(attempt, {
+          success: false,
+          errorCode: stitched.failCode ?? "ELEMENT_STALE",
+          effectOccurred: true,
+          kind: "fail-closed",
+          operation: "click_element",
+          metadata: {
+            coverage: "tool",
+            tool: "computer_act",
+            actionCount: request.actions.length,
+            effect: "occurred",
+          },
+        });
+        return { ok: false, results: stitched.results };
+      }
+      const actResult = await this.provider.act(ref, { actions: forwarded });
+      const stitched = stitchActResults(slots, actResult.results);
+      if (actResult.results.some((row) => row.success)) {
+        this.axByComputer.delete(awake.id);
+      }
+      const ok = stitched.results.every((row) => row.success);
+      await this.finishConsequential(attempt, {
+        success: ok,
+        errorCode: stitched.failClosed ? (stitched.failCode ?? "ELEMENT_STALE") : null,
+        effectOccurred: true,
+        ...(stitched.failClosed ? { kind: "fail-closed" as const, operation: "click_element" } : {}),
+        metadata: {
+          coverage: "tool",
+          tool: "computer_act",
+          actionCount: request.actions.length,
+          effect: "occurred",
+        },
+      });
+      return { ok, results: stitched.results };
+    } catch (err) {
+      if (err instanceof ActivityOutcomeUncertain || err instanceof ActivityHistoryUnavailable) throw err;
+      if (err instanceof ComputerAsleep || err instanceof ComputerNotFound) effectStarted = false;
+      await this.finishConsequential(attempt, {
+        success: false,
+        errorCode: err instanceof ComputerError ? err.code : "FAILED",
+        effectOccurred: effectStarted,
+        metadata: {
+          coverage: "tool",
+          tool: "computer_act",
+          actionCount: request.actions.length,
+          effect: effectStarted ? "occurred" : "none",
+        },
+      });
+      throw err;
+    }
   }
 
   async wake(auth: ComputerOperationAuth, computerId: string): Promise<Computer> {
@@ -1985,7 +2167,18 @@ export class ComputerService {
       if (current.state === "stopped" || current.state === "deleted" || current.state === "deleting") {
         return current;
       }
-      return this.transition(computerId, "stopped");
+      const stopped = await this.transition(computerId, "stopped");
+      await this.recordOperatorEvent({
+        computerId: stopped.id,
+        birdId: stopped.birdId,
+        kind: "lifecycle",
+        operation: "stop",
+        success: true,
+        errorCode: null,
+        durability: "emergency",
+        effectOccurred: true,
+      });
+      return stopped;
     });
   }
 
@@ -2001,7 +2194,7 @@ export class ComputerService {
     const current = await this.get(computerId);
     if (current.state === "paused") return current;
     const paused = await this.transition(computerId, "paused");
-    this.recordOperatorEvent({
+    await this.recordOperatorEvent({
       computerId: paused.id,
       birdId: paused.birdId,
       kind: "lifecycle",
@@ -2040,7 +2233,7 @@ export class ComputerService {
       await this.patchComputer(computer.id, {
         recoveryNote: "wake failed",
       });
-      this.recordOperatorEvent({
+      await this.recordOperatorEvent({
         computerId: computer.id,
         birdId: computer.birdId,
         kind: "lifecycle",
@@ -2060,7 +2253,7 @@ export class ComputerService {
       await this.patchComputer(computer.id, {
         recoveryNote: "wake health probe failed",
       });
-      this.recordOperatorEvent({
+      await this.recordOperatorEvent({
         computerId: computer.id,
         birdId: computer.birdId,
         kind: "lifecycle",
@@ -2072,7 +2265,7 @@ export class ComputerService {
     }
     computer = this.applyTransition(await this.get(computerId), "ready");
     await this.patchComputer(computer.id, { recoveryNote: null, rebuildConfirmRequired: false });
-    this.recordOperatorEvent({
+    await this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,
       kind: "lifecycle",
@@ -2128,7 +2321,7 @@ export class ComputerService {
         computer = await this.replaceDevbox(await this.get(computerId), { ownerConfirmed: true });
         this.axByComputer.delete(computer.id);
         await this.healToUp(computer);
-        this.recordOperatorEvent({
+        await this.recordOperatorEvent({
           computerId: computer.id,
           birdId: computer.birdId,
           kind: "lifecycle",
@@ -2143,7 +2336,7 @@ export class ComputerService {
         this.applyTransition(failed, "recovery_failed");
         await this.patchComputer(failed.id, { recoveryNote: "restart failed" });
       }
-      this.recordOperatorEvent({
+      await this.recordOperatorEvent({
         computerId,
         birdId: computer.birdId,
         kind: "lifecycle",
@@ -2155,7 +2348,7 @@ export class ComputerService {
     }
     computer = await this.healToUp(await this.get(computerId));
     await this.patchComputer(computer.id, { recoveryNote: null, rebuildConfirmRequired: false });
-    this.recordOperatorEvent({
+    await this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,
       kind: "lifecycle",
@@ -2199,7 +2392,7 @@ export class ComputerService {
         from === "paused" || from === "running" || from === "ready" ? from : "ready";
       this.applyTransition(await this.get(computerId), resumeTo);
       computer = await this.patchComputer(computerId, { latestCheckpoint: ready });
-      this.recordOperatorEvent({
+      await this.recordOperatorEvent({
         computerId: computer.id,
         birdId: computer.birdId,
         kind: "status",
@@ -2222,7 +2415,7 @@ export class ComputerService {
         latestCheckpoint: failed,
         recoveryNote: "checkpoint failed",
       });
-      this.recordOperatorEvent({
+      await this.recordOperatorEvent({
         computerId,
         birdId: current.birdId,
         kind: "status",
@@ -2256,7 +2449,7 @@ export class ComputerService {
       latestCheckpoint: { ...latest, status: priorStatus },
       recoveryNote: note,
     });
-    this.recordOperatorEvent({
+    await this.recordOperatorEvent({
       computerId,
       birdId,
       kind: "cleanup",
@@ -2343,7 +2536,7 @@ export class ComputerService {
           recoveryNote:
             "replacement ready; previous VM destroy failed — retry cleanup with captured providerRef",
         });
-        this.recordOperatorEvent({
+        await this.recordOperatorEvent({
           computerId,
           birdId: current.birdId,
           kind: "cleanup",
@@ -2365,7 +2558,7 @@ export class ComputerService {
       latestCheckpoint: restoredCheckpoint,
       recoveryNote: null,
     });
-    this.recordOperatorEvent({
+    await this.recordOperatorEvent({
       computerId: computer.id,
       birdId: computer.birdId,
       kind: "cleanup",
@@ -2528,42 +2721,224 @@ export class ComputerService {
     }
   }
 
-  private recordOperatorEvent(input: {
+  /**
+   * Rejected MCP and tool calls. A null actor is allowed before authentication.
+   * A failed denial write is alerted and does not turn the denial into success.
+   */
+  async noteDeniedCall(input: {
+    operation: string;
+    errorCode: string;
+    tool?: string;
+    token?: string;
+    preAuth?: boolean;
+    computerId?: string | null;
+    birdId?: string | null;
+    kind?: OperatorEventKind;
+  }): Promise<void> {
+    let computerId = input.computerId ?? null;
+    let birdId = input.birdId ?? null;
+    if (input.preAuth !== true && input.token) {
+      const cap = this.capabilityForToken(input.token);
+      computerId = computerId ?? cap?.computerId ?? null;
+      birdId = birdId ?? cap?.birdId ?? null;
+    }
+    const tool = input.tool && /^[a-z0-9_]{1,64}$/.test(input.tool) ? input.tool : undefined;
+    await this.recordOperatorEvent({
+      computerId,
+      birdId,
+      kind: input.kind ?? "fail-closed",
+      operation: input.operation,
+      success: false,
+      errorCode: input.errorCode,
+      stage: "denial",
+      outcome: "denied",
+      durability: "denial",
+      effectOccurred: false,
+      preAuth: input.preAuth === true,
+      memory: false,
+      metadata: {
+        coverage: "tool",
+        ...(tool ? { tool } : {}),
+      },
+    });
+  }
+
+  private async beginConsequential(input: {
+    computerId: string;
+    birdId: string;
+    kind: OperatorEventKind;
+    operation: string;
+    metadata: ActivityMetadata;
+  }): Promise<{
+    operationId: string;
+    attemptId: string;
+    requestId: string;
+    computerId: string;
+    birdId: string;
+    kind: OperatorEventKind;
+    operation: string;
+    metadata: ActivityMetadata;
+  }> {
+    const ids = await this.recordOperatorEvent({
+      computerId: input.computerId,
+      birdId: input.birdId,
+      kind: input.kind,
+      operation: input.operation,
+      success: false,
+      errorCode: null,
+      stage: "intent",
+      outcome: null,
+      durability: "required",
+      effectOccurred: false,
+      memory: false,
+      metadata: input.metadata,
+    });
+    return { ...ids, ...input };
+  }
+
+  private async finishConsequential(
+    attempt: {
+      operationId: string;
+      attemptId: string;
+      requestId: string;
+      computerId: string;
+      birdId: string;
+      kind: OperatorEventKind;
+      operation: string;
+      metadata: ActivityMetadata;
+    },
+    result: {
+      success: boolean;
+      errorCode: string | null;
+      effectOccurred: boolean;
+      metadata?: ActivityMetadata;
+      kind?: OperatorEventKind;
+      operation?: string;
+    },
+  ): Promise<void> {
+    await this.recordOperatorEvent({
+      computerId: attempt.computerId,
+      birdId: attempt.birdId,
+      kind: result.kind ?? attempt.kind,
+      operation: result.operation ?? attempt.operation,
+      success: result.success,
+      errorCode: result.errorCode,
+      stage: "outcome",
+      outcome: result.success ? "succeeded" : "failed",
+      operationId: attempt.operationId,
+      attemptId: attempt.attemptId,
+      requestId: attempt.requestId,
+      durability: "required",
+      effectOccurred: result.effectOccurred,
+      metadata: result.metadata ?? attempt.metadata,
+    });
+  }
+
+  private async recordOperatorEvent(input: {
     computerId: string | null;
     birdId: string | null;
     kind: OperatorEventKind;
     operation: string;
     success: boolean;
     errorCode: string | null;
-  }): void {
+    stage?: ActivityStage;
+    outcome?: ActivityOutcome | null;
+    operationId?: string;
+    attemptId?: string;
+    requestId?: string;
+    preAuth?: boolean;
+    metadata?: ActivityMetadata;
+    durability?: "required" | "emergency" | "denial";
+    effectOccurred?: boolean;
+    memory?: boolean;
+  }): Promise<{ operationId: string; attemptId: string; requestId: string }> {
+    const ctx = activityAttribution.getStore();
+    const computer = input.computerId ? this.computers.get(input.computerId) : undefined;
+    const preAuth = input.preAuth === true;
+    const operationId = input.operationId ?? newId();
+    const attemptId = input.attemptId ?? newId();
+    const requestId = input.requestId ?? ctx?.requestId ?? newId();
+    const emergency =
+      input.durability === "emergency" ||
+      (input.durability == null && isEmergencyActivityOperation(input.operation));
+    const denial = input.durability === "denial";
+    const stage: ActivityStage | undefined =
+      input.stage ??
+      (emergency ? "emergency" : denial ? "denial" : input.kind === "status" ? undefined : "outcome");
+    let outcome = input.outcome;
+    if (outcome === undefined && stage === "intent") outcome = null;
+    if (outcome === undefined && stage === "denial") outcome = "denied";
+    if (outcome === undefined && (stage === "outcome" || stage === "emergency")) {
+      outcome = input.success ? "succeeded" : "failed";
+    }
     const event: OperatorEvent = {
       id: newId(),
       at: new Date(this.now()).toISOString(),
       computerId: input.computerId,
-      birdId: input.birdId,
+      birdId: preAuth ? null : input.birdId,
       kind: input.kind,
       operation: input.operation,
       success: input.success,
       errorCode: input.errorCode,
     };
-    this.operatorEvents.push(event);
-    if (this.operatorEvents.length > OPERATOR_EVENT_CAP) {
-      this.operatorEvents.splice(0, this.operatorEvents.length - OPERATOR_EVENT_CAP);
+    if (input.memory !== false) {
+      this.operatorEvents.push(event);
+      if (this.operatorEvents.length > OPERATOR_EVENT_CAP) {
+        this.operatorEvents.splice(0, this.operatorEvents.length - OPERATOR_EVENT_CAP);
+      }
     }
-    if (!this.activityStore || input.kind === "status") return;
-    const store = this.activityStore;
-    this.activityPersist = this.activityPersist
-      .catch(() => undefined)
-      .then(async () => {
-        try {
-          await store.append(toActivityEvent(event));
-          if (Math.floor(this.now() / 1000) % 17 === 0) {
-            await store.purgeExpired(this.now()).catch(() => 0);
-          }
-        } catch {
-          /* durable log must not fail the computer action */
-        }
-      });
+    const ids = { operationId, attemptId, requestId };
+    if (!this.activityStore || input.kind === "status" || stage == null) return ids;
+    const tenantId = preAuth ? null : (ctx?.tenantId ?? computer?.flockId ?? null);
+    const actorId = preAuth ? null : (ctx?.actorId ?? input.birdId ?? computer?.birdId ?? null);
+    const ownerId = preAuth ? null : (ctx?.ownerId ?? this.ownerId);
+    const metadata = input.metadata ?? { coverage: "tool" as const };
+    try {
+      await this.activityStore.append(
+        toActivityEvent({
+          ...event,
+          errorCode: event.errorCode,
+          tenantId,
+          actorId,
+          ownerId,
+          requestId,
+          operationId,
+          attemptId,
+          stage,
+          outcome: outcome ?? null,
+          recordedAt: event.at,
+          metadata,
+        }),
+      );
+    } catch (err) {
+      noteActivityCapacityAlert(activityFailureReason(err));
+      if (emergency || denial) return ids;
+      if (stage === "intent" || input.effectOccurred === false) throw new ActivityHistoryUnavailable();
+      try {
+        await this.activityStore.append(
+          toActivityEvent({
+            ...event,
+            id: newId(),
+            success: false,
+            errorCode: "UNRECORDED",
+            tenantId,
+            actorId,
+            ownerId,
+            requestId,
+            operationId,
+            attemptId,
+            stage: "outcome",
+            outcome: "UNCERTAIN",
+            recordedAt: event.at,
+            metadata: { coverage: "tool", effect: "occurred" },
+          }),
+        );
+      } catch (markerErr) {
+        noteActivityCapacityAlert(activityFailureReason(markerErr));
+      }
+      throw new ActivityOutcomeUncertain(operationId, attemptId);
+    }
+    return ids;
   }
 
   pairStatus(computerId: string): OperatorPairStatus {
@@ -2707,21 +3082,43 @@ export class ComputerService {
         );
       }
     }
-    const ref = this.requireProviderRef(computer);
-    await this.touch(computer);
-    const result = await this.provider.act(ref, request);
-    this.recordOperatorEvent({
+    const attempt = await this.beginConsequential({
       computerId: computer.id,
       birdId: computer.birdId,
       kind: "browser",
       operation: "owner-act",
-      success: result.ok,
-      errorCode: result.ok ? null : "OWNER_ACT_FAILED",
+      metadata: { coverage: "tool", actionCount: request.actions.length },
     });
-    return result;
+    let effectStarted = false;
+    try {
+      effectStarted = true;
+      const ref = this.requireProviderRef(computer);
+      await this.touch(computer);
+      const result = await this.provider.act(ref, request);
+      await this.finishConsequential(attempt, {
+        success: result.ok,
+        errorCode: result.ok ? null : "OWNER_ACT_FAILED",
+        effectOccurred: true,
+        metadata: { coverage: "tool", actionCount: request.actions.length, effect: "occurred" },
+      });
+      return result;
+    } catch (err) {
+      if (err instanceof ActivityOutcomeUncertain || err instanceof ActivityHistoryUnavailable) throw err;
+      await this.finishConsequential(attempt, {
+        success: false,
+        errorCode: err instanceof ComputerError ? err.code : "FAILED",
+        effectOccurred: effectStarted,
+        metadata: {
+          coverage: "tool",
+          actionCount: request.actions.length,
+          effect: effectStarted ? "occurred" : "none",
+        },
+      });
+      throw err;
+    }
   }
 
-  noteOwnerDesktop(input: {
+  async noteOwnerDesktop(input: {
     computerId: string;
     operation:
       | "owner-view-start"
@@ -2730,16 +3127,18 @@ export class ComputerService {
       | "owner-takeover-stop";
     success: boolean;
     errorCode?: string | null;
-  }): void {
+  }): Promise<void> {
     const computer = this.computers.get(input.computerId);
     const takeover = input.operation.startsWith("owner-takeover");
-    this.recordOperatorEvent({
+    await this.recordOperatorEvent({
       computerId: input.computerId,
       birdId: computer?.birdId ?? null,
       kind: takeover ? "browser" : "observe",
       operation: input.operation,
       success: input.success,
       errorCode: input.errorCode ?? null,
+      durability: "required",
+      effectOccurred: false,
     });
   }
 }

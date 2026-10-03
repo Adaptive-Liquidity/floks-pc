@@ -322,6 +322,37 @@ export class ControlPlaneBusy extends ComputerError {
   }
 }
 
+/** Intent could not be stored, so the computer action was not started. */
+export class ActivityHistoryUnavailable extends ComputerError {
+  constructor() {
+    super(
+      "ACTIVITY_HISTORY_UNAVAILABLE",
+      "Activity history could not be recorded, so this action was not run.",
+    );
+    this.name = "ActivityHistoryUnavailable";
+  }
+}
+
+/**
+ * The computer effect may already have happened and the outcome row did not stick.
+ * Callers must reconcile this attempt and must not run it again.
+ */
+export class ActivityOutcomeUncertain extends ComputerError {
+  readonly operationId: string;
+  readonly attemptId: string;
+
+  constructor(operationId: string, attemptId: string) {
+    super(
+      "UNCERTAIN",
+      "The computer effect may have occurred. Do not retry this attempt. Reconcile the operation id.",
+      { operationId, attemptId, effect: "occurred", retry: false },
+    );
+    this.name = "ActivityOutcomeUncertain";
+    this.operationId = operationId;
+    this.attemptId = attemptId;
+  }
+}
+
 /** Restart is only legal from stopped, waking, recovery_failed, ready, running, or paused. */
 export class RestartNotAvailable extends ComputerError {
   constructor(state: string) {

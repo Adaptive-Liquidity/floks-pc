@@ -130,6 +130,11 @@ async function handleMcpHttpInner(
     const presented = parseBearer(authorization);
     if (!presented || !digestEquals(sha256Hex(presented), sha256Hex(config.authToken))) {
       opts.logger?.warn("mcp.http_unauthorized", {});
+      await opts.gateway.noteRejected({
+        operation: "mcp_http",
+        errorCode: "UNAUTHORIZED",
+        preAuth: true,
+      });
       res.statusCode = 401;
       res.setHeader("www-authenticate", 'Bearer realm="flok-mcp"');
       res.setHeader("content-type", "application/json");

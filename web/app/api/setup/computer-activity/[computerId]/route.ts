@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   ACTIVITY_RETENTION_DAYS,
+  ActivityHistoryUnavailable,
+  ActivityStoreError,
   decodeActivityCursor,
 } from "../../../../../../src/lib/computers/index";
 import { requireOwnedComputer } from "../../../../../lib/computers/owner";
@@ -34,10 +36,21 @@ export async function GET(
   if (parsed.data.cursor && !decodeActivityCursor(parsed.data.cursor)) {
     return NextResponse.json({ ok: false, message: "Invalid page." }, { status: 400 });
   }
-  const page = await (await getComputerService()).listActivityEvents(owned.computerId, {
-    cursor: parsed.data.cursor ?? null,
-    limit: parsed.data.limit ?? 20,
-  });
+  let page: Awaited<ReturnType<Awaited<ReturnType<typeof getComputerService>>["listActivityEvents"]>>;
+  try {
+    page = await (await getComputerService()).listActivityEvents(owned.computerId, {
+      cursor: parsed.data.cursor ?? null,
+      limit: parsed.data.limit ?? 20,
+    });
+  } catch (err) {
+    if (err instanceof ActivityStoreError || err instanceof ActivityHistoryUnavailable) {
+      return NextResponse.json(
+        { ok: false, code: "ACTIVITY_HISTORY_UNAVAILABLE", message: "Activity history is unavailable." },
+        { status: 503 },
+      );
+    }
+    throw err;
+  }
   return NextResponse.json({
     ok: true,
     events: page.events,

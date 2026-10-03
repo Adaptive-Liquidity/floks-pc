@@ -9,6 +9,8 @@ import {
   ComputerRebuilt,
   ControlPlaneBusy,
   FakeProvider,
+  ActivityHistoryUnavailable,
+  ActivityOutcomeUncertain,
   InvalidActivityCursor,
   MemoryActivityStore,
   MemoryControlPlaneStore,
@@ -117,7 +119,7 @@ describe("computer activity + owner lifecycle", () => {
       content: "secret-file-bytes",
     });
     await service.exec(cap, id, { argv: ["echo", "secret-stdout"] });
-    service.noteHandoffAttempt({ token, operation: "handoff_send" });
+    await service.noteHandoffAttempt({ token, operation: "handoff_send" });
     await service.pauseThisComputer(id);
     await service.wakeThisComputer(id);
 
@@ -186,16 +188,112 @@ describe("computer activity + owner lifecycle", () => {
     assert.equal(empty.events.length, 0);
   });
 
-  it("does not fail pause or exec when the activity store throws", async () => {
+  it("blocks exec when history is down and still pauses, stops, and revokes", async () => {
+    const provider = new FakeProvider();
+    let execs = 0;
+    const origExec = provider.exec.bind(provider);
+    provider.exec = async (ref, request) => {
+      execs += 1;
+      return origExec(ref, request);
+    };
     const boom = new ThrowingActivityStore();
-    const service = new ComputerService(new FakeProvider(), { activityStore: boom });
+    let armed = false;
+    const store: ActivityStore = {
+      async append(event) {
+        boom.appendCalls += 1;
+        if (armed) throw new Error("activity store down");
+        await new MemoryActivityStore().append(event);
+      },
+      async list() {
+        return { events: [], nextCursor: null };
+      },
+      async purgeExpired() {
+        return 0;
+      },
+    };
+    const service = new ComputerService(provider, { activityStore: store });
     const { id, token } = await pairedComputer(service, "bird-boom");
+    armed = true;
     await service.pauseThisComputer(id);
     assert.equal((await service.get(id)).state, "paused");
-    await service.wakeThisComputer(id);
-    const exec = await service.exec(auth(token), id, { argv: ["echo", "still-works"] });
-    assert.equal(exec.exitCode, 0);
+    await assert.rejects(
+      () => service.exec(auth(token), id, { argv: ["echo", "still-works"] }),
+      (err: unknown) => err instanceof ActivityHistoryUnavailable,
+    );
+    const stopped = await service.stopThisComputer(id);
+    assert.equal(stopped.state, "stopped");
+    await service.revokeBoundComputer(id);
+    assert.equal(execs, 0);
     assert.ok(boom.appendCalls > 0);
+  });
+
+  it("does not consume a pair code when intent history fails", async () => {
+    let fail = true;
+    const store: ActivityStore = {
+      async append() {
+        if (fail) throw new Error("activity store down");
+      },
+      async list() {
+        return { events: [], nextCursor: null };
+      },
+      async purgeExpired() {
+        return 0;
+      },
+    };
+    const service = new ComputerService(new FakeProvider(), { activityStore: store });
+    const computer = await service.requestComputer({ birdId: "bird-pair-block", flockId: "flock-pair-block" });
+    const issued = await service.issuePairCode(computer.id);
+    const identity = { birdId: "bird-pair-block", flockId: "flock-pair-block" };
+    await assert.rejects(
+      () => service.pair(issued.code, identity),
+      (err: unknown) => err instanceof ActivityHistoryUnavailable,
+    );
+    fail = false;
+    const paired = await service.pair(issued.code, identity);
+    assert.equal(typeof paired.token, "string");
+  });
+
+  it("returns UNCERTAIN after an effect when the outcome row fails and does not retry", async () => {
+    const provider = new FakeProvider();
+    let execs = 0;
+    const origExec = provider.exec.bind(provider);
+    provider.exec = async (ref, request) => {
+      execs += 1;
+      return origExec(ref, request);
+    };
+    let failOutcomes = false;
+    const events: ActivityEvent[] = [];
+    const store: ActivityStore = {
+      async append(event) {
+        if (failOutcomes && event.stage === "outcome") throw new Error("outcome down");
+        events.push(event);
+      },
+      async list() {
+        return { events: [], nextCursor: null };
+      },
+      async purgeExpired() {
+        return 0;
+      },
+    };
+    const service = new ComputerService(provider, { activityStore: store });
+    const { id, token } = await pairedComputer(service, "bird-uncertain");
+    failOutcomes = true;
+    await assert.rejects(
+      () => service.exec(auth(token), id, { argv: ["echo", "secret-stdout"] }),
+      (err: unknown) =>
+        err instanceof ActivityOutcomeUncertain &&
+        err.code === "UNCERTAIN" &&
+        err.operationId.length > 0 &&
+        err.attemptId.length > 0,
+    );
+    assert.equal(execs, 1);
+    const execIntents = events.filter((event) => event.operation === "exec" && event.stage === "intent");
+    assert.equal(execIntents.length, 1);
+    assert.equal(
+      events.some((event) => event.operation === "exec" && event.stage === "outcome"),
+      false,
+    );
+    assert.equal(JSON.stringify(events).includes("secret-stdout"), false);
   });
 
   it("drops events older than the retention window", () => {
@@ -374,6 +472,18 @@ describe("computer activity + owner lifecycle", () => {
     const after = await pause;
     assert.equal(after.state, "paused");
     provider.wake = origWake;
+  });
+
+  it("flags 0013 as an additive owner-applied history migration", () => {
+    const prior = readFileSync(join(ROOT, "migrations/0012_computer_activity_events.sql"), "utf8");
+    const sql = readFileSync(join(ROOT, "migrations/0013_computer_activity_history.sql"), "utf8");
+    assert.match(prior, /CREATE TABLE IF NOT EXISTS computer_activity_events/);
+    assert.doesNotMatch(sql, /CREATE TABLE IF NOT EXISTS computer_activity_events/);
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS tenant_id/);
+    assert.match(sql, /UNCERTAIN/);
+    assert.match(sql, /staxions_purge_activity_history/);
+    assert.doesNotMatch(sql, /^CREATE ROLE/m);
+    assert.doesNotMatch(sql, /stdout|stderr|screenshot|cookie|pair_code/i);
   });
 
   it("flags 0012 as owner-applied metadata-only SQL", () => {

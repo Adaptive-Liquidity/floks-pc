@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { ComputerService } from "../../../src/lib/computers/index";
+import { activityAttribution } from "../../../src/lib/computers/index";
 import { McpGateway } from "../../../src/lib/mcp/handler";
 import { mcpNegotiatedProtocol } from "../../../src/lib/mcp/http";
 import { publicOriginFromRequest } from "../../lib/auth/callback";
@@ -7,6 +8,7 @@ import { protocolForPurchase, purchaseToolResult } from "../../lib/billing/bot-p
 import { getComputerService } from "../../lib/desks/runtime";
 import { wakeDecisionForComputer } from "../../lib/desks/wake-admission";
 import { bindPairFlock } from "../../lib/mcp-flock";
+import { recordRejectedMcpCall } from "../../lib/activity-rejection";
 import { MCP_INSTANCE_ID, vercelMcpLogger } from "../../lib/mcp-log";
 import { accessClaims, getOauthStore, hashToken } from "../../lib/oauth";
 
@@ -42,6 +44,11 @@ export async function POST(request: Request): Promise<Response> {
   const token = bearer(request);
   const claims = token ? await accessClaims(token) : null;
   if (!claims) {
+    await recordRejectedMcpCall({
+      operation: "mcp_http",
+      errorCode: "UNAUTHORIZED",
+      preAuth: true,
+    });
     return NextResponse.json(
       { error: { code: "UNAUTHORIZED", message: "bearer required" } },
       {
@@ -56,12 +63,28 @@ export async function POST(request: Request): Promise<Response> {
   try {
     body = await request.json();
   } catch {
+    await recordRejectedMcpCall({
+      operation: "mcp_http",
+      errorCode: "PARSE_ERROR",
+      preAuth: false,
+      tenantId: claims.flock,
+      actorId: claims.subject,
+      ownerId: claims.subject,
+    });
     return NextResponse.json(
       { jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } },
       { status: 400 },
     );
   }
   if (!bindPairFlock(body, claims.flock)) {
+    await recordRejectedMcpCall({
+      operation: "mcp_http",
+      errorCode: "FLOCK_MISMATCH",
+      preAuth: false,
+      tenantId: claims.flock,
+      actorId: claims.subject,
+      ownerId: claims.subject,
+    });
     return NextResponse.json(
       {
         jsonrpc: "2.0",
@@ -103,14 +126,24 @@ export async function POST(request: Request): Promise<Response> {
       // Capability lookup failures stay on the existing JSON-RPC path.
     }
   }
-  const result = await (await sharedGateway()).handleJsonRpc(body, {
+  const requestId = crypto.randomUUID().replace(/-/g, "");
+  const result = await activityAttribution.run(
+    {
+      tenantId: claims.flock,
+      actorId: claims.subject,
+      ownerId: claims.subject,
+      requestId,
+    },
+    async () =>
+      (await sharedGateway()).handleJsonRpc(body, {
     authorization: `Bearer oauth:${claims.subject}`,
     ...(protocol ? { protocolVersionHeader: protocol } : {}),
     ...(bound ? { bound } : {}),
     ...(perBotKeys
       ? { perBotKeys: true, account: { subject: claims.subject, flock: claims.flock, origin } }
       : {}),
-  });
+  }),
+  );
   if (result === null) return new Response(null, { status: 202 });
   return NextResponse.json(result, {
     headers: { "Mcp-Protocol-Version": mcpNegotiatedProtocol(result, protocol) },
