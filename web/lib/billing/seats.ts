@@ -10,6 +10,7 @@ import {
 } from "./catalog";
 import { normalizeEmail } from "./plans";
 import {
+  graceProbeIsStale,
   isUndefinedColumnError,
   resetGraceColumnsForTests,
   setGraceColumnsReady,
@@ -444,7 +445,8 @@ export class PostgresSeatStore implements SeatStore {
   }
 
   private async resolveGraceColumns(): Promise<boolean> {
-    if (this.graceColumns !== null) return this.graceColumns;
+    if (this.graceColumns === true) return true;
+    if (this.graceColumns === false && !graceProbeIsStale()) return false;
     try {
       const rows = await this.rawQuery<{ exists?: boolean | string }>(GRACE_PROBE_SQL, []);
       const value = rows[0]?.exists;

@@ -82,6 +82,7 @@ export function previewSession(name: string): SeatSession | null {
     portalReady: true,
     revealedPairCode: null,
     canceledHold: false,
+    reconnectBot: false,
   };
   if (key === "past_due") {
     return { ...base, flockStatus: "past_due" };
@@ -196,6 +197,7 @@ export function parseSeatSession(raw: unknown): SeatSession | null {
     portalReady: asBoolean(obj.portalReady) ?? true,
     revealedPairCode: asString(obj.revealedPairCode) ?? asString(obj.revealed_pair_code),
     canceledHold: asBoolean(obj.canceledHold) ?? asBoolean(obj.canceled_hold) ?? false,
+    reconnectBot: asBoolean(obj.reconnectBot) ?? asBoolean(obj.reconnect_bot) ?? false,
   };
 }
 

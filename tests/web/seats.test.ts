@@ -27,6 +27,7 @@ describe("seat ledger", () => {
     assert.equal(session.seats, 0);
     assert.equal(session.desk, null);
     assert.equal(session.plan, null);
+    assert.equal(session.reconnectBot, false);
   });
 
   it("stores emails lowercase and looks them up case-insensitively", async () => {

@@ -4,7 +4,12 @@ import { mapComputerState } from "../../web/lib/desks/map-state.ts";
 import { ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.js";
 import { createSeat, resetSeatStoreForTests, getSeatStore } from "../../web/lib/billing/seats.ts";
 import { provisionSeatComputers, shutdownSeatComputers } from "../../web/lib/billing/lifecycle.ts";
-import { claimStripeEvent, releaseStripeEvent, resetStripeEventsForTests } from "../../web/lib/billing/stripe-events.ts";
+import {
+  claimStripeEvent,
+  completeStripeEvent,
+  releaseStripeEvent,
+  resetStripeEventsForTests,
+} from "../../web/lib/billing/stripe-events.ts";
 import {
   approvePairCode,
   birdIdForSeat,
@@ -303,6 +308,8 @@ describe("pair keys on FakeProvider", () => {
     assert.equal(open.length, 0);
     assert.equal(issued.code.length > 0, true);
     assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "new");
+    assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "in_flight");
+    await completeStripeEvent("evt_retry");
     assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "duplicate");
     await releaseStripeEvent("evt_retry");
     assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "new");

@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.ts";
 import { handleStripeWebhookRequest } from "../../web/lib/billing/webhook.ts";
-import { createBuyLink } from "../../web/lib/billing/buy-link.ts";
+import { BUY_LINK_TTL_MS, createBuyLink } from "../../web/lib/billing/buy-link.ts";
+import { bindFailedForEmail } from "../../web/lib/billing/bind-purchase.ts";
+import { sessionFromSeats } from "../../web/lib/setup-payload.ts";
+import { SETUP_RECONNECT_BOT } from "../../web/lib/copy.ts";
+import type { ComputerSpec } from "../../src/lib/computers/types.ts";
 import {
   MemoryPendingBindStore,
   getPendingBindStore,
@@ -197,5 +201,135 @@ describe("stripe webhook HTTP", { concurrency: 1 }, () => {
     assert.ok((await getPendingBindStore().get(link.nonce))?.usedAt);
     const bound = await getOauthStore().getAccess(hashToken(exchanged.token));
     assert.equal(bound?.computerId, seats[0]?.computerId);
+  });
+
+  it("returns 200 for a permanent bind failure, keeps the seat, and asks /setup to reconnect", async () => {
+    process.env.STAXIONS_BIND_SECRET = "test-bind-0123456789-abcdef-0123456789";
+    const email = "permbind@example.com";
+    const subject = "user_permbind";
+    const client = registerClient(["https://grok.com/callback"]);
+    await getOauthStore().saveClient(client);
+    const flock = flockIdForEmail(email);
+    const link = await createBuyLink({
+      origin: "https://example.test",
+      email,
+      subject,
+      flock,
+      clientId: client.id,
+      plan: "personal",
+      now: Date.now() - BUY_LINK_TTL_MS - 5_000,
+    });
+    const event = paidCheckoutEvent({
+      id: "cs_perm_bind",
+      email,
+      eventId: "evt_perm_bind",
+      metadata: {
+        oauth_client_id: client.id,
+        subject,
+        flock,
+        bind_nonce: link.nonce,
+      },
+    });
+    const stripe = getStripe();
+    assert.ok(stripe);
+    const payload = JSON.stringify(event);
+    const signature = stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET });
+    const res = await handleStripeWebhookRequest(signedRequest(payload, signature));
+    assert.equal(res.status, 200);
+    const seats = await getSeatStore().listByEmail(email);
+    assert.equal(seats.length, 1);
+    assert.equal(seats[0]?.status, "active");
+    assert.ok(seats[0]?.computerId);
+    const pending = await getPendingBindStore().get(link.nonce);
+    assert.ok(pending?.failedAt);
+    assert.equal(pending?.failReason, "expired");
+    assert.equal(await bindFailedForEmail(email), true);
+    const session = sessionFromSeats({
+      email,
+      seats,
+      desks: [],
+      reconnectBot: await bindFailedForEmail(email),
+    });
+    assert.equal(session.reconnectBot, true);
+    assert.match(SETUP_RECONNECT_BOT, /reconnect your bot/i);
+
+    const replay = await handleStripeWebhookRequest(signedRequest(payload, signature));
+    assert.equal(replay.status, 200);
+    assert.equal(((await replay.json()) as { duplicate?: boolean }).duplicate, true);
+    assert.equal((await getSeatStore().listByEmail(email)).length, 1);
+  });
+
+  it("returns 200 when checkout paid but no live login token can be bound", async () => {
+    process.env.STAXIONS_BIND_SECRET = "test-bind-0123456789-abcdef-0123456789";
+    const email = "nolive@example.com";
+    const subject = "user_nolive";
+    const client = registerClient(["https://grok.com/callback"]);
+    await getOauthStore().saveClient(client);
+    const flock = flockIdForEmail(email);
+    const link = await createBuyLink({
+      origin: "https://example.test",
+      email,
+      subject,
+      flock,
+      clientId: client.id,
+      plan: "personal",
+    });
+    const event = paidCheckoutEvent({
+      id: "cs_no_live",
+      email,
+      eventId: "evt_no_live",
+      metadata: {
+        oauth_client_id: client.id,
+        subject,
+        flock,
+        bind_nonce: link.nonce,
+      },
+    });
+    const stripe = getStripe();
+    assert.ok(stripe);
+    const payload = JSON.stringify(event);
+    const signature = stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET });
+    const res = await handleStripeWebhookRequest(signedRequest(payload, signature));
+    assert.equal(res.status, 200);
+    const seats = await getSeatStore().listByEmail(email);
+    assert.ok(seats[0]?.computerId);
+    assert.equal((await getPendingBindStore().get(link.nonce))?.failReason, "no_live_token");
+    assert.equal(await bindFailedForEmail(email), true);
+  });
+
+  it("returns 409 while the first delivery is still in flight", async () => {
+    process.env.STAXIONS_BIND_SECRET = "test-bind-0123456789-abcdef-0123456789";
+    let release!: () => void;
+    const started = Promise.withResolvers<void>();
+    class HangProvision extends FakeProvider {
+      override async provision(spec: ComputerSpec) {
+        started.resolve();
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return super.provision(spec);
+      }
+    }
+    setComputerServiceForTests(new ComputerService(new HangProvision(), { store: new MemoryControlPlaneStore() }));
+
+    const event = paidCheckoutEvent({ id: "cs_inflight", email: "inflight@example.com", eventId: "evt_inflight" });
+    const stripe = getStripe();
+    assert.ok(stripe);
+    const payload = JSON.stringify(event);
+    const signature = stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET });
+    const firstP = handleStripeWebhookRequest(signedRequest(payload, signature));
+    await started.promise;
+    const second = await handleStripeWebhookRequest(signedRequest(payload, signature));
+    assert.equal(second.status, 409);
+    assert.equal(((await second.json()) as { in_flight?: boolean }).in_flight, true);
+    release();
+    const first = await firstP;
+    assert.equal(first.status, 200);
+    const seats = await getSeatStore().listByEmail("inflight@example.com");
+    assert.equal(seats.length, 1);
+    assert.ok(seats[0]?.computerId);
+    const again = await handleStripeWebhookRequest(signedRequest(payload, signature));
+    assert.equal(again.status, 200);
+    assert.equal(((await again.json()) as { duplicate?: boolean }).duplicate, true);
   });
 });

@@ -4,7 +4,15 @@ import { useEffect, useState } from "react";
 import { useChrome } from "@/components/Chrome";
 import { PayPills } from "@/components/PayPills";
 import { publicConnector, SETUP_ACTIONS } from "@/lib/config";
-import { ACCOUNT_EMPTY, ACCOUNT_HOME_LINE, CANCELED_HOLD, PAST_DUE, WEBHOOK_LAG, ZERO_SEATS } from "@/lib/copy";
+import {
+  ACCOUNT_EMPTY,
+  ACCOUNT_HOME_LINE,
+  CANCELED_HOLD,
+  PAST_DUE,
+  SETUP_RECONNECT_BOT,
+  WEBHOOK_LAG,
+  ZERO_SEATS,
+} from "@/lib/copy";
 import type { SeatSession } from "@/lib/types";
 
 export function SetupDesk({
@@ -46,6 +54,7 @@ export function SetupDesk({
 
       {session.flockStatus === "past_due" ? <p className="banner danger">{PAST_DUE}</p> : null}
       {session.canceledHold ? <p className="banner">{CANCELED_HOLD}</p> : null}
+      {session.reconnectBot ? <p className="banner">{SETUP_RECONNECT_BOT}</p> : null}
       {session.webhookPending ? <p className="banner">{WEBHOOK_LAG}</p> : null}
       {showPay ? (
         <>

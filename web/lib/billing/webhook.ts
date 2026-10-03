@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { bindPurchasedComputer } from "./bind-purchase";
+import { bindPurchasedComputer, recordPermanentBindFailure } from "./bind-purchase";
 import { enforceBillingHold, provisionSeatComputers, resumeSeatComputers } from "./lifecycle";
-import { claimStripeEvent, releaseStripeEvent } from "./stripe-events";
-import { getPendingBindStore } from "./pending-binds";
+import {
+  claimStripeEvent,
+  completeStripeEvent,
+  releaseStripeEvent,
+} from "./stripe-events";
 import {
   applyStripeEvent,
   constructStripeEvent,
@@ -31,15 +34,14 @@ export async function applySeatRuntime(event: Stripe.Event, seat: SeatRecord): P
         computerIds: computers.length > 0 ? computers.map((row) => row.id) : seat.computerIds,
       };
     await resumeSeatComputers(fresh);
-    const bound = await bindPurchasedComputer(event, fresh, computers);
+    const outcome = await bindPurchasedComputer(event, fresh, computers);
+    if (outcome.ok || outcome.kind === "none") return fresh;
     const nonce = checkoutBindNonce(event);
-    if (nonce && !bound) {
-      const pending = await getPendingBindStore().get(nonce);
-      if (pending && pending.usedAt === null) {
-        throw new Error("purchase bind did not complete");
-      }
+    if (outcome.kind === "permanent") {
+      if (nonce) await recordPermanentBindFailure(nonce, outcome.reason);
+      return fresh;
     }
-    return fresh;
+    throw new Error(outcome.reason);
   }
   if (seat.status === "past_due" || seat.status === "canceled") {
     return enforceBillingHold(seat);
@@ -50,14 +52,24 @@ export async function applySeatRuntime(event: Stripe.Event, seat: SeatRecord): P
 export async function handleVerifiedStripeEvent(event: Stripe.Event): Promise<{
   seat: SeatRecord | null;
   duplicate: boolean;
+  inFlight?: boolean;
 }> {
-  if ((await claimStripeEvent(event.id, event.type)) === "duplicate") {
+  const claim = await claimStripeEvent(event.id, event.type);
+  if (claim === "in_flight") {
+    return { seat: null, duplicate: true, inFlight: true };
+  }
+  if (claim === "duplicate") {
     return { seat: null, duplicate: true };
   }
   try {
     const seat = await applyStripeEvent(event);
-    if (!seat) return { seat: null, duplicate: false };
-    return { seat: await applySeatRuntime(event, seat), duplicate: false };
+    if (!seat) {
+      await completeStripeEvent(event.id);
+      return { seat: null, duplicate: false };
+    }
+    const next = await applySeatRuntime(event, seat);
+    await completeStripeEvent(event.id);
+    return { seat: next, duplicate: false };
   } catch (err) {
     await releaseStripeEvent(event.id);
     throw err;
@@ -76,11 +88,16 @@ export async function handleStripeWebhookRequest(request: Request): Promise<Next
       return NextResponse.json({ ok: false, message: "unsigned webhook refused" }, { status: 400 });
     }
     eventId = event.id;
-    if ((await claimStripeEvent(event.id, event.type)) === "duplicate") {
+    const claim = await claimStripeEvent(event.id, event.type);
+    if (claim === "in_flight") {
+      return NextResponse.json({ ok: false, duplicate: true, in_flight: true }, { status: 409 });
+    }
+    if (claim === "duplicate") {
       return NextResponse.json({ ok: true, duplicate: true });
     }
     const seat = await applyStripeEvent(event);
     if (seat) await applySeatRuntime(event, seat);
+    await completeStripeEvent(event.id);
     return NextResponse.json({ ok: true, seatId: seat?.id ?? null });
   } catch (err) {
     if (eventId) await releaseStripeEvent(eventId);

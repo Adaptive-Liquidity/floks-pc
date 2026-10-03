@@ -60,7 +60,7 @@ Put that configuration id in `STRIPE_PORTAL_CONFIGURATION_ID`. Stripe emails rec
 
 ## Migration file (do not apply from this PR)
 
-`migrations/0010_billing_grace.sql` adds `grace_until` and `billing_event_at` on `billing_seats`. Apply it for 72-hour grace to work. The app stays up without it: `/setup`, login, and the Stripe webhook keep reading and writing seats; grace, stale-event ordering, and post-grace sleep are off until those columns exist.
+`migrations/0010_billing_grace.sql` adds `grace_until` and `billing_event_at` on `billing_seats`. Apply it for 72-hour grace to work. The app stays up without it: `/setup`, login, and the Stripe webhook keep reading and writing seats. Without `0010`, grace is zero: `past_due` and `canceled` are held and paused immediately (same as the pre-grace product). A negative schema probe is retried after 60 seconds so applying `0010` under a running server turns grace on without a restart.
 
 Apply only after the owner approves that database, after `0009_pending_binds.sql`. Do not apply `0010` from this PR.
 

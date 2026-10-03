@@ -1413,9 +1413,9 @@ export class ComputerService {
     if (computer.state === "deleted" || computer.state === "deleting") {
       throw new ComputerNotFound(computer.id);
     }
+    if (!(await this.wakeAdmission(computer.id))) throw new ComputerAsleep();
     const kind = await this.classifyProvider(ref);
     if (kind === "up") return this.healToUp(computer);
-    if (!(await this.wakeAdmission(computer.id))) throw new ComputerAsleep();
     const deadline = this.now() + this.wakeBudgetMs();
     computer = this.markWaking(computer);
     await this.persist();
@@ -1814,6 +1814,7 @@ export class ComputerService {
 
   private async wakeThisComputerLocked(computerId: string): Promise<Computer> {
     const current = await this.get(computerId);
+    if (!(await this.wakeAdmission(computerId))) throw new ComputerAsleep();
     if (current.state === "ready" || current.state === "running") return current;
     let computer = this.applyTransition(current, "waking");
     await this.persist();

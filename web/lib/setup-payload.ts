@@ -7,6 +7,7 @@ export function sessionFromSeats(input: {
   desks: DeskRecord[];
   webhookPending?: boolean;
   revealedPairCode?: string | null;
+  reconnectBot?: boolean;
 }): SeatSession {
   const live = input.seats.filter(
     (seat) =>
@@ -35,5 +36,6 @@ export function sessionFromSeats(input: {
     portalReady: Boolean(primary?.stripeCustomerId),
     revealedPairCode: input.revealedPairCode ?? null,
     canceledHold: input.seats.some((seat) => seat.status === "canceled"),
+    reconnectBot: Boolean(input.reconnectBot),
   };
 }

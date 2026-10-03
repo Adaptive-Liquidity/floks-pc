@@ -13,6 +13,8 @@ export type PendingBind = {
   expiresAt: number;
   openedAt: number | null;
   usedAt: number | null;
+  failedAt: number | null;
+  failReason: string | null;
 };
 
 export type PendingBindClaim = "ok" | "used" | "expired" | "missing";
@@ -20,9 +22,11 @@ export type PendingBindClaim = "ok" | "used" | "expired" | "missing";
 export interface PendingBindStore {
   save(row: PendingBind): Promise<void>;
   get(nonce: string): Promise<PendingBind | null>;
+  listByEmail(email: string): Promise<PendingBind[]>;
   listOpenByEmail(email: string, now?: number): Promise<PendingBind[]>;
   claimOpen(nonce: string, now: number): Promise<PendingBindClaim>;
   markUsed(nonce: string, now?: number): Promise<boolean>;
+  markFailed(nonce: string, reason: string, now?: number): Promise<boolean>;
 }
 
 function isOpenPending(row: PendingBind, now: number): boolean {
@@ -35,11 +39,19 @@ export class MemoryPendingBindStore implements PendingBindStore {
   readonly rows = new Map<string, PendingBind>();
 
   async save(row: PendingBind): Promise<void> {
-    this.rows.set(row.nonce, { ...row });
+    this.rows.set(row.nonce, {
+      ...row,
+      failedAt: row.failedAt ?? null,
+      failReason: row.failReason ?? null,
+    });
   }
   async get(nonce: string): Promise<PendingBind | null> {
     const row = this.rows.get(nonce);
     return row ? { ...row } : null;
+  }
+  async listByEmail(email: string): Promise<PendingBind[]> {
+    const key = normalizeEmail(email);
+    return [...this.rows.values()].filter((row) => row.email === key).map((row) => ({ ...row }));
   }
   async listOpenByEmail(email: string, now = Date.now()): Promise<PendingBind[]> {
     const key = normalizeEmail(email);
@@ -61,6 +73,14 @@ export class MemoryPendingBindStore implements PendingBindStore {
     row.usedAt = now;
     return true;
   }
+  async markFailed(nonce: string, reason: string, now = Date.now()): Promise<boolean> {
+    const row = this.rows.get(nonce);
+    if (!row) return false;
+    row.usedAt = row.usedAt ?? now;
+    row.failedAt = now;
+    row.failReason = reason;
+    return true;
+  }
 }
 
 type PgClient = {
@@ -70,7 +90,16 @@ type PgClient = {
 };
 
 export class PostgresPendingBindStore implements PendingBindStore {
+  private readonly failures = new Map<string, { reason: string; at: number }>();
+
   constructor(private readonly databaseUrl: string) {}
+
+  private withFailure(row: PendingBind | null): PendingBind | null {
+    if (!row) return null;
+    const fail = this.failures.get(row.nonce);
+    if (!fail) return row;
+    return { ...row, failedAt: fail.at, failReason: fail.reason };
+  }
 
   private async withClient<T>(fn: (query: PgClient["query"]) => Promise<T>): Promise<T> {
     const pg = (await import("pg")) as unknown as {
@@ -98,7 +127,16 @@ export class PostgresPendingBindStore implements PendingBindStore {
 
   async get(nonce: string): Promise<PendingBind | null> {
     const result = await this.withClient((query) => query(`SELECT * FROM pending_binds WHERE nonce = $1`, [nonce]));
-    return mapBind(result.rows[0]);
+    return this.withFailure(mapBind(result.rows[0]));
+  }
+
+  async listByEmail(email: string): Promise<PendingBind[]> {
+    const result = await this.withClient((query) =>
+      query(`SELECT * FROM pending_binds WHERE email = $1`, [normalizeEmail(email)]),
+    );
+    return result.rows
+      .map((row) => this.withFailure(mapBind(row)))
+      .filter((row): row is PendingBind => row !== null);
   }
 
   async listOpenByEmail(email: string, now = Date.now()): Promise<PendingBind[]> {
@@ -111,7 +149,9 @@ export class PostgresPendingBindStore implements PendingBindStore {
         [normalizeEmail(email), now],
       ),
     );
-    return result.rows.map((row) => mapBind(row)).filter((row): row is PendingBind => row !== null);
+    return result.rows
+      .map((row) => this.withFailure(mapBind(row)))
+      .filter((row): row is PendingBind => row !== null);
   }
 
   async claimOpen(nonce: string, now: number): Promise<PendingBindClaim> {
@@ -141,6 +181,14 @@ export class PostgresPendingBindStore implements PendingBindStore {
     );
     return result.rows.length > 0;
   }
+
+  async markFailed(nonce: string, reason: string, now = Date.now()): Promise<boolean> {
+    const marked = await this.markUsed(nonce, now);
+    const row = await this.get(nonce);
+    if (!row) return false;
+    this.failures.set(nonce, { reason, at: now });
+    return marked || Boolean(row.usedAt);
+  }
 }
 
 function mapBind(row: Record<string, unknown> | undefined): PendingBind | null {
@@ -157,6 +205,8 @@ function mapBind(row: Record<string, unknown> | undefined): PendingBind | null {
     expiresAt: new Date(String(row.expires_at)).getTime(),
     openedAt: row.opened_at ? new Date(String(row.opened_at)).getTime() : null,
     usedAt: row.used_at ? new Date(String(row.used_at)).getTime() : null,
+    failedAt: row.failed_at ? new Date(String(row.failed_at)).getTime() : null,
+    failReason: typeof row.fail_reason === "string" ? row.fail_reason : null,
   };
 }
 

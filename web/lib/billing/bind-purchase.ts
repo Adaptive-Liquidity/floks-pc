@@ -3,7 +3,7 @@ import type { Computer } from "../../../src/lib/computers/index";
 import { flockIdForEmail, getComputerService } from "../desks/runtime";
 import { getOauthStore } from "../oauth";
 import { enforceBillingHold, provisionSeatComputers } from "./lifecycle";
-import { getPendingBindStore } from "./pending-binds";
+import { activeComputerIdsForEmail, getPendingBindStore } from "./pending-binds";
 import { getSeatStore, type SeatRecord } from "./seats";
 
 /** Mint a capability for a computer this flock already owns. The raw token is not stored. */
@@ -18,42 +18,69 @@ export async function issueBoundCapability(
   return { capabilityId: issued.capabilityId, computerHandle: issued.computerHandle };
 }
 
+export type BindOutcome =
+  | { ok: true }
+  | { ok: false; kind: "none" }
+  | { ok: false; kind: "transient"; reason: string }
+  | {
+      ok: false;
+      kind: "permanent";
+      reason: "expired" | "mismatch" | "used" | "missing" | "no_live_token" | "held";
+    };
+
+function permanent(
+  reason: Extract<BindOutcome, { kind: "permanent" }>["reason"],
+): BindOutcome {
+  return { ok: false, kind: "permanent", reason };
+}
+
 /**
  * After the seat's computer exists, attach it to the Bot that started checkout.
- * A bad nonce, subject, or flock leaves the computer in place for /setup.
+ * Permanent nonce/login failures keep the computer for /setup reconnect.
  */
 export async function bindPurchasedComputer(
   event: Stripe.Event,
   seat: SeatRecord,
   computers: Computer[],
-): Promise<boolean> {
-  if (event.type !== "checkout.session.completed") return false;
+): Promise<BindOutcome> {
+  if (event.type !== "checkout.session.completed") return { ok: false, kind: "none" };
   const session = event.data.object as Stripe.Checkout.Session;
   const meta = session.metadata ?? {};
   const nonce = meta.bind_nonce?.trim() ?? "";
-  if (!nonce) return false;
+  if (!nonce) return { ok: false, kind: "none" };
   const subject = meta.subject?.trim() ?? "";
   const flock = meta.flock?.trim() ?? "";
   const clientId = meta.oauth_client_id?.trim() ?? "";
   const pending = await getPendingBindStore().get(nonce);
-  if (!pending || pending.usedAt !== null) return false;
-  if (pending.openedAt !== null && pending.openedAt > pending.expiresAt) return false;
-  if (pending.openedAt === null && pending.expiresAt <= Date.now()) return false;
-  if (pending.subject !== subject || pending.flock !== flock || pending.clientId !== clientId) return false;
-  if (pending.flock !== flockIdForEmail(seat.email)) return false;
+  if (!pending) return permanent("missing");
+  if (pending.usedAt !== null || pending.failedAt !== null) return permanent("used");
+  if (pending.openedAt !== null && pending.openedAt > pending.expiresAt) return permanent("expired");
+  if (pending.openedAt === null && pending.expiresAt <= Date.now()) return permanent("expired");
+  if (pending.subject !== subject || pending.flock !== flock || pending.clientId !== clientId) {
+    return permanent("mismatch");
+  }
+  if (pending.flock !== flockIdForEmail(seat.email)) return permanent("mismatch");
+  if (computers.length === 0) {
+    return { ok: false, kind: "transient", reason: "computer_missing" };
+  }
   const service = await getComputerService();
   if (process.env.FLOK_PER_BOT_KEYS === "true") {
     const open = computers.find((row) => row.flockId === pending.flock && !service.liveBotKey(row.id));
-    if (!open) return false;
-    const attached = await service.attachPurchaseToClaim(nonce, open.id);
-    if (!attached) return false;
-    await getPendingBindStore().markUsed(nonce);
-    return true;
+    if (!open) return permanent("held");
+    try {
+      const attached = await service.attachPurchaseToClaim(nonce, open.id);
+      if (!attached) return permanent("mismatch");
+      await getPendingBindStore().markUsed(nonce);
+      return { ok: true };
+    } catch (err) {
+      console.error("[stripe.bind]", err instanceof Error ? err.message : "bind failed");
+      return { ok: false, kind: "transient", reason: err instanceof Error ? err.message : "bind_failed" };
+    }
   }
   const computer = computers.find((row) => row.flockId === pending.flock);
-  if (!computer) return false;
+  if (!computer) return permanent("mismatch");
   const store = getOauthStore();
-  if (await store.computerHeldByOtherSubject(computer.id, pending.subject)) return false;
+  if (await store.computerHeldByOtherSubject(computer.id, pending.subject)) return permanent("held");
   try {
     const issued = await issueBoundCapability(computer.id, pending.flock, pending.clientId);
     const updated = await store.bindLiveTokens({
@@ -62,13 +89,35 @@ export async function bindPurchasedComputer(
       computerId: issued.computerHandle,
       capabilityId: issued.capabilityId,
     });
-    if (updated < 1) return false;
+    if (updated < 1) return permanent("no_live_token");
     await getPendingBindStore().markUsed(nonce);
-    return true;
+    return { ok: true };
   } catch (err) {
     console.error("[stripe.bind]", err instanceof Error ? err.message : "bind failed");
-    return false;
+    return { ok: false, kind: "transient", reason: err instanceof Error ? err.message : "bind_failed" };
   }
+}
+
+export async function recordPermanentBindFailure(nonce: string, reason: string): Promise<void> {
+  await getPendingBindStore().markFailed(nonce, reason);
+}
+
+export async function bindFailedForEmail(email: string): Promise<boolean> {
+  const rows = await getPendingBindStore().listByEmail(email);
+  if (rows.some((row) => Boolean(row.failReason) || row.failedAt !== null)) return true;
+  const used = rows.some((row) => row.usedAt !== null);
+  if (!used) return false;
+  const ids = await activeComputerIdsForEmail(email);
+  if (ids.length === 0) return false;
+  const oauth = getOauthStore();
+  for (const id of ids) {
+    if (await oauth.liveComputerBinding(id)) return false;
+  }
+  if (process.env.FLOK_PER_BOT_KEYS === "true") {
+    const service = await getComputerService();
+    if (ids.some((id) => Boolean(service.liveBotKey(id)))) return false;
+  }
+  return true;
 }
 
 function uniqueComputerIds(seat: SeatRecord): string[] {
@@ -139,8 +188,10 @@ export async function completeOpenPurchase(input: {
       const pending = await getPendingBindStore().listOpenByEmail(fresh.email);
       const matches = pending.filter((row) => !input.flock || row.flock === input.flock);
       for (const row of matches) {
-        if (await bindPurchasedComputer(syntheticCheckoutCompleted(fresh, row), fresh, computers)) {
-          bound += 1;
+        const outcome = await bindPurchasedComputer(syntheticCheckoutCompleted(fresh, row), fresh, computers);
+        if (outcome.ok) bound += 1;
+        else if (outcome.kind === "permanent") {
+          await recordPermanentBindFailure(row.nonce, outcome.reason);
         }
       }
     } catch (err) {

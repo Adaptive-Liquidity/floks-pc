@@ -8,8 +8,8 @@ import {
 } from "../../../src/lib/computers/index";
 import type { Computer, ComputerPairCode, ComputerProvider } from "../../../src/lib/computers/index";
 import { graceAllowsAccess } from "../billing/grace";
-import { shouldSuspendForCap } from "../billing/metering";
 import { getSeatStore, type SeatRecord } from "../billing/seats";
+import { admitComputerWake } from "./wake-admission";
 import { webControlPlaneStore } from "../store/control-plane-pg";
 import { mapComputerState } from "./map-state";
 import { MemoryPairRevealStore, PostgresPairRevealStore, type PairRevealStore } from "./reveal-store";
@@ -67,13 +67,7 @@ export async function getComputerService(): Promise<ComputerService> {
       const service = new ComputerService(provider, { store });
       service.setWakeAdmission(async (computerId) => {
         try {
-          const seats = await getSeatStore().listAll();
-          const seat = seats.find(
-            (row) => row.computerId === computerId || row.computerIds.includes(computerId),
-          );
-          if (!seat) return true;
-          if (!graceAllowsAccess(seat)) return false;
-          return !shouldSuspendForCap(seat);
+          return await admitComputerWake(computerId);
         } catch {
           return false;
         }

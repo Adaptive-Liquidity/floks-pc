@@ -6,8 +6,17 @@ import {
   graceExpired,
   startGrace,
 } from "../../web/lib/billing/grace.ts";
-import { setGraceColumnsReady } from "../../web/lib/billing/grace-schema.ts";
-import { enforceBillingHold } from "../../web/lib/billing/lifecycle.ts";
+import {
+  GRACE_NEGATIVE_PROBE_TTL_MS,
+  setGraceColumnsReady,
+} from "../../web/lib/billing/grace-schema.ts";
+import { enforceBillingHold, provisionSeatComputers, runComputerMaintenance } from "../../web/lib/billing/lifecycle.ts";
+import { ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.ts";
+import {
+  admitComputerWake,
+  decideWakeAdmission,
+} from "../../web/lib/desks/wake-admission.ts";
+import { resetDeskRuntimeForTests, setComputerServiceForTests } from "../../web/lib/desks/runtime.ts";
 import {
   PostgresSeatStore,
   createSeat,
@@ -59,14 +68,16 @@ function rowFromValues(values: unknown[], hasGrace: boolean): Record<string, unk
 class Pre0010Pg {
   readonly rows = new Map<string, Record<string, unknown>>();
   graceSqlSeen = 0;
+  probeCalls = 0;
 
   constructor(
-    private readonly probeExists: boolean | "throw",
-    private readonly throwOnGraceSql: boolean,
+    public probeExists: boolean | "throw",
+    public throwOnGraceSql: boolean,
   ) {}
 
   query: SeatSqlQuery = async <T>(text: string, values: unknown[]): Promise<T[]> => {
     if (text.includes("information_schema")) {
+      this.probeCalls += 1;
       if (this.probeExists === "throw") throw new Error("information_schema unavailable");
       return [{ exists: this.probeExists }] as T[];
     }
@@ -103,10 +114,13 @@ describe("seats without migration 0010", { concurrency: 1 }, () => {
     process.env.NODE_ENV = "test";
     useTestPriceEnv();
     resetSeatStoreForTests();
+    resetDeskRuntimeForTests();
   });
 
   afterEach(() => {
     resetSeatStoreForTests();
+    setComputerServiceForTests(null);
+    resetDeskRuntimeForTests();
   });
 
   it("uses pre-0010 SQL when information_schema says grace columns are missing", async () => {
@@ -142,8 +156,8 @@ describe("seats without migration 0010", { concurrency: 1 }, () => {
     );
     assert.equal(failed?.status, "past_due");
     assert.equal(failed?.graceUntil, null);
-    assert.equal(graceExpired(failed), false);
-    assert.equal(graceAllowsAccess(failed), true);
+    assert.equal(graceExpired(failed), true);
+    assert.equal(graceAllowsAccess(failed), false);
     const held = await enforceBillingHold(failed);
     assert.equal(held.status, "past_due");
     assert.equal(held.computerId, failed.computerId);
@@ -182,9 +196,97 @@ describe("seats without migration 0010", { concurrency: 1 }, () => {
       status: "canceled",
     });
     assert.equal(startGrace(seat).graceUntil, null);
-    assert.equal(graceExpired({ status: "past_due", graceUntil: null }), false);
-    assert.equal(graceAllowsAccess({ status: "canceled", graceUntil: null }), true);
+    assert.equal(graceExpired({ status: "past_due", graceUntil: null }), true);
+    assert.equal(graceAllowsAccess({ status: "canceled", graceUntil: null }), false);
     const held = await enforceBillingHold({ ...seat, status: "past_due" });
     assert.equal(held.status, "past_due");
+  });
+
+  it("holds past_due and canceled immediately on lifecycle, cron, and wake without 0010", async () => {
+    setGraceColumnsReady(false);
+    const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
+    setComputerServiceForTests(service);
+
+    for (const status of ["past_due", "canceled"] as const) {
+      const paid = await applyStripeEvent(
+        paidCheckoutEvent({
+          id: `cs_zero_${status}`,
+          email: `${status}@pre0010.test`,
+          eventId: `evt_zero_${status}`,
+        }),
+      );
+      assert.ok(paid);
+      const computers = await provisionSeatComputers(paid);
+      assert.equal(computers.length, 1);
+      const computerId = computers[0]?.id ?? "";
+      assert.ok(computerId);
+      assert.equal((await service.get(computerId)).state === "running" || (await service.get(computerId)).state === "ready", true);
+
+      const heldSeat = await getSeatStore().upsert({
+        ...(await getSeatStore().getById(paid.id))!,
+        status,
+        graceUntil: null,
+      });
+      assert.equal(graceExpired(heldSeat), true);
+      assert.equal(graceAllowsAccess(heldSeat), false);
+      const denied = decideWakeAdmission(heldSeat);
+      assert.equal(denied.allow, false);
+      if (!denied.allow) assert.equal(denied.status, 402);
+
+      const afterHold = await enforceBillingHold(heldSeat);
+      assert.equal(afterHold.status, status);
+      assert.equal((await service.get(computerId)).state, "paused");
+
+      const cron = await runComputerMaintenance(Date.now());
+      const row = cron.rows.find((item) => item.computerId === computerId);
+      assert.ok(row);
+      assert.equal(row.action, "suspend");
+      assert.equal((await service.get(computerId)).state, "paused");
+
+      const allowed = await admitComputerWake(computerId);
+      assert.equal(allowed, false);
+      assert.equal((await service.get(computerId)).state, "paused");
+    }
+  });
+
+  it("re-probes missing 0010 after the negative TTL and then caches a positive result", async () => {
+    const pg = new Pre0010Pg(false, false);
+    const store = new PostgresSeatStore("postgres://unused", pg.query);
+    setSeatStoreForTests(store);
+
+    const first = await store.upsert(
+      createSeat({
+        email: "ttl@example.com",
+        plan: "personal",
+        stripeCustomerId: "cus_ttl",
+        stripeCheckoutSessionId: "cs_ttl",
+        graceUntil: new Date(Date.now() + 3600_000).toISOString(),
+      }),
+    );
+    assert.equal(pg.probeCalls, 1);
+    assert.equal(first.graceUntil, null);
+    await store.listByEmail("ttl@example.com");
+    assert.equal(pg.probeCalls, 1, "negative probe is cached until TTL");
+
+    pg.probeExists = true;
+    await store.listByEmail("ttl@example.com");
+    assert.equal(pg.probeCalls, 1, "a fresh 0010 is invisible until the negative TTL");
+
+    setGraceColumnsReady(false, Date.now() - GRACE_NEGATIVE_PROBE_TTL_MS);
+    const again = await store.upsert(
+      createSeat({
+        email: "ttl2@example.com",
+        plan: "personal",
+        stripeCustomerId: "cus_ttl2",
+        stripeCheckoutSessionId: "cs_ttl2",
+        graceUntil: new Date(Date.now() + 3600_000).toISOString(),
+      }),
+    );
+    assert.equal(pg.probeCalls, 2);
+    assert.ok(again.graceUntil);
+
+    const before = pg.probeCalls;
+    await store.listByEmail("ttl2@example.com");
+    assert.equal(pg.probeCalls, before, "a positive probe stays cached");
   });
 });

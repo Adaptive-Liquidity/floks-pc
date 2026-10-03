@@ -2,7 +2,12 @@ import type Stripe from "stripe";
 import { cookies } from "next/headers";
 import { COOKIE_NAME, loadAuthSession } from "./auth/workos";
 import { getSeatStore } from "./billing/seats";
-import { bindPurchasedComputer, completeOpenPurchase } from "./billing/bind-purchase";
+import {
+  bindFailedForEmail,
+  bindPurchasedComputer,
+  completeOpenPurchase,
+  recordPermanentBindFailure,
+} from "./billing/bind-purchase";
 import { enforceBillingHold, provisionSeatComputers } from "./billing/lifecycle";
 import { ensureSeatFromCheckout, getStripe, getStripeCheckoutEmail } from "./billing/stripe";
 import { desksForSeats, getComputerService } from "./desks/runtime";
@@ -36,7 +41,7 @@ async function finishPaidCheckoutForSetup(sessionId: string, email: string) {
   if (!client) return seat;
   try {
     const session = await client.checkout.sessions.retrieve(sessionId);
-    await bindPurchasedComputer(
+    const outcome = await bindPurchasedComputer(
       {
         type: "checkout.session.completed",
         id: `setup:${sessionId}`,
@@ -46,6 +51,10 @@ async function finishPaidCheckoutForSetup(sessionId: string, email: string) {
       seat,
       computers,
     );
+    if (!outcome.ok && outcome.kind === "permanent") {
+      const nonce = session.metadata?.bind_nonce?.trim() ?? "";
+      if (nonce) await recordPermanentBindFailure(nonce, outcome.reason);
+    }
   } catch (err) {
     console.error("[setup.bind]", err instanceof Error ? err.message : err);
   }
@@ -86,7 +95,13 @@ export async function liveSeatSession(email: string, webhookPending = false): Pr
     const client = await getOauthStore().getClient(binding.clientId);
     desk.botName = client?.clientName || "another Bot";
   }
-  return sessionFromSeats({ email, seats, desks, webhookPending });
+  return sessionFromSeats({
+    email,
+    seats,
+    desks,
+    webhookPending,
+    reconnectBot: await bindFailedForEmail(email),
+  });
 }
 
 export async function resolveSetupView(search: {

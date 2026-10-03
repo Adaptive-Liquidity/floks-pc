@@ -103,6 +103,9 @@ export const PAST_DUE =
 export const CANCELED_HOLD =
   "Subscription ended. The computer stays available through the grace period, then sleeps. Files stay. It is not deleted immediately.";
 
+export const SETUP_RECONNECT_BOT =
+  "Reconnect your bot. Reconnect Staxions in Grok and pick a computer on the Allow screen.";
+
 export const DESK_COPY = {
   unused: "Unused. Create a pair key, then approve a pending Bot claim to bind this desk.",
   pairing: "Pairing. The Bot is claiming this desk.",

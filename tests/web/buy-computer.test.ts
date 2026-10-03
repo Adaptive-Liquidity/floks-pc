@@ -461,7 +461,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
       assert.ok(seat);
       const computers = await provisionSeatComputers(seat);
       assert.equal(computers.length > 0, true);
-      assert.equal(await bindPurchasedComputer(event, seat, computers), true);
+      assert.equal((await bindPurchasedComputer(event, seat, computers)).ok, true);
       const bound = await getOauthStore().getAccess(hashToken(token));
       assert.equal(bound?.computerId, computers[0]?.id);
       const status = await callTool(token, "computer_status", {});
@@ -517,7 +517,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
         assert.ok(tamperSeat, item.name);
         const created = await provisionSeatComputers(tamperSeat);
         assert.equal(created.length > 0, true, item.name);
-        assert.equal(await bindPurchasedComputer(tampered, tamperSeat, created), false, item.name);
+        assert.equal((await bindPurchasedComputer(tampered, tamperSeat, created)).ok, false, item.name);
         const row = await getOauthStore().getAccess(hashToken(issued.token));
         assert.equal(row?.computerId, null, item.name);
         const saved = await getSeatStore().getById(tamperSeat.id);
@@ -644,7 +644,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
     const seat = await applyStripeEvent(event);
     assert.ok(seat);
     const computers = await provisionSeatComputers(seat);
-    assert.equal(await bindPurchasedComputer(event, seat, computers), true);
+    assert.equal((await bindPurchasedComputer(event, seat, computers)).ok, true);
     await drive(token);
     const preview = await buyGet(new Request(link.url));
     assert.equal(preview.status, 400);
