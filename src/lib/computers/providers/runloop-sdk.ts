@@ -14,7 +14,7 @@ import {
   ENSURE_SCRIPT_PATH,
   FLOK_DISPLAY,
   FLOK_UI_USER,
-  INTERACTIVE_DIR,
+  OBS_SHOT_DIR,
   argvAsUiUser,
   chromeLaunchArgv,
   pngDimensions,
@@ -65,6 +65,15 @@ import {
   bufferFromUtf8Read,
   utf8RoundtripEquals,
 } from "./runloop-fs.js";
+import {
+  CONTROL_PLANE_BOT_USER_PATH,
+  CONTROL_PLANE_DIR,
+  CONTROL_PLANE_EXECVP_PATH,
+  ENSURE_BOT_USER_SH,
+  FLOK_BOT_USER,
+  argvAsBotUser,
+  isReservedControlPlanePath,
+} from "./runloop-bot-user.js";
 
 const EXECVP_PY = [
   "import os, sys, json, base64",
@@ -79,7 +88,7 @@ const EXECVP_PY = [
   "",
 ].join("\n");
 
-const EXECVP_PATH = `${RUNLOOP_WORKSPACE_ROOT}/.flok/execvp.py`;
+const EXECVP_PATH = CONTROL_PLANE_EXECVP_PATH;
 
 type SdkDevbox = {
   id: string;
@@ -206,6 +215,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   interactiveGuest = false;
   private interactiveStackUp = false;
   private graphicalStack = false;
+  private botUserReady = false;
 
   constructor(
     private readonly box: SdkDevbox,
@@ -218,8 +228,9 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   }
 
   async ensureWorkspace(): Promise<void> {
-    await this.box.cmd.exec(`mkdir -p ${shellSingle(RUNLOOP_WORKSPACE_ROOT + "/.flok")}`);
+    await this.ensureControlPlaneDir();
     await this.box.file.write({ file_path: EXECVP_PATH, contents: EXECVP_PY });
+    await this.ensureBotUser();
     await this.lockRootExecutedAssets();
     const boot = await this.box.cmd.exec("cat /proc/sys/kernel/random/boot_id");
     this.bootId = ((await boot.stdout()) ?? "").trim();
@@ -232,12 +243,14 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
 
   async suspend(): Promise<void> {
     this.interactiveStackUp = false;
+    this.botUserReady = false;
     await this.box.suspend();
     await this.box.awaitSuspended();
   }
 
   async resume(): Promise<void> {
     this.interactiveStackUp = false;
+    this.botUserReady = false;
     await this.box.resume();
     await this.box.awaitRunning();
   }
@@ -301,6 +314,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const r = await this.execPython(
       `import os,json,sys; p=sys.argv[1]; st=os.stat(p); print(json.dumps({"isDir":os.path.isdir(p),"size":st.st_size}))`,
       [path],
+      { privileged: this.privilegedGuestFs(path) },
     );
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     const data = JSON.parse(r.stdout) as { isDir: boolean; size: number };
@@ -313,6 +327,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const r = await this.execPython(
       `import os,json,sys; p=sys.argv[1]; print(json.dumps(sorted(os.listdir(p))))`,
       [path],
+      { privileged: this.privilegedGuestFs(path) },
     );
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true, data: JSON.parse(r.stdout) as string[] };
@@ -338,7 +353,9 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
         }
       }
       if (!buf && expected > 0) {
-        const r = await this.execPython(GUEST_READ_B64_PY, [path]);
+        const r = await this.execPython(GUEST_READ_B64_PY, [path], {
+          privileged: this.privilegedGuestFs(path),
+        });
         if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
         buf = bufferFromBase64Stdout(r.stdout);
       }
@@ -367,13 +384,16 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       }
       if (!st?.ok || !st.data || st.data.size !== body.length) {
         if (body.length > 200_000) return { ok: false, errorCode: "IO_ERROR" };
-        const r = await this.execPython(GUEST_WRITE_B64_PY, [path, body.toString("base64")]);
+        const r = await this.execPython(GUEST_WRITE_B64_PY, [path, body.toString("base64")], {
+          privileged: this.privilegedGuestFs(path),
+        });
         if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
         st = await this.fsStat(path);
       }
       if (!st.ok || !st.data || st.data.size !== body.length) {
         return { ok: false, errorCode: "IO_ERROR" };
       }
+      await this.ownForBot(path);
       return { ok: true };
     } catch (e) {
       return { ok: false, errorCode: classifyFs(e) };
@@ -385,8 +405,9 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     if (!jailed.ok) return jailed;
     const r = await this.execPython(`import os,sys; os.makedirs(sys.argv[1], exist_ok=True)`, [
       path,
-    ]);
+    ], { privileged: this.privilegedGuestFs(path) });
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+    await this.ownForBot(path);
     return { ok: true };
   }
 
@@ -399,6 +420,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
         `p_=pathlib.Path(p);\n` +
         `shutil.rmtree(p) if p_.is_dir() else os.remove(p)`,
       [path],
+      { privileged: this.privilegedGuestFs(path) },
     );
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true };
@@ -412,7 +434,8 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const r = await this.execPython(`import os,sys; os.rename(sys.argv[1], sys.argv[2])`, [
       from,
       to,
-    ]);
+    ], { privileged: this.privilegedGuestFs(from) || this.privilegedGuestFs(to) });
+    if (r.exitCode === 0) await this.ownForBot(to);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true };
   }
@@ -425,7 +448,9 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const r = await this.execPython(
       `import shutil,sys; shutil.copy2(sys.argv[1], sys.argv[2])`,
       [from, to],
+      { privileged: this.privilegedGuestFs(from) || this.privilegedGuestFs(to) },
     );
+    if (r.exitCode === 0) await this.ownForBot(to);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true };
   }
@@ -437,32 +462,17 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
 
   async ensureInteractiveStack(opts?: { browser?: "strict" | "best-effort" }): Promise<void> {
     if (this.interactiveStackUp) {
+      await this.ensureBotUser();
       if (!this.graphicalStack || (await this.xvfbAlive())) {
         await this.finishBrowser(opts);
         return;
       }
       this.interactiveStackUp = false;
     }
-    this.requireFs(
-      await this.fsMkdir(pathPosix.dirname(ENSURE_SCRIPT_PATH)),
-      "ensureInteractiveStack mkdir",
-    );
-    // Take .flok away from flok-ui before writing helpers root will execute.
+    await this.ensureBotUser();
+    await this.writeControlPlaneHelpers();
     await this.lockRootExecutedAssets();
-    this.requireFs(
-      await this.fsWrite(ENSURE_SCRIPT_PATH, Buffer.from(ENSURE_INTERACTIVE_SH, "utf8")),
-      "ensureInteractiveStack write script",
-    );
-    this.requireFs(
-      await this.fsWrite(CDP_HELPER_PATH, Buffer.from(CDP_AX_HELPER_JS, "utf8")),
-      "ensureInteractiveStack write cdp helper",
-    );
-    this.requireFs(
-      await this.fsWrite(CDP_NAV_HELPER_PATH, Buffer.from(CDP_NAV_HELPER_JS, "utf8")),
-      "ensureInteractiveStack write cdp nav",
-    );
     this.requireFs(await this.fsMkdir(BROWSER_PROFILE_DIR), "ensureInteractiveStack mkdir profile");
-    await this.lockRootExecutedAssets();
     const r = await this.exec({
       argv: ["bash", ENSURE_SCRIPT_PATH],
       cwd: RUNLOOP_WORKSPACE_ROOT,
@@ -800,24 +810,89 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     }
   }
 
+  async ensureBotUser(): Promise<void> {
+    if (this.botUserReady) return;
+    await this.ensureControlPlaneDir();
+    await this.box.file.write({
+      file_path: CONTROL_PLANE_BOT_USER_PATH,
+      contents: ENSURE_BOT_USER_SH,
+    });
+    const script = shellSingle(CONTROL_PLANE_BOT_USER_PATH);
+    const result = await this.box.cmd.exec(
+      [
+        `chown root:root ${script}`,
+        `chmod 0700 ${script}`,
+        `bash ${script}`,
+      ].join(" && "),
+    );
+    if ((result.exitCode ?? 1) !== 0) {
+      const detail = sanitizeCdpAxHint((await result.stderr()) || (await result.stdout()), 180);
+      throw new ProviderUnavailable(
+        "runloop",
+        detail
+          ? `could not create unprivileged bot user '${FLOK_BOT_USER}' (${detail})`
+          : `could not create unprivileged bot user '${FLOK_BOT_USER}' on this computer`,
+      );
+    }
+    this.botUserReady = true;
+  }
+
+  private async ensureControlPlaneDir(): Promise<void> {
+    const dir = shellSingle(CONTROL_PLANE_DIR);
+    const mkdir = await this.box.cmd.exec(
+      `mkdir -p ${dir} && chown root:root ${dir} && chmod 0700 ${dir}`,
+    );
+    if ((mkdir.exitCode ?? 1) !== 0) {
+      throw new ProviderUnavailable(
+        "runloop",
+        `control-plane helper dir failed: ${await mkdir.stderr()}`,
+      );
+    }
+  }
+
+  private async writeControlPlaneHelpers(): Promise<void> {
+    await this.ensureControlPlaneDir();
+    await this.box.file.write({
+      file_path: ENSURE_SCRIPT_PATH,
+      contents: ENSURE_INTERACTIVE_SH,
+    });
+    await this.box.file.write({
+      file_path: CDP_HELPER_PATH,
+      contents: CDP_AX_HELPER_JS,
+    });
+    await this.box.file.write({
+      file_path: CDP_NAV_HELPER_PATH,
+      contents: CDP_NAV_HELPER_JS,
+    });
+    await this.box.file.write({
+      file_path: EXECVP_PATH,
+      contents: EXECVP_PY,
+    });
+  }
+
   /**
    * Lock root-executed guest helpers via Devbox-root cmd.exec (not execvp.py).
-   * flok-ui must not be able to replace anything root later runs.
+   * The bot user and flok-ui must not replace anything root later runs.
    */
   private async lockRootExecutedAssets(): Promise<void> {
-    const dir = shellSingle(INTERACTIVE_DIR);
+    const dir = shellSingle(CONTROL_PLANE_DIR);
     const execvp = shellSingle(EXECVP_PATH);
     const script = shellSingle(ENSURE_SCRIPT_PATH);
+    const botUser = shellSingle(CONTROL_PLANE_BOT_USER_PATH);
     const cdpHelper = shellSingle(CDP_HELPER_PATH);
     const cdpNav = shellSingle(CDP_NAV_HELPER_PATH);
+    const leftover = shellSingle(`${RUNLOOP_WORKSPACE_ROOT}/.flok`);
     const lock = await this.box.cmd.exec(
       [
+        `mkdir -p ${dir}`,
         `chown root:root ${dir}`,
-        `chmod 755 ${dir}`,
-        `if [ -f ${execvp} ]; then chown root:root ${execvp} && chmod 755 ${execvp}; fi`,
-        `if [ -f ${script} ]; then chown root:root ${script} && chmod 755 ${script}; fi`,
-        `if [ -f ${cdpHelper} ]; then chown root:root ${cdpHelper} && chmod 755 ${cdpHelper}; fi`,
-        `if [ -f ${cdpNav} ]; then chown root:root ${cdpNav} && chmod 755 ${cdpNav}; fi`,
+        `chmod 0700 ${dir}`,
+        `if [ -f ${execvp} ]; then chown root:root ${execvp} && chmod 0700 ${execvp}; fi`,
+        `if [ -f ${script} ]; then chown root:root ${script} && chmod 0700 ${script}; fi`,
+        `if [ -f ${botUser} ]; then chown root:root ${botUser} && chmod 0700 ${botUser}; fi`,
+        `if [ -f ${cdpHelper} ]; then chown root:root ${cdpHelper} && chmod 0700 ${cdpHelper}; fi`,
+        `if [ -f ${cdpNav} ]; then chown root:root ${cdpNav} && chmod 0700 ${cdpNav}; fi`,
+        `rm -rf ${leftover}`,
       ].join(" && "),
     );
     if ((lock.exitCode ?? 1) !== 0) {
@@ -845,15 +920,34 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const resolved = r.stdout.trim();
     try {
       assertInsideRoot(resolved, RUNLOOP_WORKSPACE_ROOT);
-      return { ok: true };
     } catch {
       return { ok: false, errorCode: "PATH_ESCAPE" };
     }
+    if (isReservedControlPlanePath(resolved)) {
+      return { ok: false, errorCode: "PERMISSION_DENIED" };
+    }
+    return { ok: true };
   }
 
-  private async execPython(code: string, argv: string[]): Promise<RunloopExecResult> {
+  private privilegedGuestFs(path: string): boolean {
+    if (isReservedControlPlanePath(path)) return true;
+    return path === OBS_SHOT_DIR || path.startsWith(`${OBS_SHOT_DIR}/`);
+  }
+
+  private async ownForBot(path: string): Promise<void> {
+    if (this.privilegedGuestFs(path)) return;
+    const quoted = shellSingle(path);
+    await this.box.cmd.exec(`chown ${FLOK_BOT_USER}:${FLOK_BOT_USER} ${quoted} || true`);
+  }
+
+  private async execPython(
+    code: string,
+    argv: string[],
+    opts?: { privileged?: boolean },
+  ): Promise<RunloopExecResult> {
+    const guestArgv = ["python3", "-c", code, ...argv];
     const payload = {
-      argv: ["python3", "-c", code, ...argv],
+      argv: opts?.privileged === true ? guestArgv : argvAsBotUser(guestArgv),
       cwd: RUNLOOP_WORKSPACE_ROOT,
     };
     const b64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64");

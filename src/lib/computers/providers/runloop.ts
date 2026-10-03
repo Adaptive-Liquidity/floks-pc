@@ -60,6 +60,12 @@ import {
   buildAgentComputerLabels,
   resolveAgentComputerBlueprint,
 } from "./interactive-blueprint.js";
+import {
+  applyBotUserToExec,
+  filterBotVisibleListing,
+  isReservedControlPlanePath,
+  reservedFilesystemError,
+} from "./runloop-bot-user.js";
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_OUTPUT = 1_000_000;
@@ -322,17 +328,13 @@ export class RunloopProvider implements ComputerProvider {
     }
 
     const timeoutMs = Math.min(request.timeoutMs ?? 30_000, 600_000);
-    const execReq: {
-      argv: string[];
-      cwd: string;
-      env?: Record<string, string>;
-      timeoutMs: number;
-    } = {
+    await s.ensureBotUser();
+    const execReq = applyBotUserToExec({
       argv: request.argv,
       cwd,
       timeoutMs,
-    };
-    if (request.env) execReq.env = request.env;
+      ...(request.env ? { env: request.env } : {}),
+    });
     try {
       const result = await s.exec(execReq);
       return {
@@ -351,12 +353,16 @@ export class RunloopProvider implements ComputerProvider {
 
   async filesystem(ref: string, request: FsRequest): Promise<FsResult> {
     const s = await this.requireSession(ref);
+    await s.ensureBotUser();
     let canonical: string;
     try {
       canonical = assertInsideRoot(request.path, RUNLOOP_WORKSPACE_ROOT);
     } catch (e) {
       if (e instanceof PathEscape) return { ok: false, errorCode: "PATH_ESCAPE" };
       throw e;
+    }
+    if (isReservedControlPlanePath(canonical)) {
+      return reservedFilesystemError(canonical);
     }
 
     switch (request.operation) {
@@ -368,7 +374,7 @@ export class RunloopProvider implements ComputerProvider {
       case "list": {
         const r = await s.fsList(canonical);
         if (!r.ok) return { ok: false, errorCode: r.errorCode };
-        return { ok: true, data: r.data };
+        return { ok: true, data: filterBotVisibleListing(canonical, r.data ?? []) };
       }
       case "read": {
         const r = await s.fsRead(canonical);
@@ -413,6 +419,9 @@ export class RunloopProvider implements ComputerProvider {
           dest = assertInsideRoot(request.destination, RUNLOOP_WORKSPACE_ROOT);
         } catch {
           return { ok: false, errorCode: "PATH_ESCAPE" };
+        }
+        if (isReservedControlPlanePath(dest)) {
+          return reservedFilesystemError(dest);
         }
         const r =
           request.operation === "move"

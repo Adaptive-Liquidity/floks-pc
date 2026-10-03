@@ -15,6 +15,20 @@ import {
   INTERACTIVE_DIR,
 } from "./runloop-interactive.js";
 import {
+  CONTROL_PLANE_CDP_AX_PATH,
+  CONTROL_PLANE_CDP_NAV_PATH,
+  CONTROL_PLANE_CDP_RUNTIME_DIR,
+  CONTROL_PLANE_DIR,
+  CONTROL_PLANE_EXECVP_PATH,
+  FLOK_BOT_UID,
+  FLOK_BOT_USER,
+  LEGACY_WORKSPACE_HELPER_DIR,
+  argvTouchesReserved,
+  filterBotVisibleListing,
+  isReservedControlPlanePath,
+  unwrapBotArgv,
+} from "./runloop-bot-user.js";
+import {
   assertNoControlPlaneSecrets,
   RUNLOOP_WORKSPACE_ROOT,
   type RunloopControlPlane,
@@ -92,6 +106,9 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
   /** Test hook: Chrome never answers. Best-effort wake continues; strict observe fails. */
   failBrowserEnsure = false;
   suspendCalls = 0;
+  /** How many times ensureBotUser actually ran. Idempotent guest setup. */
+  botUserEnsureCount = 0;
+  botUserReady = false;
   /** Test hook: live-shaped CDP dump. Null keeps the memory-plane fail-closed throw. */
   cdpAxDumpResult: { nodes: unknown[] } | null = null;
   private stackUp = false;
@@ -126,10 +143,12 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     this.suspendCalls += 1;
     this.current = "paused";
     this.stackUp = false;
+    this.botUserReady = false;
   }
 
   async resume(): Promise<void> {
     this.assertAlive();
+    this.botUserReady = false;
     if (this.current === "paused" || this.current === "stopped") {
       this.current = "running";
     }
@@ -152,17 +171,85 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
   }): Promise<RunloopExecResult> {
     this.assertRunning();
     assertNoControlPlaneSecrets(req.env);
-    const argv = req.argv;
+    const unwrapped = unwrapBotArgv(req.argv);
+    const asBot = unwrapped.user === FLOK_BOT_USER;
+    const env = { ...(req.env ?? {}), ...unwrapped.env };
+    return this.runGuestArgv(unwrapped.argv, req.cwd, env, req.timeoutMs, asBot);
+  }
+
+  private async runGuestArgv(
+    argv: string[],
+    cwd: string,
+    env: Record<string, string>,
+    timeoutMs: number,
+    asBot: boolean,
+  ): Promise<RunloopExecResult> {
+    if (asBot && argvTouchesReserved(argv)) {
+      return denied("Permission denied");
+    }
+    if (
+      (argv[0] === "bash" || argv[0] === "sh") &&
+      (argv[1] === "-lc" || argv[1] === "-c") &&
+      typeof argv[2] === "string"
+    ) {
+      return this.runGuestArgv(tokenizeSimpleShell(argv[2]), cwd, env, timeoutMs, asBot);
+    }
     const cmd = argv[0] ?? "";
 
+    if (asBot && (cmd === "sudo" || cmd === "su" || cmd === "pkexec")) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          cmd === "sudo"
+            ? "sudo: a password is required\n"
+            : `${cmd}: Authentication failure\n`,
+        timedOut: false,
+      };
+    }
+    if (cmd === "whoami" || (cmd === "id" && argv[1] === "-un")) {
+      return {
+        exitCode: 0,
+        stdout: `${asBot ? FLOK_BOT_USER : "root"}\n`,
+        stderr: "",
+        timedOut: false,
+      };
+    }
+    if (cmd === "id" && argv[1] === "-u") {
+      const who = argv[2];
+      let uid = asBot ? String(FLOK_BOT_UID) : "0";
+      if (who === "flok-ui") uid = "1500";
+      else if (who === FLOK_BOT_USER) uid = String(FLOK_BOT_UID);
+      else if (who === "root") uid = "0";
+      return {
+        exitCode: 0,
+        stdout: `${uid}\n`,
+        stderr: "",
+        timedOut: false,
+      };
+    }
+    if (cmd === "id") {
+      return {
+        exitCode: 0,
+        stdout: asBot
+          ? `uid=${FLOK_BOT_UID}(${FLOK_BOT_USER}) gid=${FLOK_BOT_UID}(${FLOK_BOT_USER}) groups=${FLOK_BOT_UID}(${FLOK_BOT_USER})\n`
+          : "uid=0(root) gid=0(root) groups=0(root)\n",
+        stderr: "",
+        timedOut: false,
+      };
+    }
     if (cmd === "true") {
       return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+    }
+    if (cmd === "echo") {
+      return { exitCode: 0, stdout: `${argv.slice(1).join(" ")}\n`, stderr: "", timedOut: false };
     }
     if (cmd === "cat" && argv[1] === "/proc/sys/kernel/random/boot_id") {
       return { exitCode: 0, stdout: `${this.bootId}\n`, stderr: "", timedOut: false };
     }
     if (cmd === "cat") {
-      const target = resolveArgPath(argv[1], req.cwd);
+      const target = resolveArgPath(argv[1], cwd);
+      if (asBot && isReservedControlPlanePath(target)) return denied("Permission denied");
       const file = this.fs.get(target);
       if (!file || file.isDir) {
         return { exitCode: 1, stdout: "", stderr: "cat: not found\n", timedOut: false };
@@ -170,16 +257,30 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
       return { exitCode: 0, stdout: file.content.toString("utf8"), stderr: "", timedOut: false };
     }
     if (cmd === "pwd") {
-      return { exitCode: 0, stdout: `${req.cwd}\n`, stderr: "", timedOut: false };
+      return { exitCode: 0, stdout: `${cwd}\n`, stderr: "", timedOut: false };
     }
     if (cmd === "printenv") {
       const key = argv[1];
-      const val = key && req.env ? (req.env[key] ?? "") : "";
+      const val = key ? (env[key] ?? "") : "";
       return { exitCode: 0, stdout: val, stderr: "", timedOut: false };
+    }
+    if (cmd === "ls") {
+      return this.simLs(argv, cwd, asBot);
+    }
+    if (cmd === "find") {
+      return this.simFind(argv, cwd, asBot);
+    }
+    if (cmd === "rm" || cmd === "chmod" || cmd === "chown" || cmd === "touch" || cmd === "mkdir") {
+      if (asBot && argvTouchesReserved(argv)) return denied("Permission denied");
+      const target = argv.find((a) => a.startsWith("/") || (!a.startsWith("-") && a !== cmd));
+      if (target && asBot && isReservedControlPlanePath(resolveArgPath(target, cwd))) {
+        return denied("Permission denied");
+      }
+      return { exitCode: 1, stdout: "", stderr: `${cmd}: not permitted\n`, timedOut: false };
     }
     if (cmd === "sleep") {
       const sec = Number(argv[1] ?? "0");
-      if (sec * 1000 > req.timeoutMs) {
+      if (sec * 1000 > timeoutMs) {
         return { exitCode: 124, stdout: "", stderr: "timed out", timedOut: true };
       }
       return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
@@ -281,6 +382,20 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     return name;
   }
 
+  async ensureBotUser(): Promise<void> {
+    this.assertAlive();
+    this.botUserEnsureCount += 1;
+    if (this.botUserReady) return;
+    for (const key of [...this.fs.keys()]) {
+      if (key === LEGACY_WORKSPACE_HELPER_DIR || key.startsWith(`${LEGACY_WORKSPACE_HELPER_DIR}/`)) {
+        this.fs.delete(key);
+      }
+    }
+    await this.fsMkdir(CONTROL_PLANE_DIR);
+    await this.fsMkdir(INTERACTIVE_DIR);
+    this.botUserReady = true;
+  }
+
   async ensureInteractiveStack(opts?: { browser?: "strict" | "best-effort" }): Promise<void> {
     this.assertAlive();
     if (this.failEnsureOnce) {
@@ -290,6 +405,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     if (this.current !== "running") {
       throw new Error(`runloop devbox ${this.id} is ${this.current}`);
     }
+    await this.ensureBotUser();
     if (!this.stackUp) {
       this.stackStarts += 1;
       this.stackUp = true;
@@ -357,6 +473,94 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
   /** Test helper: simulate suspend discarding RAM daemons. */
   markStackDown(): void {
     this.stackUp = false;
+    this.botUserReady = false;
+  }
+
+  /** Test helper: leftover workspace helpers from a pre-change computer. */
+  plantLegacyHelpers(): void {
+    this.fs.set(LEGACY_WORKSPACE_HELPER_DIR, { isDir: true, content: Buffer.alloc(0) });
+    this.fs.set(`${LEGACY_WORKSPACE_HELPER_DIR}/execvp.py`, {
+      isDir: false,
+      content: Buffer.from("import os, sys, json\nlegacy-execvp", "utf8"),
+    });
+    this.fs.set(`${LEGACY_WORKSPACE_HELPER_DIR}/cdp-ax.mjs`, {
+      isDir: false,
+      content: Buffer.from("legacy-cdp", "utf8"),
+    });
+    this.botUserReady = false;
+  }
+
+  /** Test helper: root-owned helpers that must stay invisible to the bot user. */
+  plantControlPlaneHelpers(): void {
+    this.fs.set(CONTROL_PLANE_DIR, { isDir: true, content: Buffer.alloc(0) });
+    this.fs.set(CONTROL_PLANE_EXECVP_PATH, {
+      isDir: false,
+      content: Buffer.from("import os, sys, json\nexecvp", "utf8"),
+    });
+    this.fs.set(CONTROL_PLANE_CDP_AX_PATH, {
+      isDir: false,
+      content: Buffer.from("cdp-ax-helper", "utf8"),
+    });
+    this.fs.set(CONTROL_PLANE_CDP_NAV_PATH, {
+      isDir: false,
+      content: Buffer.from("cdp-nav-helper", "utf8"),
+    });
+    this.fs.set(CONTROL_PLANE_CDP_RUNTIME_DIR, { isDir: true, content: Buffer.alloc(0) });
+    this.fs.set(`${CONTROL_PLANE_CDP_RUNTIME_DIR}/ws`, {
+      isDir: false,
+      content: Buffer.from("cdp-ws", "utf8"),
+    });
+  }
+
+  private simLs(argv: string[], cwd: string, asBot: boolean): RunloopExecResult {
+    const flags = argv.filter((a) => a.startsWith("-"));
+    const paths = argv.slice(1).filter((a) => !a.startsWith("-"));
+    const target = resolveArgPath(paths[0] ?? cwd, cwd);
+    if (asBot && isReservedControlPlanePath(target)) return denied("Permission denied");
+    const dir = this.fs.get(target);
+    if (!dir || !dir.isDir) {
+      return { exitCode: 2, stdout: "", stderr: "ls: cannot access\n", timedOut: false };
+    }
+    const prefix = target.endsWith("/") ? target : `${target}/`;
+    const children = new Set<string>();
+    for (const key of this.fs.keys()) {
+      if (!key.startsWith(prefix)) continue;
+      const name = key.slice(prefix.length).split("/")[0];
+      if (name) children.add(name);
+    }
+    let names = filterBotVisibleListing(target, [...children].sort());
+    if (!flags.some((f) => f.includes("a"))) {
+      names = names.filter((name) => !name.startsWith("."));
+    }
+    return {
+      exitCode: 0,
+      stdout: names.length ? `${names.join("\n")}\n` : "",
+      stderr: "",
+      timedOut: false,
+    };
+  }
+
+  private simFind(argv: string[], cwd: string, asBot: boolean): RunloopExecResult {
+    const startRaw = findStartPath(argv);
+    const start = resolveArgPath(startRaw, cwd);
+    if (asBot && isReservedControlPlanePath(start)) return denied("Permission denied");
+    const nameIdx = argv.indexOf("-name");
+    const namePat = nameIdx >= 0 ? argv[nameIdx + 1] : undefined;
+    const hits: string[] = [];
+    for (const key of this.fs.keys()) {
+      if (asBot && isReservedControlPlanePath(key)) continue;
+      if (start !== "/" && key !== start && !key.startsWith(`${start}/`)) continue;
+      if (start === "/" && isReservedControlPlanePath(key)) continue;
+      const base = key.slice(key.lastIndexOf("/") + 1);
+      if (namePat && base !== namePat) continue;
+      hits.push(key);
+    }
+    return {
+      exitCode: 0,
+      stdout: hits.length ? `${hits.sort().join("\n")}\n` : "",
+      stderr: "",
+      timedOut: false,
+    };
   }
 
   private assertAlive(): void {
@@ -385,6 +589,54 @@ function resolveArgPath(userPath: string | undefined, cwd: string): string {
   if (!userPath) throw new PathEscape("");
   if (userPath.startsWith("/")) return pathPosix.normalize(userPath);
   return pathPosix.normalize(pathPosix.join(cwd, userPath));
+}
+
+function denied(message: string): RunloopExecResult {
+  return { exitCode: 1, stdout: "", stderr: `${message}\n`, timedOut: false };
+}
+
+function tokenizeSimpleShell(command: string): string[] {
+  const trimmed = command.trim();
+  if (!trimmed) return [];
+  const out: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  for (const ch of trimmed) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else current += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current) out.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (current) out.push(current);
+  return out;
+}
+
+function findStartPath(argv: string[]): string {
+  let skipValue = false;
+  for (const arg of argv.slice(1)) {
+    if (skipValue) {
+      skipValue = false;
+      continue;
+    }
+    if (arg === "-name" || arg === "-path" || arg === "-type") {
+      skipValue = true;
+      continue;
+    }
+    if (arg.startsWith("-")) continue;
+    return arg;
+  }
+  return "/";
 }
 
 /** 1×1 PNG. Memory-plane screenshot stub — not a real display capture. */

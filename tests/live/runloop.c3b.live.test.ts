@@ -18,7 +18,6 @@ import { RunloopProvider } from "../../src/lib/computers/providers/index.js";
 import type { ExecResult } from "../../src/lib/computers/types.js";
 import {
   BROWSER_PROFILE_DIR,
-  CHROME_READY_PROBE_PY,
   CHROME_READY_TIMEOUT_MS,
   DISPLAY_HEIGHT,
   DISPLAY_WIDTH,
@@ -26,12 +25,14 @@ import {
   chromeHasUserDataDir,
   chromeProfileHasBrowserState,
   chromeSandboxDisabled,
-  formatChromeReadyFailure,
-  parseChromeReadyEvidence,
   pngDimensions,
-  pollUntilChromeReady,
-  type ChromeReadyEvidence,
 } from "../../src/lib/computers/providers/runloop-interactive.js";
+import {
+  CONTROL_PLANE_DIR,
+  CONTROL_PLANE_EXECVP_PATH,
+  FLOK_BOT_UID,
+  FLOK_BOT_USER,
+} from "../../src/lib/computers/providers/runloop-bot-user.js";
 
 const LIVE = process.env.FLOK_LIVE_RUNLOOP_C3B_TEST === "1";
 const FIXTURE_WORKSPACE = "/home/user/flok/c3b-fixture.html";
@@ -76,70 +77,43 @@ async function mustExec(
   return r;
 }
 
-function evidenceFromProbeStdout(stdout: string, stderr: string, stage: string): ChromeReadyEvidence {
-  const trimmed = stdout.trim();
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  assert.ok(
-    start >= 0 && end > start,
-    `${stage}: chrome probe did not print JSON\nstdout=${stdout}\nstderr=${stderr}`,
-  );
-  try {
-    return parseChromeReadyEvidence(trimmed.slice(start, end + 1));
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `${stage}: chrome probe JSON parse failed: ${detail}\nstdout=${stdout}\nstderr=${stderr}`,
-    );
-  }
-}
-
-async function awaitChromeReady(
-  p: RunloopProvider,
-  ref: string,
-  stage: string,
-): Promise<ChromeReadyEvidence> {
-  const { result, evidence } = await pollUntilChromeReady(
-    async () => {
-      const r = await p.exec(ref, {
-        argv: ["python3", "-c", CHROME_READY_PROBE_PY],
-        timeoutMs: 15_000,
-      });
-      assert.equal(
-        r.exitCode,
-        0,
-        `${stage}: chrome readiness probe failed\nstdout=${r.stdout}\nstderr=${r.stderr}`,
+/**
+ * Chrome readiness as the bot user. computer_exec is unprivileged `flok`, so the
+ * root-only CHROME_READY_PROBE_PY is not used here. pgrep sees flok-ui Chrome;
+ * computer_fs lists the profile via the control-plane file API.
+ */
+async function awaitChromeReady(p: RunloopProvider, ref: string, stage: string): Promise<void> {
+  const deadline = Date.now() + CHROME_READY_TIMEOUT_MS;
+  let last = "";
+  for (;;) {
+    const proc = await p.exec(ref, {
+      argv: ["pgrep", "-u", "flok-ui", "-a", "google-chrome"],
+      timeoutMs: 10_000,
+    });
+    const cmdlines = (proc.stdout || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.includes("pgrep"));
+    const listed = await p.filesystem(ref, {
+      operation: "list",
+      path: BROWSER_PROFILE_DIR,
+    });
+    const entries = listed.ok && Array.isArray(listed.data) ? (listed.data as string[]) : [];
+    last = `exit=${proc.exitCode} cmdlines=${cmdlines.join(" | ") || "(none)"} profile=${JSON.stringify(entries)}`;
+    const ours = cmdlines.filter((c) => /google-chrome/.test(c) || chromeHasUserDataDir(c));
+    if (ours.some(chromeSandboxDisabled) || ours.some(chromeHasNoSandbox)) {
+      assert.fail(`${stage}: Chrome sandbox disabled\n${last}`);
+    }
+    if (ours.some(chromeHasUserDataDir) && chromeProfileHasBrowserState(entries)) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      assert.fail(
+        `${stage}: Chrome not ready via flok-visible pgrep + computer_fs profile\n${last}`,
       );
-      return evidenceFromProbeStdout(r.stdout, r.stderr, stage);
-    },
-    { requireProfile: true },
-  );
-  if (!result.ready) {
-    assert.fail(`${stage}: ${formatChromeReadyFailure(result, evidence)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  const ours = evidence.chromeCmdlines.filter(
-    (c) => /google-chrome/.test(c) || chromeHasUserDataDir(c),
-  );
-  assert.ok(
-    ours.some(chromeHasUserDataDir),
-    `${stage}: Chrome ready but --user-data-dir missing\n${formatChromeReadyFailure(result, evidence)}`,
-  );
-  assert.equal(
-    ours.some(chromeSandboxDisabled),
-    false,
-    `${stage}: Chrome sandbox disabled\n${formatChromeReadyFailure(result, evidence)}`,
-  );
-  assert.equal(
-    ours.some(chromeHasNoSandbox),
-    false,
-    `${stage}: Chrome cmdline contains --no-sandbox\n${formatChromeReadyFailure(result, evidence)}`,
-  );
-  assert.ok(
-    chromeProfileHasBrowserState(evidence.profileEntries) ||
-      chromeProfileHasBrowserState(evidence.profileEntriesUi),
-    `${stage}: Chrome process/window up but profile not initialized\n${formatChromeReadyFailure(result, evidence)}`,
-  );
-  return evidence;
 }
 
 describe("Runloop C3B live interactive Devbox", { skip: !LIVE }, () => {
@@ -170,6 +144,25 @@ describe("Runloop C3B live interactive Devbox", { skip: !LIVE }, () => {
       const a = await p.provision({ birdId: "c3b-live", flockId: "flock-live" });
       refs.push(a.providerRef);
       assert.ok(a.providerRef, "provision: missing providerRef");
+
+      const who = await mustExec(p, a.providerRef, ["whoami"], "bot whoami");
+      assert.equal(who.stdout.trim(), FLOK_BOT_USER, "computer_exec must run as flok, not root");
+      const botUid = await mustExec(p, a.providerRef, ["id", "-u"], "bot uid");
+      assert.equal(botUid.stdout.trim(), String(FLOK_BOT_UID), "computer_exec uid must be 1501");
+      const sudo = await p.exec(a.providerRef, { argv: ["sudo", "-n", "whoami"], timeoutMs: 10_000 });
+      assert.notEqual(sudo.exitCode, 0, "passwordless sudo must not be available");
+      assert.doesNotMatch(sudo.stdout, /^root$/m);
+      const helper = await p.exec(a.providerRef, {
+        argv: ["cat", CONTROL_PLANE_EXECVP_PATH],
+        timeoutMs: 10_000,
+      });
+      assert.notEqual(helper.exitCode, 0, "bot must not read /var/lib/flok helpers");
+      assert.doesNotMatch(helper.stdout, /import os, sys, json/);
+      const helperLs = await p.exec(a.providerRef, {
+        argv: ["ls", "-a", CONTROL_PLANE_DIR],
+        timeoutMs: 10_000,
+      });
+      assert.notEqual(helperLs.exitCode, 0, "bot must not list /var/lib/flok");
 
       const tools = await mustExec(
         p,
@@ -227,16 +220,21 @@ describe("Runloop C3B live interactive Devbox", { skip: !LIVE }, () => {
       const axRoot = axNodes?.find((node) => node.role === "RootWebArea");
       assert.equal(axRoot?.name, "Example Domain");
 
-      const hiddenFixture = await p.filesystem(a.providerRef, {
+      const workspaceList = await p.filesystem(a.providerRef, {
+        operation: "list",
+        path: "/home/user/flok",
+      });
+      assert.equal(workspaceList.ok, true);
+      assert.equal(
+        Array.isArray(workspaceList.data) && workspaceList.data.includes(".flok"),
+        false,
+        "customer workspace must not list leftover control-plane .flok",
+      );
+      const hiddenHelpers = await p.filesystem(a.providerRef, {
         operation: "list",
         path: "/home/user/flok/.flok",
       });
-      assert.equal(hiddenFixture.ok, true);
-      assert.equal(
-        Array.isArray(hiddenFixture.data) && hiddenFixture.data.includes("fixture.html"),
-        false,
-        "customer .flok must not contain fixture.html",
-      );
+      assert.equal(hiddenHelpers.ok, false, "workspace .flok must not be readable via computer_fs");
 
       const wroteFixture = await p.filesystem(a.providerRef, {
         operation: "write",
@@ -316,6 +314,8 @@ describe("Runloop C3B live interactive Devbox", { skip: !LIVE }, () => {
 
       await p.pause(a.providerRef);
       await p.wake(a.providerRef);
+      const whoAfter = await mustExec(p, a.providerRef, ["whoami"], "bot whoami after wake");
+      assert.equal(whoAfter.stdout.trim(), FLOK_BOT_USER, "existing computer must still drop to flok after wake");
 
       const kept = await p.filesystem(a.providerRef, {
         operation: "read",

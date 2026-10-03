@@ -601,7 +601,7 @@ describe("screen truth and fixture removal", () => {
 
   it("keeps the fixture out of customer source and starts a visible background", () => {
     assert.match(ENSURE_INTERACTIVE_SH, /xsetroot -solid '#1f2933'/);
-    assert.match(ENSURE_INTERACTIVE_SH, /rm -f \/home\/user\/flok\/\.flok\/fixture\.html/);
+    assert.match(ENSURE_INTERACTIVE_SH, /rm -rf \/home\/user\/flok\/\.flok/);
     const banned = ["FLOKS C3B fixture", "FIXTURE_HTML", "fixture.html"];
     for (const dir of ["src", "web"]) {
       for (const file of filesUnder(join(root, dir))) {

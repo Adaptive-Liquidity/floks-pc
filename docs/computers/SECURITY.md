@@ -87,6 +87,24 @@ Devbox remains root so Docker-in-Docker still works. `--no-sandbox` is not
 used. Browser profile `/home/user/flok/.browser/profile` is `700` and owned by
 `flok-ui`. x11vnc/noVNC bind `127.0.0.1` only.
 
+## Guest privilege split
+
+Three identities on a paid Agent Computer:
+
+| Identity | Role |
+|----------|------|
+| `root` | Control plane only: ensure, CDP helpers, Devbox DnD. Never the bot default. |
+| `flok-ui` (uid 1500) | Xvfb, Openbox, Chrome, screenshots, xdotool. |
+| `flok` (uid 1501) | Default for `computer_exec` and `computer_fs`. Home / cwd `/home/user/flok`. |
+
+**Sudo is not offered.** There is no passwordless sudo, no `sudoers.d` drop-in, and `flok` is not in group `sudo`. `sudo` / `su` / `pkexec` fail closed. This is a product decision, not a missing feature.
+
+Control-plane helpers (`execvp.py`, `ensure-interactive.sh`, `cdp-ax.mjs`, `cdp-nav.mjs`) live in `/var/lib/flok` (root:root, mode `0700`). They are not in the customer workspace file view and are not readable, writable, or deletable by `flok`. Leftover `/home/user/flok/.flok` from older computers is removed on ensure. `/run/flok-cdp` stays root `0700`.
+
+Existing computers created before this change do **not** need a blueprint rebuild. `ensureBotUser()` runs on provision, wake, exec, and fs: it creates `flok` if missing, locks `/var/lib/flok`, and deletes leftover workspace helpers. If `useradd` / `runuser` cannot create the user, the operation fails closed with a clear error instead of staying root.
+
+Blueprint definition changes that add `flok` to the image are optional documentation of the desired end state. **Do not rebuild the blueprint for this change.**
+
 Authenticated takeover (single-use, short-lived signed URL) is **deferred**, not L0/L1. Never exposes provider credentials. C7/L0 landed loopback CDP observe only; it did **not** land VNC.
 
 ## Provider secrets

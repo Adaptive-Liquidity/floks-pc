@@ -1,0 +1,78 @@
+#!/usr/bin/env node
+/**
+ * Exercise unprivileged-bot-user paths against `tsc` dist output.
+ * Minifiers have broken Function.toString() guest scripts here before.
+ * Memory plane only — not live Runloop proof.
+ */
+import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const distBot = join(root, "dist/lib/computers/providers/runloop-bot-user.js");
+const distIndex = join(root, "dist/lib/computers/index.js");
+const distMcp = join(root, "dist/lib/mcp/tools.js");
+
+if (!existsSync(distBot) || !existsSync(distIndex) || !existsSync(distMcp)) {
+  throw new Error("dist/ missing — run `npm run build` first");
+}
+
+const src = readFileSync(distBot, "utf8");
+assert.equal(src.includes("Function.toString"), false);
+assert.match(src, /nosudo=1/);
+assert.match(src, /useradd -M -u/);
+assert.match(src, /\/var\/lib\/flok/);
+
+const bot = await import(pathToFileURL(distBot).href);
+assert.equal(bot.FLOK_BOT_USER, "flok");
+assert.equal(bot.FLOK_BOT_UID, 1501);
+assert.deepEqual(bot.argvAsBotUser(["whoami"]).slice(0, 5), [
+  "runuser",
+  "-u",
+  "flok",
+  "--",
+  "env",
+]);
+assert.equal(typeof bot.ENSURE_BOT_USER_SH, "string");
+assert.match(bot.ENSURE_BOT_USER_SH, /nosudo=1/);
+assert.doesNotMatch(bot.ENSURE_BOT_USER_SH, /NOPASSWD/);
+assert.equal(bot.isReservedControlPlanePath("/var/lib/flok/execvp.py"), true);
+assert.equal(bot.isReservedControlPlanePath("/home/user/flok/.flok/cdp-ax.mjs"), true);
+assert.equal(bot.isReservedControlPlanePath("/run/flok-cdp/ws"), true);
+assert.equal(bot.isReservedControlPlanePath("/home/user/flok/notes.txt"), false);
+
+const computers = await import(pathToFileURL(distIndex).href);
+const plane = new computers.MemoryRunloopControlPlane();
+const p = new computers.RunloopProvider({ client: plane, blueprint: "memory-linux-vm" });
+const a = await p.provision({ birdId: "prod-bot", flockId: "f" });
+const who = await p.exec(a.providerRef, { argv: ["whoami"] });
+assert.equal(who.stdout.trim(), "flok");
+const denied = await p.filesystem(a.providerRef, {
+  operation: "read",
+  path: "/var/lib/flok/execvp.py",
+});
+assert.equal(denied.ok, false);
+const leftover = await p.filesystem(a.providerRef, {
+  operation: "list",
+  path: "/home/user/flok/.flok",
+});
+assert.equal(leftover.ok, false);
+const obs = await p.observe(a.providerRef, { includeScreenshot: true });
+assert.equal(obs.screenWidth, 1440);
+assert.ok(obs.screenshotBase64 && obs.screenshotBase64.length > 10);
+
+const mcp = await import(pathToFileURL(distMcp).href);
+assert.equal(mcp.MCP_TOOL_NAMES.length, 8);
+assert.deepEqual([...mcp.MCP_TOOL_NAMES], [
+  "computer_pair",
+  "computer_status",
+  "computer_exec",
+  "computer_fs",
+  "computer_observe",
+  "computer_act",
+  "handoff_send",
+  "handoff_receive",
+]);
+
+console.log("exercise-bot-user-prod: ok (memory plane, not live Runloop)");

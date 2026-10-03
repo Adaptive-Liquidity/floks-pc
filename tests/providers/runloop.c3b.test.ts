@@ -167,8 +167,12 @@ describe("C3B Dockerfile and ensure contract", () => {
       /chmod 700 \/home\/user\/flok\/\.browser \/home\/user\/flok\/\.browser\/profile/,
     );
     assert.equal(/^(RUN|CMD|ENTRYPOINT).*(--no-sandbox)/m.test(dockerfile), false);
-    assert.match(dockerfile, /chown root:root \/home\/user\/flok\/\.flok/);
+    assert.match(dockerfile, /chown root:root \/var\/lib\/flok/);
+    assert.match(dockerfile, /chmod 0700 \/var\/lib\/flok/);
+    assert.match(dockerfile, /useradd -M -u 1501/);
+    assert.match(dockerfile, /BLUEPRINT REBUILD NOT REQUIRED/);
     assert.doesNotMatch(dockerfile, /chown -R flok-ui:flok-ui[^\n]*\.flok/);
+    assert.doesNotMatch(dockerfile, /NOPASSWD|sudoers/);
   });
 
   it("ensure script is localhost-only, flok-ui only, and restarts X after resume", () => {
@@ -184,7 +188,9 @@ describe("C3B Dockerfile and ensure contract", () => {
       assert.match(src, /chown --no-dereference/);
       assert.doesNotMatch(src, /chmod 644 \/tmp\/flok-chrome\.log/);
       assert.match(src, /test -w "\$PROFILE"/);
-      assert.match(src, /chown root:root \/home\/user\/flok\/\.flok/);
+      assert.match(src, /CTRL="\$\{FLOK_CONTROL_PLANE_DIR:-\/var\/lib\/flok\}"/);
+      assert.match(src, /chmod 0700 "\$CTRL"/);
+      assert.match(src, /rm -rf \/home\/user\/flok\/\.flok/);
       assert.match(src, /chown -R "\$UI_USER:\$UI_USER" \/home\/user\/flok\/\.browser/);
       assert.doesNotMatch(src, /chown -R .* \/home\/user\/flok\/\.browser \/home\/user\/flok\/\.flok/);
       assert.doesNotMatch(src, /--no-sandbox/);

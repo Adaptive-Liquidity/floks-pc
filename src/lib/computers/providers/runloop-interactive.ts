@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { posix as pathPosix } from "node:path";
 import type { Action } from "../types.js";
 import { RUNLOOP_WORKSPACE_ROOT } from "./runloop-client.js";
+import { CONTROL_PLANE_DIR } from "./runloop-bot-user.js";
 import { CDP_DEBUG_ADDRESS, CDP_DEBUG_PORT } from "./runloop-cdp.js";
 
 export {
@@ -31,8 +32,9 @@ export const DISPLAY_WIDTH = 1440;
 export const DISPLAY_HEIGHT = 900;
 export const DISPLAY_DEPTH = 24;
 export const BROWSER_PROFILE_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser/profile`;
-export const INTERACTIVE_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.flok`;
-/** Unique PNG path under the flok-ui-writable browser dir (not root-locked .flok). */
+/** Root-owned helpers. Not in the customer workspace file view. */
+export const INTERACTIVE_DIR = CONTROL_PLANE_DIR;
+/** Unique PNG path under the flok-ui-writable browser dir (not root-locked helpers). */
 export const OBS_SHOT_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser`;
 export function uniqueObsShotPath(): string {
   return `${OBS_SHOT_DIR}/obs-${randomUUID()}.png`;
@@ -658,7 +660,7 @@ UI_HOME="\${FLOK_UI_HOME:-${FLOK_UI_HOME}}"
 UI_UID="\${FLOK_UI_UID:-${FLOK_UI_UID}}"
 XDG_RUNTIME_DIR="/run/user/\${UI_UID}"
 
-mkdir -p "$RUNDIR" "$PROFILE" /home/user/flok/.flok /home/user/flok/.browser
+mkdir -p "$RUNDIR" "$PROFILE" /home/user/flok/.browser
 
 if ! command -v Xvfb >/dev/null 2>&1; then
   echo "ok missing-xvfb profile=$PROFILE"
@@ -679,26 +681,18 @@ chown "$UI_USER:$UI_USER" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 chmod 1777 /tmp/.X11-unix || true
 chown "$UI_USER:$UI_USER" "$RUNDIR" || true
-# Root-executed helpers live in .flok; never hand that directory to flok-ui.
-chown root:root /home/user/flok/.flok
-chmod 755 /home/user/flok/.flok
-if [ -f /home/user/flok/.flok/execvp.py ]; then
-  chown root:root /home/user/flok/.flok/execvp.py
-  chmod 755 /home/user/flok/.flok/execvp.py
-fi
-if [ -f /home/user/flok/.flok/ensure-interactive.sh ]; then
-  chown root:root /home/user/flok/.flok/ensure-interactive.sh
-  chmod 755 /home/user/flok/.flok/ensure-interactive.sh
-fi
-rm -f /home/user/flok/.flok/fixture.html
-if [ -f /home/user/flok/.flok/cdp-ax.mjs ]; then
-  chown root:root /home/user/flok/.flok/cdp-ax.mjs
-  chmod 755 /home/user/flok/.flok/cdp-ax.mjs
-fi
-if [ -f /home/user/flok/.flok/cdp-nav.mjs ]; then
-  chown root:root /home/user/flok/.flok/cdp-nav.mjs
-  chmod 755 /home/user/flok/.flok/cdp-nav.mjs
-fi
+# Control-plane helpers live in /var/lib/flok (root 0700), never the customer workspace.
+CTRL="\${FLOK_CONTROL_PLANE_DIR:-/var/lib/flok}"
+mkdir -p "$CTRL"
+chown root:root "$CTRL"
+chmod 0700 "$CTRL"
+for helper in execvp.py ensure-interactive.sh ensure-bot-user.sh cdp-ax.mjs cdp-nav.mjs; do
+  if [ -f "$CTRL/$helper" ]; then
+    chown root:root "$CTRL/$helper"
+    chmod 0700 "$CTRL/$helper"
+  fi
+done
+rm -rf /home/user/flok/.flok
 chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser
 chmod 700 /home/user/flok/.browser
 chmod 700 "$PROFILE" || true

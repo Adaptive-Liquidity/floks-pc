@@ -4,7 +4,8 @@
 # Extends the production-v1 DnD workstation (Docker, Node, Python, Git, …)
 # so the graphical layer does not strip compute tooling.
 # Runloop DnD profile is root; Chrome/Xvfb/Openbox/x11vnc/noVNC run as
-# non-root user `flok-ui` (uid 1500). No --no-sandbox.
+# non-root user `flok-ui` (uid 1500). Bot exec/fs run as `flok` (uid 1501).
+# No --no-sandbox. No passwordless sudo. Helpers live in /var/lib/flok.
 #
 # Chrome .deb version is recorded at image-build time in /etc/flok-chrome-version
 # (not a source pin of a specific .deb; Google's stable channel moves).
@@ -38,17 +39,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Dedicated graphical user. Do NOT `USER flok-ui` — DnD stays root for Docker.
 # Chrome's setuid sandbox helper is required because we refuse --no-sandbox.
+# Bot user `flok` (uid 1501) is also created here for new images.
+# BLUEPRINT REBUILD NOT REQUIRED: lazy ensure on wake creates `flok` and
+# /var/lib/flok on computers built before this definition change.
 RUN set -euo pipefail \
     && if ! getent group flok-ui >/dev/null; then groupadd -g 1500 flok-ui; fi \
     && if ! id -u flok-ui >/dev/null 2>&1; then \
          useradd -m -u 1500 -g 1500 -d /home/flok-ui -s /bin/bash flok-ui; \
        fi \
-    && mkdir -p /home/user/flok/.browser/profile /home/user/flok/.flok /run/user/1500 \
-    && chown root:flok-ui /home/user/flok \
+    && if ! getent group flok >/dev/null; then groupadd -g 1501 flok; fi \
+    && if ! id -u flok >/dev/null 2>&1; then \
+         useradd -M -u 1501 -g 1501 -d /home/user/flok -s /bin/bash flok; \
+       fi \
+    && mkdir -p /home/user/flok/.browser/profile /var/lib/flok /run/user/1500 \
+    && chown flok:flok /home/user/flok \
     && chmod 775 /home/user/flok \
     && chown -R flok-ui:flok-ui /home/flok-ui /home/user/flok/.browser /run/user/1500 \
-    && chown root:root /home/user/flok/.flok \
-    && chmod 755 /home/user/flok/.flok \
+    && chown root:root /var/lib/flok \
+    && chmod 0700 /var/lib/flok \
+    && echo "flok uid=$(id -u flok) home=/home/user/flok nosudo=1" > /etc/flok-bot-user \
     && chmod 700 /home/user/flok/.browser /home/user/flok/.browser/profile /run/user/1500 \
     && SANDBOX="$(find /opt/google -name chrome-sandbox -type f 2>/dev/null | head -1 || true)" \
     && test -n "$SANDBOX" \
