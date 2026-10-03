@@ -5,7 +5,7 @@ import { mcpNegotiatedProtocol } from "../../../src/lib/mcp/http";
 import { publicOriginFromRequest } from "../../lib/auth/callback";
 import { protocolForPurchase, purchaseToolResult } from "../../lib/billing/bot-purchase";
 import { getComputerService } from "../../lib/desks/runtime";
-import { requireWakeAdmission } from "../../lib/desks/wake-admission";
+import { wakeDecisionForComputer } from "../../lib/desks/wake-admission";
 import { bindPairFlock } from "../../lib/mcp-flock";
 import { MCP_INSTANCE_ID, vercelMcpLogger } from "../../lib/mcp-log";
 import { accessClaims, getOauthStore, hashToken } from "../../lib/oauth";
@@ -95,7 +95,7 @@ export async function POST(request: Request): Promise<Response> {
     try {
       const service = await getComputerService();
       const cap = service.getCapability(bound.capabilityId);
-      const decision = await requireWakeAdmission(cap.computerId);
+      const decision = await wakeDecisionForComputer(cap.computerId);
       if (!decision.allow) {
         return NextResponse.json({ ok: false, reason: decision.reason }, { status: decision.status });
       }

@@ -54,24 +54,24 @@ export async function handleVerifiedStripeEvent(event: Stripe.Event): Promise<{
   duplicate: boolean;
   inFlight?: boolean;
 }> {
-  const claim = await claimStripeEvent(event.id, event.type);
-  if (claim === "in_flight") {
+  const lease = await claimStripeEvent(event.id, event.type);
+  if (lease.claim === "in_flight") {
     return { seat: null, duplicate: true, inFlight: true };
   }
-  if (claim === "duplicate") {
+  if (lease.claim === "duplicate") {
     return { seat: null, duplicate: true };
   }
   try {
     const seat = await applyStripeEvent(event);
     if (!seat) {
-      await completeStripeEvent(event.id);
+      await completeStripeEvent(event.id, lease.claimedAt);
       return { seat: null, duplicate: false };
     }
     const next = await applySeatRuntime(event, seat);
-    await completeStripeEvent(event.id);
+    await completeStripeEvent(event.id, lease.claimedAt);
     return { seat: next, duplicate: false };
   } catch (err) {
-    await releaseStripeEvent(event.id);
+    await releaseStripeEvent(event.id, lease.claimedAt);
     throw err;
   }
 }
@@ -80,6 +80,7 @@ export async function handleStripeWebhookRequest(request: Request): Promise<Next
   const raw = await request.text();
   const signature = request.headers.get("stripe-signature");
   let eventId: string | null = null;
+  let claimedAt: number | null = null;
   try {
     const event = signature
       ? constructStripeEvent(raw, signature)
@@ -88,23 +89,26 @@ export async function handleStripeWebhookRequest(request: Request): Promise<Next
       return NextResponse.json({ ok: false, message: "unsigned webhook refused" }, { status: 400 });
     }
     eventId = event.id;
-    const claim = await claimStripeEvent(event.id, event.type);
-    if (claim === "in_flight") {
+    const lease = await claimStripeEvent(event.id, event.type);
+    if (lease.claim === "in_flight") {
       return NextResponse.json({ ok: false, duplicate: true, in_flight: true }, { status: 409 });
     }
-    if (claim === "duplicate") {
+    if (lease.claim === "duplicate") {
       return NextResponse.json({ ok: true, duplicate: true });
     }
+    claimedAt = lease.claimedAt;
     const seat = await applyStripeEvent(event);
     if (seat) await applySeatRuntime(event, seat);
-    await completeStripeEvent(event.id);
+    await completeStripeEvent(event.id, lease.claimedAt);
     return NextResponse.json({ ok: true, seatId: seat?.id ?? null });
   } catch (err) {
     if (eventId && !(err instanceof DurableStoreRequired)) {
-      try {
-        await releaseStripeEvent(eventId);
-      } catch {
-        // Best-effort: Stripe retries on 500 even if the lease row cannot be marked failed.
+      if (claimedAt !== null) {
+        try {
+          await releaseStripeEvent(eventId, claimedAt);
+        } catch {
+          // Best-effort: Stripe retries on 500 even if the lease row cannot be marked failed.
+        }
       }
       console.error("[stripe.webhook]", err instanceof Error ? err.message : err);
     }

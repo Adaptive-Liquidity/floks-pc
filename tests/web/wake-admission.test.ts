@@ -13,7 +13,7 @@ import { flockIdForEmail, resetDeskRuntimeForTests, setComputerServiceForTests }
 import {
   admitComputerWake,
   decideWakeAdmission,
-  requireWakeAdmission,
+  wakeDecisionForComputer,
 } from "../../web/lib/desks/wake-admission.ts";
 import {
   MemoryOauthStore,
@@ -118,7 +118,7 @@ describe("wake admission", { concurrency: 1 }, () => {
         graceUntil: new Date(Date.now() - 1_000).toISOString(),
       }),
     );
-    const decision = await requireWakeAdmission(computer.id);
+    const decision = await wakeDecisionForComputer(computer.id);
     assert.equal(decision.allow, false);
     if (!decision.allow) assert.equal(decision.status, 402);
     assert.equal(await admitComputerWake(computer.id), false);

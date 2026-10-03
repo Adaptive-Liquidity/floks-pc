@@ -420,6 +420,36 @@ describe("stripe webhook HTTP", { concurrency: 1 }, () => {
     assert.equal(bound?.computerId, seats[0]?.computerId);
   });
 
+  it("shows reconnect when a used nonce has no live binding (pre-0010 markUsed fallback)", async () => {
+    process.env.STAXIONS_BIND_SECRET = "test-bind-0123456789-abcdef-0123456789";
+    const email = "usedunbound@example.com";
+    const subject = "user_usedunbound";
+    const client = registerClient(["https://grok.com/callback"]);
+    await getOauthStore().saveClient(client);
+    const flock = flockIdForEmail(email);
+    const link = await createBuyLink({
+      origin: "https://example.test",
+      email,
+      subject,
+      flock,
+      clientId: client.id,
+      plan: "personal",
+    });
+    assert.equal(await getPendingBindStore().markUsed(link.nonce), true);
+    const pending = await getPendingBindStore().get(link.nonce);
+    assert.ok(pending?.usedAt);
+    assert.equal(pending?.failedAt, null);
+    assert.equal(pending?.failReason, null);
+    assert.equal(await bindFailedForEmail(email), true);
+    const session = sessionFromSeats({
+      email,
+      seats: [],
+      desks: [],
+      reconnectBot: await bindFailedForEmail(email),
+    });
+    assert.equal(session.reconnectBot, true);
+  });
+
   it("reclaims a dead worker after the lease and provisions exactly once", async () => {
     const store = new MemoryStripeEventStore();
     const started = Date.now() - STRIPE_EVENT_LEASE_MS - 1;

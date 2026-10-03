@@ -137,7 +137,10 @@ async function alreadyBoundToSeat(
 
 export async function bindFailedForEmail(email: string): Promise<boolean> {
   const rows = await getPendingBindStore().listByEmail(email);
-  if (!rows.some((row) => Boolean(row.failReason) || row.failedAt !== null)) return false;
+  // Pre-0010 markFailed falls back to used_at only. Used + no live binding is reconnect.
+  if (!rows.some((row) => Boolean(row.failReason) || row.failedAt !== null || row.usedAt !== null)) {
+    return false;
+  }
   const ids = await activeComputerIdsForEmail(email);
   if (ids.length === 0) return true;
   const oauth = getOauthStore();

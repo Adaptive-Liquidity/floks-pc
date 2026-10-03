@@ -6,6 +6,11 @@ export const STRIPE_EVENT_LEASE_MS = 5 * 60 * 1000;
 export type StripeEventClaim = "new" | "duplicate" | "in_flight";
 export type StripeEventStatus = "processing" | "done" | "failed";
 
+export type StripeEventLease =
+  | { claim: "new"; claimedAt: number }
+  | { claim: "duplicate" }
+  | { claim: "in_flight" };
+
 export type StripeEventRow = {
   id: string;
   eventType: string;
@@ -14,9 +19,9 @@ export type StripeEventRow = {
 };
 
 export interface StripeEventStore {
-  claim(id: string, eventType: string, now?: number): Promise<StripeEventClaim>;
-  complete(id: string): Promise<void>;
-  release(id: string): Promise<void>;
+  claim(id: string, eventType: string, now?: number): Promise<StripeEventLease>;
+  complete(id: string, claimedAt: number): Promise<void>;
+  release(id: string, claimedAt: number): Promise<void>;
 }
 
 export type StripeEventSqlQuery = <T>(
@@ -30,31 +35,35 @@ function canReclaim(row: Pick<StripeEventRow, "status" | "claimedAt">, now: numb
   return now - row.claimedAt >= STRIPE_EVENT_LEASE_MS;
 }
 
+function ownsLease(row: Pick<StripeEventRow, "claimedAt">, claimedAt: number): boolean {
+  return row.claimedAt === claimedAt;
+}
+
 export class MemoryStripeEventStore implements StripeEventStore {
   constructor(readonly rows: Map<string, StripeEventRow> = new Map()) {}
 
-  async claim(id: string, eventType: string, now = Date.now()): Promise<StripeEventClaim> {
+  async claim(id: string, eventType: string, now = Date.now()): Promise<StripeEventLease> {
     const row = this.rows.get(id);
     if (!row) {
       this.rows.set(id, { id, eventType, status: "processing", claimedAt: now });
-      return "new";
+      return { claim: "new", claimedAt: now };
     }
-    if (row.status === "done") return "duplicate";
-    if (!canReclaim(row, now)) return "in_flight";
+    if (row.status === "done") return { claim: "duplicate" };
+    if (!canReclaim(row, now)) return { claim: "in_flight" };
     row.status = "processing";
     row.claimedAt = now;
     row.eventType = eventType;
-    return "new";
+    return { claim: "new", claimedAt: now };
   }
 
-  async complete(id: string): Promise<void> {
+  async complete(id: string, claimedAt: number): Promise<void> {
     const row = this.rows.get(id);
-    if (row) row.status = "done";
+    if (row && ownsLease(row, claimedAt)) row.status = "done";
   }
 
-  async release(id: string): Promise<void> {
+  async release(id: string, claimedAt: number): Promise<void> {
     const row = this.rows.get(id);
-    if (row && row.status !== "done") row.status = "failed";
+    if (row && ownsLease(row, claimedAt) && row.status !== "done") row.status = "failed";
   }
 
   reset(): void {
@@ -65,7 +74,7 @@ export class MemoryStripeEventStore implements StripeEventStore {
 const LEASE_INSERT = `INSERT INTO stripe_events (id, event_type, status, claimed_at)
      VALUES ($1, $2, 'processing', to_timestamp($3 / 1000.0))
      ON CONFLICT (id) DO NOTHING
-     RETURNING id`;
+     RETURNING id, claimed_at`;
 
 const PRE_LEASE_INSERT = `INSERT INTO stripe_events (id, event_type) VALUES ($1, $2)
      ON CONFLICT (id) DO NOTHING
@@ -82,16 +91,19 @@ const LEASE_RECLAIM = `UPDATE stripe_events
           status = 'failed'
           OR (status = 'processing' AND claimed_at <= to_timestamp($4 / 1000.0))
         )
-      RETURNING id`;
+      RETURNING id, claimed_at`;
 
-const LEASE_COMPLETE = `UPDATE stripe_events SET status = 'done' WHERE id = $1`;
-const LEASE_RELEASE = `UPDATE stripe_events SET status = 'failed' WHERE id = $1 AND status <> 'done'`;
+const LEASE_COMPLETE = `UPDATE stripe_events
+        SET status = 'done'
+      WHERE id = $1 AND claimed_at = to_timestamp($2 / 1000.0)`;
+
+const LEASE_RELEASE = `UPDATE stripe_events
+        SET status = 'failed'
+      WHERE id = $1 AND claimed_at = to_timestamp($2 / 1000.0) AND status <> 'done'`;
+
 const PRE_LEASE_DELETE = `DELETE FROM stripe_events WHERE id = $1`;
 
 export class PostgresStripeEventStore implements StripeEventStore {
-  private leaseColumns: boolean | null = null;
-  private leaseProbedAt = 0;
-
   constructor(
     private readonly databaseUrl: string,
     private readonly injectedQuery?: StripeEventSqlQuery,
@@ -110,25 +122,14 @@ export class PostgresStripeEventStore implements StripeEventStore {
     }
   }
 
-  private leaseProbeIsStale(now: number): boolean {
-    if (this.leaseColumns === true) return false;
-    if (this.leaseColumns === null) return true;
-    return now - this.leaseProbedAt >= 60_000;
-  }
-
-  private markLease(ready: boolean, now: number): void {
-    this.leaseColumns = ready;
-    this.leaseProbedAt = now;
-  }
-
-  async claim(id: string, eventType: string, now = Date.now()): Promise<StripeEventClaim> {
-    if (this.leaseColumns === false && !this.leaseProbeIsStale(now)) {
-      return this.claimPre0010(id, eventType);
-    }
+  async claim(id: string, eventType: string, now = Date.now()): Promise<StripeEventLease> {
     try {
-      const inserted = await this.rawQuery<{ id: string }>(LEASE_INSERT, [id, eventType, now]);
-      this.markLease(true, now);
-      if (inserted.rows.length > 0) return "new";
+      const inserted = await this.rawQuery<{ id: string; claimed_at?: Date | string }>(LEASE_INSERT, [
+        id,
+        eventType,
+        now,
+      ]);
+      if (inserted.rows.length > 0) return { claim: "new", claimedAt: now };
       const found = await this.rawQuery<{
         id: string;
         event_type?: string;
@@ -136,11 +137,11 @@ export class PostgresStripeEventStore implements StripeEventStore {
         claimed_at?: Date | string;
       }>(LEASE_SELECT, [id]);
       const row = found.rows[0];
-      if (!row) return this.claimPre0010(id, eventType);
-      if (row.status === "done") return "duplicate";
+      if (!row) return this.claimPre0010(id, eventType, now);
+      if (row.status === "done") return { claim: "duplicate" };
       const claimedAt = row.claimed_at ? new Date(row.claimed_at).getTime() : 0;
       if (row.status === "processing" && now - claimedAt < STRIPE_EVENT_LEASE_MS) {
-        return "in_flight";
+        return { claim: "in_flight" };
       }
       const reclaimed = await this.rawQuery<{ id: string }>(LEASE_RECLAIM, [
         id,
@@ -148,41 +149,31 @@ export class PostgresStripeEventStore implements StripeEventStore {
         now,
         now - STRIPE_EVENT_LEASE_MS,
       ]);
-      return reclaimed.rows.length > 0 ? "new" : "in_flight";
+      return reclaimed.rows.length > 0 ? { claim: "new", claimedAt: now } : { claim: "in_flight" };
     } catch (err) {
       if (!isUndefinedColumnError(err)) throw err;
-      this.markLease(false, now);
-      return this.claimPre0010(id, eventType);
+      return this.claimPre0010(id, eventType, now);
     }
   }
 
-  private async claimPre0010(id: string, eventType: string): Promise<StripeEventClaim> {
+  private async claimPre0010(id: string, eventType: string, now: number): Promise<StripeEventLease> {
     const inserted = await this.rawQuery<{ id: string }>(PRE_LEASE_INSERT, [id, eventType]);
-    return inserted.rows.length > 0 ? "new" : "duplicate";
+    return inserted.rows.length > 0 ? { claim: "new", claimedAt: now } : { claim: "duplicate" };
   }
 
-  async complete(id: string): Promise<void> {
-    if (this.leaseColumns === false) return;
+  async complete(id: string, claimedAt: number): Promise<void> {
     try {
-      await this.rawQuery(LEASE_COMPLETE, [id]);
-      this.markLease(true, Date.now());
+      await this.rawQuery(LEASE_COMPLETE, [id, claimedAt]);
     } catch (err) {
       if (!isUndefinedColumnError(err)) throw err;
-      this.markLease(false, Date.now());
     }
   }
 
-  async release(id: string): Promise<void> {
-    if (this.leaseColumns === false) {
-      await this.rawQuery(PRE_LEASE_DELETE, [id]);
-      return;
-    }
+  async release(id: string, claimedAt: number): Promise<void> {
     try {
-      await this.rawQuery(LEASE_RELEASE, [id]);
-      this.markLease(true, Date.now());
+      await this.rawQuery(LEASE_RELEASE, [id, claimedAt]);
     } catch (err) {
       if (!isUndefinedColumnError(err)) throw err;
-      this.markLease(false, Date.now());
       await this.rawQuery(PRE_LEASE_DELETE, [id]);
     }
   }
@@ -230,14 +221,14 @@ export async function claimStripeEvent(
   id: string,
   eventType: string,
   now = Date.now(),
-): Promise<StripeEventClaim> {
+): Promise<StripeEventLease> {
   return getStripeEventStore().claim(id, eventType, now);
 }
 
-export async function completeStripeEvent(id: string): Promise<void> {
-  await getStripeEventStore().complete(id);
+export async function completeStripeEvent(id: string, claimedAt: number): Promise<void> {
+  await getStripeEventStore().complete(id, claimedAt);
 }
 
-export async function releaseStripeEvent(id: string): Promise<void> {
-  await getStripeEventStore().release(id);
+export async function releaseStripeEvent(id: string, claimedAt: number): Promise<void> {
+  await getStripeEventStore().release(id, claimedAt);
 }

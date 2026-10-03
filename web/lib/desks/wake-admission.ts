@@ -55,7 +55,7 @@ export async function admitComputerWake(
 }
 
 /** One call per HTTP/screen path. Returns the 402 decision; the caller does not pause here. */
-export async function requireWakeAdmission(
+export async function wakeDecisionForComputer(
   computerId: string,
   nowMs: number = Date.now(),
 ): Promise<WakeDecision> {

@@ -307,12 +307,16 @@ describe("pair keys on FakeProvider", () => {
     const open = service.listPairCodes(computerId).filter((code) => code.usedAt === null);
     assert.equal(open.length, 0);
     assert.equal(issued.code.length > 0, true);
-    assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "new");
-    assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "in_flight");
-    await releaseStripeEvent("evt_retry");
-    assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "new");
-    await completeStripeEvent("evt_retry");
-    assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "duplicate");
+    const first = await claimStripeEvent("evt_retry", "customer.subscription.deleted");
+    assert.equal(first.claim, "new");
+    assert.equal((await claimStripeEvent("evt_retry", "customer.subscription.deleted")).claim, "in_flight");
+    if (first.claim !== "new") return;
+    await releaseStripeEvent("evt_retry", first.claimedAt);
+    const retried = await claimStripeEvent("evt_retry", "customer.subscription.deleted");
+    assert.equal(retried.claim, "new");
+    if (retried.claim !== "new") return;
+    await completeStripeEvent("evt_retry", retried.claimedAt);
+    assert.equal((await claimStripeEvent("evt_retry", "customer.subscription.deleted")).claim, "duplicate");
   });
 
   it("keeps extra computer ids when the paid maximum drops", async () => {

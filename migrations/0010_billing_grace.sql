@@ -12,5 +12,15 @@ ALTER TABLE pending_binds
   ADD COLUMN IF NOT EXISTS fail_reason TEXT;
 
 ALTER TABLE stripe_events
-  ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'done',
+  ADD COLUMN IF NOT EXISTS status TEXT,
   ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+
+-- Rows written before this migration were finished deliveries.
+UPDATE stripe_events
+   SET status = 'done'
+ WHERE status IS NULL;
+
+ALTER TABLE stripe_events
+  ALTER COLUMN status SET DEFAULT 'processing',
+  ALTER COLUMN status SET NOT NULL,
+  ALTER COLUMN claimed_at SET DEFAULT NOW();
