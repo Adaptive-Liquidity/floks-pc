@@ -115,6 +115,15 @@ export class ProviderUnavailable extends ComputerError {
   }
 }
 
+export class ComputerUseNotAvailable extends ComputerError {
+  constructor(
+    detail = "Secure human takeover is not enabled; local noVNC stays on 127.0.0.1",
+  ) {
+    super("C3B_TAKEOVER_UNAVAILABLE", detail);
+    this.name = "ComputerUseNotAvailable";
+  }
+}
+
 export class PathEscape extends ComputerError {
   constructor(path: string) {
     super(
@@ -228,6 +237,70 @@ export class RestoreUnsupported extends ComputerError {
   }
 }
 
+/** Wake did not reach a running devbox before the wait expired. */
+export class ComputerStarting extends ComputerError {
+  constructor() {
+    super("COMPUTER_STARTING", "Your computer is starting. Try again in a minute.");
+    this.name = "ComputerStarting";
+  }
+}
+
+/** The seat is canceled, past due, or out of included hours, so the devbox stays down. */
+export class ComputerAsleep extends ComputerError {
+  constructor() {
+    super("COMPUTER_ASLEEP", "This seat is not active, so the computer stays asleep.");
+    this.name = "ComputerAsleep";
+  }
+}
+
+export class BotKeyRequired extends ComputerError {
+  constructor() {
+    super(
+      "BOT_KEY_REQUIRED",
+      "This bot has no computer key yet. Call computer_pair with no arguments to get one.",
+    );
+    this.name = "BotKeyRequired";
+  }
+}
+
+/** The old disk could not be resumed. The bot must see this before using the replacement. */
+export class ComputerRebuilt extends ComputerError {
+  constructor() {
+    super(
+      "COMPUTER_REBUILT",
+      "Your computer had to be rebuilt; files from before are gone",
+    );
+    this.name = "ComputerRebuilt";
+  }
+}
+
+/** Restart would provision a blank machine. The owner must confirm first. */
+export class RebuildConfirmRequired extends ComputerError {
+  constructor() {
+    super(
+      "REBUILD_CONFIRM_REQUIRED",
+      "This computer would be rebuilt and its files deleted. The owner must confirm on the dashboard.",
+    );
+    this.name = "RebuildConfirmRequired";
+  }
+}
+
+/** Activity list cursor is not a valid (at, id) page token. */
+export class InvalidActivityCursor extends ComputerError {
+  constructor() {
+    super("INVALID_ACTIVITY_CURSOR", "Invalid activity page.");
+    this.name = "InvalidActivityCursor";
+  }
+}
+
+/** The vendor machine cannot be resumed. The seat needs a new devbox with the same computer id. */
+export class ProviderNeedsReplacement extends ComputerError {
+  constructor(provider: string) {
+    super("PROVIDER_NEEDS_REPLACEMENT", `${provider} devbox cannot resume`, { provider });
+    this.name = "ProviderNeedsReplacement";
+  }
+}
+
 export class CleanupFailed extends ComputerError {
   constructor() {
     super(
@@ -235,5 +308,28 @@ export class CleanupFailed extends ComputerError {
       "Destroy failed; computer is cleanup_needed. Retry with the captured providerRef only.",
     );
     this.name = "CleanupFailed";
+  }
+}
+
+/** Shared control plane changed under this instance. Caller should reload and retry. */
+export class ControlPlaneBusy extends ComputerError {
+  readonly retryable = true;
+  constructor() {
+    super("CONTROL_PLANE_BUSY", "This computer is busy. Try again in a moment.", {
+      retryable: true,
+    });
+    this.name = "ControlPlaneBusy";
+  }
+}
+
+/** Restart is only legal from stopped, waking, recovery_failed, ready, running, or paused. */
+export class RestartNotAvailable extends ComputerError {
+  constructor(state: string) {
+    super(
+      "RESTART_NOT_AVAILABLE",
+      "This computer is working on it. Try again in a minute.",
+      { state },
+    );
+    this.name = "RestartNotAvailable";
   }
 }

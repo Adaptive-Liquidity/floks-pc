@@ -178,7 +178,7 @@ export function extractCapabilityToken(auth: ComputerOperationAuth): string {
   if (auth.kind === "shared") {
     throw new CapabilityMissing("shared MCP auth is not sufficient");
   }
-  if (auth.kind === "none") {
+  if (auth.kind === "none" || auth.kind === "bound") {
     throw new CapabilityMissing("missing capability");
   }
   if (auth.kind !== "capability" || auth.token.length === 0) {

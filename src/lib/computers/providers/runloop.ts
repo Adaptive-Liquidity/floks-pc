@@ -29,16 +29,26 @@ import type {
   RestoreRequest,
   TakeoverGrant,
 } from "../types.js";
-import { ComputerError, PathEscape, ProviderUnavailable } from "../errors.js";
+import {
+  ComputerError,
+  ComputerUseNotAvailable,
+  PathEscape,
+  ProviderNeedsReplacement,
+  ProviderUnavailable,
+} from "../errors.js";
+export { ComputerUseNotAvailable };
 import { assertInsideRoot } from "../path.js";
 import { logCdpAxObserve, mapCdpAxDump, sanitizeCdpAxHint, validateAction } from "./runloop-interactive.js";
+import { runValidatedActions, screenIsBlank } from "./runloop-browser.js";
 import {
   assertNoControlPlaneSecrets,
   DEFAULT_RUNLOOP_ARCH,
   DEFAULT_RUNLOOP_BLUEPRINT,
   LIVE_KEEP_ALIVE_SECONDS,
+  MAX_KEEP_ALIVE_SECONDS,
   RUNLOOP_PROVIDER_NAME,
   RUNLOOP_WORKSPACE_ROOT,
+  parseRunloopOnIdle,
   type RunloopControlPlane,
   type RunloopCreateParams,
   type RunloopDevboxSession,
@@ -50,6 +60,13 @@ import {
   buildAgentComputerLabels,
   resolveAgentComputerBlueprint,
 } from "./interactive-blueprint.js";
+import {
+  applyBotUserToExec,
+  filterBotVisibleListing,
+  isReservedControlPlanePath,
+  reservedFilesystemError,
+} from "./runloop-bot-user.js";
+import { GUEST_FS_MAX_BYTES } from "./runloop-fs.js";
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_OUTPUT = 1_000_000;
@@ -61,13 +78,11 @@ export class RunloopBlueprintRequired extends ComputerError {
   }
 }
 
-export class ComputerUseNotAvailable extends ComputerError {
-  constructor(
-    detail = "Secure human takeover is not enabled; local noVNC stays on 127.0.0.1",
-  ) {
-    super("C3B_TAKEOVER_UNAVAILABLE", detail);
-    this.name = "ComputerUseNotAvailable";
-  }
+/** Window passed as after_idle. Does not change the keep-alive formula. Default is 30 minutes. */
+export function suspendIdleTimeSeconds(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number(env.STAXIONS_IDLE_MINUTES?.trim());
+  if (Number.isInteger(raw) && raw >= 5 && raw <= 24 * 60) return raw * 60;
+  return 30 * 60;
 }
 
 export class RunloopProvider implements ComputerProvider {
@@ -78,6 +93,7 @@ export class RunloopProvider implements ComputerProvider {
   private readonly ownerId: string | null;
   private readonly workspaceId: string | null;
   private readonly keepAliveSeconds: number;
+  private readonly idleTimeSeconds: number;
   private readonly sessions = new Map<string, RunloopDevboxSession>();
 
   constructor(opts?: {
@@ -85,6 +101,7 @@ export class RunloopProvider implements ComputerProvider {
     blueprint?: string;
     apiKey?: string;
     keepAliveSeconds?: number;
+    idleTimeSeconds?: number;
     requireInteractive?: boolean;
     ownerId?: string | null;
     workspaceId?: string | null;
@@ -95,6 +112,7 @@ export class RunloopProvider implements ComputerProvider {
     this.blueprint =
       opts?.blueprint ?? process.env.FLOK_RUNLOOP_BLUEPRINT ?? DEFAULT_RUNLOOP_BLUEPRINT;
     this.keepAliveSeconds = opts?.keepAliveSeconds ?? LIVE_KEEP_ALIVE_SECONDS;
+    this.idleTimeSeconds = opts?.idleTimeSeconds ?? this.keepAliveSeconds;
     if (opts?.client) {
       this.plane = opts.client;
       return;
@@ -125,11 +143,15 @@ export class RunloopProvider implements ComputerProvider {
       throw new RunloopBlueprintRequired("FLOK_RUNLOOP_BLUEPRINT is required");
     }
     const keepRaw = Number(process.env.FLOK_RUNLOOP_KEEP_ALIVE_SECONDS?.trim());
+    const idleRaw = Number(process.env.STAXIONS_IDLE_MINUTES?.trim());
+    const idleSeconds =
+      Number.isInteger(idleRaw) && idleRaw >= 5 && idleRaw <= 24 * 60 ? idleRaw * 60 : LIVE_KEEP_ALIVE_SECONDS;
     const keepAliveSeconds =
-      Number.isInteger(keepRaw) && keepRaw >= 60 && keepRaw <= 3600
-        ? keepRaw
-        : LIVE_KEEP_ALIVE_SECONDS;
+      Number.isInteger(keepRaw) && keepRaw >= 60 && keepRaw <= 24 * 60 * 60
+        ? Math.min(keepRaw, 24 * 60 * 60)
+        : Math.min(Math.max(idleSeconds, LIVE_KEEP_ALIVE_SECONDS), MAX_KEEP_ALIVE_SECONDS);
     const { createSdkRunloopPlane } = await import("./runloop-sdk.js");
+    parseRunloopOnIdle();
     const client = await createSdkRunloopPlane({
       apiKey,
       blueprint,
@@ -140,6 +162,7 @@ export class RunloopProvider implements ComputerProvider {
       blueprint,
       apiKey,
       keepAliveSeconds,
+      idleTimeSeconds: suspendIdleTimeSeconds(),
       requireInteractive,
     });
   }
@@ -172,6 +195,7 @@ export class RunloopProvider implements ComputerProvider {
       : await this.plane.create(params);
     this.sessions.set(session.id, session);
     try {
+      await session.ensureBotUser();
       await session.fsMkdir(RUNLOOP_WORKSPACE_ROOT).catch(() => undefined);
       await session.ensureInteractiveStack();
       if (this.requireInteractive && !session.interactiveGuest) {
@@ -206,9 +230,18 @@ export class RunloopProvider implements ComputerProvider {
 
   async wake(ref: string): Promise<void> {
     const s = await this.requireSession(ref);
-    await s.resume();
+    const st = await s.state();
+    if (st === "stopped") {
+      try {
+        await s.resume();
+      } catch {
+        throw new ProviderNeedsReplacement("runloop");
+      }
+    } else if (st !== "running") {
+      await s.resume();
+    }
     try {
-      await s.ensureInteractiveStack();
+      await s.ensureInteractiveStack({ browser: "best-effort" });
       if (this.requireInteractive && !s.interactiveGuest) {
         throw new InteractiveBlueprintRequired(
           "guest is missing flok-ui / Xvfb / Chrome after wake; not an Agent Computer",
@@ -223,6 +256,11 @@ export class RunloopProvider implements ComputerProvider {
   async pause(ref: string): Promise<void> {
     const s = await this.requireSession(ref);
     await s.suspend();
+  }
+
+  async keepAlive(ref: string): Promise<void> {
+    const s = await this.requireSession(ref);
+    if (s.keepAlive) await s.keepAlive();
   }
 
   async stop(ref: string): Promise<void> {
@@ -292,17 +330,35 @@ export class RunloopProvider implements ComputerProvider {
     }
 
     const timeoutMs = Math.min(request.timeoutMs ?? 30_000, 600_000);
-    const execReq: {
-      argv: string[];
-      cwd: string;
-      env?: Record<string, string>;
-      timeoutMs: number;
-    } = {
+    if (isReservedControlPlanePath(cwd)) {
+      return {
+        exitCode: 126,
+        stdout: "",
+        stderr: "PERMISSION_DENIED: cwd is reserved",
+        timedOut: false,
+      };
+    }
+    for (const arg of request.argv) {
+      if (typeof arg !== "string" || arg.length === 0 || arg.startsWith("-")) continue;
+      const resolved = arg.startsWith("/")
+        ? pathPosix.normalize(arg)
+        : pathPosix.normalize(pathPosix.join(cwd, arg));
+      if (isReservedControlPlanePath(resolved)) {
+        return {
+          exitCode: 126,
+          stdout: "",
+          stderr: "PERMISSION_DENIED: path is reserved",
+          timedOut: false,
+        };
+      }
+    }
+    await s.ensureBotUser();
+    const execReq = applyBotUserToExec({
       argv: request.argv,
       cwd,
       timeoutMs,
-    };
-    if (request.env) execReq.env = request.env;
+      ...(request.env ? { env: request.env } : {}),
+    });
     try {
       const result = await s.exec(execReq);
       return {
@@ -321,12 +377,16 @@ export class RunloopProvider implements ComputerProvider {
 
   async filesystem(ref: string, request: FsRequest): Promise<FsResult> {
     const s = await this.requireSession(ref);
+    await s.ensureBotUser();
     let canonical: string;
     try {
       canonical = assertInsideRoot(request.path, RUNLOOP_WORKSPACE_ROOT);
     } catch (e) {
       if (e instanceof PathEscape) return { ok: false, errorCode: "PATH_ESCAPE" };
       throw e;
+    }
+    if (isReservedControlPlanePath(canonical)) {
+      return reservedFilesystemError(canonical);
     }
 
     switch (request.operation) {
@@ -338,7 +398,7 @@ export class RunloopProvider implements ComputerProvider {
       case "list": {
         const r = await s.fsList(canonical);
         if (!r.ok) return { ok: false, errorCode: r.errorCode };
-        return { ok: true, data: r.data };
+        return { ok: true, data: filterBotVisibleListing(canonical, r.data ?? []) };
       }
       case "read": {
         const r = await s.fsRead(canonical);
@@ -352,10 +412,16 @@ export class RunloopProvider implements ComputerProvider {
         if (request.content === undefined) {
           return { ok: false, errorCode: "MISSING_CONTENT" };
         }
+        const raw = request.content;
         const body =
-          typeof request.content === "string"
-            ? Buffer.from(request.content)
-            : Buffer.from(request.content);
+          typeof raw === "string"
+            ? request.encoding === "base64"
+              ? Buffer.from(raw, "base64")
+              : Buffer.from(raw, "utf8")
+            : Buffer.from(raw);
+        if (body.length > GUEST_FS_MAX_BYTES) {
+          return { ok: false, errorCode: "FILE_TOO_LARGE" };
+        }
         const r = await s.fsWrite(canonical, body);
         if (!r.ok) return { ok: false, errorCode: r.errorCode };
         return { ok: true };
@@ -384,6 +450,9 @@ export class RunloopProvider implements ComputerProvider {
         } catch {
           return { ok: false, errorCode: "PATH_ESCAPE" };
         }
+        if (isReservedControlPlanePath(dest)) {
+          return reservedFilesystemError(dest);
+        }
         const r =
           request.operation === "move"
             ? await s.fsMove(canonical, dest)
@@ -403,8 +472,14 @@ export class RunloopProvider implements ComputerProvider {
     const obs: Observation = {
       screenWidth: shot.width,
       screenHeight: shot.height,
+      coordinateSpace: "screen_pixels",
+      screenBlank: screenIsBlank(shot.png),
     };
     if (shot.activeWindow) obs.activeWindow = shot.activeWindow;
+    if (s.browserUrl) {
+      const href = await s.browserUrl();
+      if (href) obs.browserUrl = href;
+    }
     if (request.includeScreenshot !== false) {
       obs.screenshotBase64 = shot.png.toString("base64");
     }
@@ -449,36 +524,7 @@ export class RunloopProvider implements ComputerProvider {
   async act(ref: string, request: ActionBatch): Promise<ActionResult> {
     const s = await this.requireSession(ref);
     await s.ensureInteractiveStack();
-    const results: ActionResult["results"] = [];
-    let ok = true;
-    for (let i = 0; i < request.actions.length; i++) {
-      const action = request.actions[i]!;
-      const err = validateAction(action);
-      if (err) {
-        ok = false;
-        results.push({ action, success: false, error: err });
-        for (const rest of request.actions.slice(i + 1)) {
-          results.push({ action: rest, success: false, error: "not executed" });
-        }
-        break;
-      }
-      try {
-        await s.uiAction(action);
-        results.push({ action, success: true });
-      } catch (e) {
-        ok = false;
-        results.push({
-          action,
-          success: false,
-          error: e instanceof Error ? e.message : "action failed",
-        });
-        for (const rest of request.actions.slice(i + 1)) {
-          results.push({ action: rest, success: false, error: "not executed" });
-        }
-        break;
-      }
-    }
-    return { ok, results };
+    return runValidatedActions(request.actions, validateAction, (action) => s.uiAction(action));
   }
 
   async takeover(_ref: string): Promise<TakeoverGrant> {
@@ -507,6 +553,7 @@ export class RunloopProvider implements ComputerProvider {
       blueprint: this.blueprint,
       architecture: DEFAULT_RUNLOOP_ARCH,
       keepAliveSeconds: this.keepAliveSeconds,
+      idleTimeSeconds: this.idleTimeSeconds,
       labels: buildAgentComputerLabels(
         { birdId, flockId },
         { ownerId: this.ownerId, workspaceId: this.workspaceId },
@@ -535,7 +582,7 @@ export class RunloopProvider implements ComputerProvider {
     if (st === "deleted" || st === "paused" || st === "stopped" || st === "error") {
       throw new ProviderUnavailable("runloop", `health probe failed: ${st}`);
     }
-    await s.ensureInteractiveStack();
+    await s.ensureInteractiveStack({ browser: "best-effort" });
     if (this.requireInteractive && !s.interactiveGuest) {
       throw new InteractiveBlueprintRequired(
         "health probe failed: guest is missing flok-ui / Xvfb / Chrome",
@@ -552,6 +599,7 @@ export class RunloopProvider implements ComputerProvider {
       blueprint: this.blueprint,
       architecture: DEFAULT_RUNLOOP_ARCH,
       keepAliveSeconds: this.keepAliveSeconds,
+      idleTimeSeconds: this.idleTimeSeconds,
       labels: buildAgentComputerLabels(spec, {
         ownerId: this.ownerId,
         workspaceId: this.workspaceId,

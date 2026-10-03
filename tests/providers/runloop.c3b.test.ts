@@ -162,13 +162,20 @@ describe("C3B Dockerfile and ensure contract", () => {
     assert.match(dockerfile, /command -v python3/);
     assert.match(dockerfile, /command -v node/);
     assert.match(dockerfile, /chmod 4755/);
+    assert.match(dockerfile, /chmod 1775 \/home\/user\/flok/);
     assert.match(
       dockerfile,
-      /chmod 700 \/home\/user\/flok\/\.browser \/home\/user\/flok\/\.browser\/profile/,
+      /chmod 700 \/home\/flok-ui\/\.flok-browser \/home\/flok-ui\/\.flok-browser\/profile/,
     );
+    assert.match(dockerfile, /chown root:root \/home\/flok-ui/);
+    assert.match(dockerfile, /\.flok-root/);
     assert.equal(/^(RUN|CMD|ENTRYPOINT).*(--no-sandbox)/m.test(dockerfile), false);
-    assert.match(dockerfile, /chown root:root \/home\/user\/flok\/\.flok/);
-    assert.doesNotMatch(dockerfile, /chown -R flok-ui:flok-ui[^\n]*\.flok/);
+    assert.match(dockerfile, /chown root:root \/var\/lib\/flok/);
+    assert.match(dockerfile, /chmod 0700 \/var\/lib\/flok/);
+    assert.match(dockerfile, /useradd -M -u 1501/);
+    assert.match(dockerfile, /BLUEPRINT REBUILD NOT REQUIRED/);
+    assert.doesNotMatch(dockerfile, /chown -R flok-ui:flok-ui[^\n]*\/home\/user\/flok\/\.flok/);
+    assert.doesNotMatch(dockerfile, /NOPASSWD|sudoers/);
   });
 
   it("ensure script is localhost-only, flok-ui only, and restarts X after resume", () => {
@@ -177,15 +184,25 @@ describe("C3B Dockerfile and ensure contract", () => {
       assert.match(src, /x11vnc .* -localhost /);
       assert.match(src, /127\.0\.0\.1:\$\{NOVNC_PORT\}/);
       assert.match(src, /rm -f \/tmp\/\.X11-unix\/X99 \/tmp\/\.X99-lock/);
-      assert.match(src, /chmod 700 "\$PROFILE"/);
+      assert.match(src, /\/home\/flok-ui\/\.flok-browser\/profile/);
       assert.match(src, /\/tmp\/flok-chrome\.log/);
       assert.match(src, /not a regular file/);
       assert.match(src, /chmod 640 \/tmp\/flok-chrome\.log/);
       assert.match(src, /chown --no-dereference/);
       assert.doesNotMatch(src, /chmod 644 \/tmp\/flok-chrome\.log/);
       assert.match(src, /test -w "\$PROFILE"/);
-      assert.match(src, /chown root:root \/home\/user\/flok\/\.flok/);
-      assert.match(src, /chown -R "\$UI_USER:\$UI_USER" \/home\/user\/flok\/\.browser/);
+      assert.match(src, /CTRL="\$\{FLOK_CONTROL_PLANE_DIR:-\/var\/lib\/flok\}"/);
+      assert.match(src, /chmod 0700 "\$CTRL"/);
+      assert.match(src, /rm -rf \/home\/user\/flok\/\.flok/);
+      assert.match(src, /python3 - <<'PY'/);
+      assert.match(src, /fchown/);
+      assert.match(src, /fchmod/);
+      assert.match(src, /O_NOFOLLOW/);
+      assert.match(src, /quarantine-/);
+      assert.match(src, /chmod 1775 \/home\/user\/flok/);
+      assert.match(src, /chown -h root:root "\$CTRL"/);
+      assert.doesNotMatch(src, /chown -hP -R "\$UI_USER:\$UI_USER" \/home\/user\/flok\/\.browser/);
+      assert.doesNotMatch(src, /chmod 700 "\$PROFILE"/);
       assert.doesNotMatch(src, /chown -R .* \/home\/user\/flok\/\.browser \/home\/user\/flok\/\.flok/);
       assert.doesNotMatch(src, /--no-sandbox/);
       assert.doesNotMatch(src, /chmod 777/);
@@ -358,7 +375,7 @@ describe("C3B RunloopProvider (memory)", () => {
     assert.equal(r.results[3]?.error, "not executed");
   });
 
-  it("uniqueObsShotPath is under .browser and unique per call", () => {
+  it("uniqueObsShotPath is under the UI browser dir and unique per call", () => {
     const a = uniqueObsShotPath();
     const b = uniqueObsShotPath();
     assert.notEqual(a, b);
@@ -368,27 +385,40 @@ describe("C3B RunloopProvider (memory)", () => {
     assert.equal(a.includes("/.flok/"), false);
   });
 
-  it("browser profile lives under the workspace jail", async () => {
-    const p = provider();
+  it("browser profile is outside the workspace and reserved from computer_fs", async () => {
+    const plane = new MemoryRunloopControlPlane();
+    const p = new RunloopProvider({ client: plane, blueprint: "memory" });
     const a = await p.provision({ birdId: "prof", flockId: "f" });
     await p.act(a.providerRef, {
       actions: [{ type: "open_url", url: "https://example.com/" }],
     });
+    const session = (await plane.get(a.providerRef)) as unknown as {
+      peekRead: (path: string) => Buffer | null;
+    };
+    assert.equal(
+      session.peekRead(`${BROWSER_PROFILE_DIR}/last-url`)?.toString("utf8"),
+      "https://example.com/",
+    );
     const marker = await p.filesystem(a.providerRef, {
       operation: "read",
       path: `${BROWSER_PROFILE_DIR}/last-url`,
     });
-    assert.equal(marker.ok, true);
-    assert.equal(marker.data, "https://example.com/");
+    assert.equal(marker.ok, false);
+    assert.ok(marker.errorCode === "PERMISSION_DENIED" || marker.errorCode === "PATH_ESCAPE");
   });
 
   it("two Devboxes do not share browser profiles", async () => {
-    const p = provider();
+    const plane = new MemoryRunloopControlPlane();
+    const p = new RunloopProvider({ client: plane, blueprint: "memory" });
     const a = await p.provision({ birdId: "pa", flockId: "f" });
     const b = await p.provision({ birdId: "pb", flockId: "f" });
     await p.act(a.providerRef, {
       actions: [{ type: "open_url", url: "https://a.example/" }],
     });
+    const sessionB = (await plane.get(b.providerRef)) as unknown as {
+      peekRead: (path: string) => Buffer | null;
+    };
+    assert.equal(sessionB.peekRead(`${BROWSER_PROFILE_DIR}/last-url`), null);
     const fromB = await p.filesystem(b.providerRef, {
       operation: "read",
       path: `${BROWSER_PROFILE_DIR}/last-url`,
@@ -397,19 +427,27 @@ describe("C3B RunloopProvider (memory)", () => {
   });
 
   it("profile survives suspend/resume (disk, not process)", async () => {
-    const p = provider();
+    const plane = new MemoryRunloopControlPlane();
+    const p = new RunloopProvider({ client: plane, blueprint: "memory" });
     const a = await p.provision({ birdId: "persist", flockId: "f" });
     await p.act(a.providerRef, {
       actions: [{ type: "open_url", url: "https://keep.example/" }],
     });
     await p.pause(a.providerRef);
     await p.wake(a.providerRef);
+    const session = (await plane.get(a.providerRef)) as unknown as {
+      peekRead: (path: string) => Buffer | null;
+    };
+    assert.equal(
+      session.peekRead(`${BROWSER_PROFILE_DIR}/last-url`)?.toString("utf8"),
+      "https://keep.example/",
+    );
     const kept = await p.filesystem(a.providerRef, {
       operation: "read",
       path: `${BROWSER_PROFILE_DIR}/last-url`,
     });
-    assert.equal(kept.ok, true);
-    assert.equal(kept.data, "https://keep.example/");
+    assert.equal(kept.ok, false);
+    assert.ok(kept.errorCode === "PERMISSION_DENIED" || kept.errorCode === "PATH_ESCAPE");
   });
 
   it("takeover remains fail-closed; vnc capability false", async () => {
@@ -420,7 +458,8 @@ describe("C3B RunloopProvider (memory)", () => {
   });
 
   it("memory-plane last-url/launched markers are not a real Chrome profile", async () => {
-    const p = provider();
+    const plane = new MemoryRunloopControlPlane();
+    const p = new RunloopProvider({ client: plane, blueprint: "memory" });
     const a = await p.provision({ birdId: "fake-profile", flockId: "f" });
     await p.act(a.providerRef, {
       actions: [
@@ -432,10 +471,13 @@ describe("C3B RunloopProvider (memory)", () => {
       operation: "list",
       path: BROWSER_PROFILE_DIR,
     });
-    assert.equal(listed.ok, true);
-    assert.ok(Array.isArray(listed.data));
+    assert.equal(listed.ok, false);
+    const session = (await plane.get(a.providerRef)) as unknown as {
+      peekList: (path: string) => string[];
+    };
+    const entries = session.peekList(BROWSER_PROFILE_DIR);
     assert.equal(
-      chromeProfileHasBrowserState(listed.data as string[]),
+      chromeProfileHasBrowserState(entries),
       false,
       "memory-plane last-url/launched must not count as Chrome browser state",
     );
@@ -443,7 +485,7 @@ describe("C3B RunloopProvider (memory)", () => {
 });
 
 const CHROME_CMD =
-  "1500 google-chrome-stable --user-data-dir=/home/user/flok/.browser/profile --window-size=1440,900 --app=file:///home/user/flok/.flok/fixture.html";
+  "1500 google-chrome-stable --user-data-dir=/home/flok-ui/.flok-browser/profile --window-size=1440,900 --app=file:///home/user/flok/fixture.html";
 
 function evidence(over: Partial<ChromeReadyEvidence> = {}): ChromeReadyEvidence {
   return {
@@ -697,7 +739,7 @@ describe("C3B Chrome readiness classification", () => {
     assert.equal(chromeHasUserDataDir(parsed.chromeCmdlines[0] ?? ""), true);
     assert.doesNotMatch(parsed.chromeLogTail, /api_key/);
     assert.match(CHROME_READY_PROBE_PY, /\/tmp\/flok-chrome\.log/);
-    assert.match(CHROME_READY_PROBE_PY, /\/home\/user\/flok\/\.browser\/profile/);
+    assert.match(CHROME_READY_PROBE_PY, /\/home\/flok-ui\/\.flok-browser\/profile/);
     assert.match(CHROME_READY_PROBE_PY, /flok-ui/);
     assert.match(CHROME_READY_PROBE_PY, /unprivileged_userns_clone/);
     assert.equal(CHROME_LOG_PATH, "/tmp/flok-chrome.log");

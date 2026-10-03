@@ -8,6 +8,7 @@ export type {
   ActionBatch,
   ActionResult,
   ActionType,
+  BotClaim,
   CapabilityScope,
   Computer,
   ComputerAuditEvent,
@@ -46,9 +47,10 @@ export type {
   TakeoverGrant,
 } from "./types.js";
 
-export { LEGAL_TRANSITIONS, CAPABILITY_SCOPES } from "./types.js";
+export { LEGAL_TRANSITIONS, CAPABILITY_SCOPES, RESTARTABLE_STATES, isRestartableState } from "./types.js";
 
 export {
+  BotClaimSchema,
   ActionBatchSchema,
   ActionSchema,
   ActionTypeSchema,
@@ -82,6 +84,7 @@ export {
   CrossNodeDenied,
   DestroyConfirmRequired,
   DestroyProviderRefMismatch,
+  BotKeyRequired,
   BetaInviteRequired,
   BetaStoreRequired,
   DuplicateComputer,
@@ -92,9 +95,17 @@ export {
   PairCodeInvalid,
   ObserveRetryable,
   PathEscape,
+  ComputerAsleep,
+  ComputerRebuilt,
+  ComputerStarting,
+  ProviderNeedsReplacement,
   ProviderUnavailable,
   QuotaExceeded,
+  RebuildConfirmRequired,
+  InvalidActivityCursor,
   RestoreUnsupported,
+  ControlPlaneBusy,
+  RestartNotAvailable,
 } from "./errors.js";
 
 export type { ComputerProvider } from "./providers/provider.js";
@@ -167,6 +178,29 @@ export { digestEquals, sha256Hex } from "./digest.js";
 
 export { ComputerService, PAIR_IDENTITY_FAILURE_LIMIT } from "./service.js";
 export {
+  ACTIVITY_PAGE_DEFAULT,
+  ACTIVITY_PAGE_MAX,
+  ACTIVITY_RETENTION_DAYS,
+  ACTIVITY_RETENTION_MS,
+  ActivityEventSchema,
+  DASHBOARD_EVENT_KINDS,
+  MemoryActivityStore,
+  activityStoreFromEnv,
+  decodeActivityCursor,
+  encodeActivityCursor,
+  isRoundTripIsoTimestamp,
+  isDashboardEventKind,
+  paginateActivityEvents,
+  toActivityEvent,
+} from "./activity-store.js";
+export type {
+  ActivityEvent,
+  ActivityListOptions,
+  ActivityPage,
+  ActivityStore,
+  DashboardEventKind,
+} from "./activity-store.js";
+export {
   BETA_COST_WARNING,
   BETA_LIMITATIONS,
   BetaRegistry,
@@ -187,6 +221,9 @@ export {
 export {
   JsonFileControlPlaneStore,
   MemoryControlPlaneStore,
+  ControlPlaneSnapshotSchema,
+  StaleControlPlane,
+  assertSnapshotHasNoRawSecrets,
   controlPlaneStoreFromEnv,
 } from "./control-plane-store.js";
 export type { ControlPlaneStore, ControlPlaneSnapshot } from "./control-plane-store.js";

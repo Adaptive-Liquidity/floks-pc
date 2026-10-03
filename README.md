@@ -1,6 +1,8 @@
-# floks-pc
+# Staxions
 
-**FLOKS Agent Computer Cloud — every bot gets its own isolated computer.**
+**Staxions — private cloud computers for AI assistants.** Public site is `web/`. Launch env checklist: `docs/DEPLOY.md`. Draft plans: `web/lib/billing/catalog.ts`.
+
+This repository is the Staxions product (formerly FLOKS / FLOKS-PC internally): Next.js on Vercel, WorkOS AuthKit, Stripe subscriptions, Runloop Devboxes as the computers.
 
 An Agent Computer is a provider-backed machine assigned to exactly one Grok Bot through pair-code onboarding and scoped capability tokens. **Runloop Devbox is provider v1** (backend infrastructure, not the product name).
 
@@ -45,7 +47,7 @@ Historical C0–C6 (scaffold → pairing → MCP → shell/fs) are **CLOSED**. `
 
 ## Public site (UI only)
 
-The floks-pc.com frontend lives in `web/` (Next.js routes, layouts, CSS). It restyles the live night-metal door. It does not change pairing, MCP tools, Stripe webhooks, GCP, or the hour-meter. Production is untouched until an owner merges and deploys.
+The public Staxions site lives in `web/` (Next.js routes, layouts, CSS). Journey: create account → buy on `/pricing` → computer auto-provisions → pair on `/setup`. Production is untouched until an owner merges and deploys.
 
 ```bash
 cd web && npm ci && npm run dev   # http://127.0.0.1:3173

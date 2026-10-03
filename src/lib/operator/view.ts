@@ -27,7 +27,9 @@ export type OperatorEventKind =
   | "file"
   | "exec"
   | "fail-closed"
-  | "cleanup";
+  | "cleanup"
+  | "handoff"
+  | "lifecycle";
 
 export interface OperatorEvent {
   id: string;

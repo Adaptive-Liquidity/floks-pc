@@ -53,7 +53,7 @@ describe("C7 Chrome loopback CDP argv", () => {
   });
 
   it("guest helper speaks loopback CDP over Node WebSocket", () => {
-    assert.equal(CDP_HELPER_PATH, "/home/user/flok/.flok/cdp-ax.mjs");
+    assert.equal(CDP_HELPER_PATH, "/var/lib/flok/cdp-ax.mjs");
     assert.match(CDP_AX_HELPER_JS, /const BASE = 'http:\/\/127\.0\.0\.1:9222'/);
     assert.match(CDP_AX_HELPER_JS, /assertLoopbackWs\(page\.webSocketDebuggerUrl\)/);
     assert.match(CDP_AX_HELPER_JS, /new WebSocket\(page\.webSocketDebuggerUrl\)/);
@@ -77,29 +77,44 @@ describe("C7 Chrome loopback CDP argv", () => {
   });
 
   it("ensure script and SDK root-lock the guest CDP helper", () => {
-    assert.match(ENSURE_INTERACTIVE_SH, /chown root:root \/home\/user\/flok\/\.flok\/cdp-ax\.mjs/);
-    assert.match(ENSURE_INTERACTIVE_SH, /chmod 755 \/home\/user\/flok\/\.flok\/cdp-ax\.mjs/);
+    assert.match(ENSURE_INTERACTIVE_SH, /CTRL="\$\{FLOK_CONTROL_PLANE_DIR:-\/var\/lib\/flok\}"/);
+    assert.match(ENSURE_INTERACTIVE_SH, /chmod 0700 "\$CTRL"/);
+    assert.match(ENSURE_INTERACTIVE_SH, /cdp-ax\.mjs/);
+    assert.match(ENSURE_INTERACTIVE_SH, /chmod 0700 "\$CTRL\/\$helper"/);
     const here = dirname(fileURLToPath(import.meta.url));
     const sdk = readFileSync(join(here, "../../src/lib/computers/providers/runloop-sdk.ts"), "utf8");
     assert.match(sdk, /\.\.\.chromeLaunchArgv\(/);
     assert.match(sdk, /Popen\(sys\.argv\[1:\], start_new_session=True/);
     assert.doesNotMatch(sdk, /remote-debugging-address=0\.0\.0\.0/);
     assert.doesNotMatch(sdk, /sys\.argv\[1:\] \+ /);
-    const writeAt = sdk.indexOf("fsWrite(CDP_HELPER_PATH, Buffer.from(CDP_AX_HELPER_JS");
-    const lockAt = sdk.indexOf("lockRootExecutedAssets()");
-    const lastLock = sdk.lastIndexOf("await this.lockRootExecutedAssets()");
-    assert.ok(writeAt >= 0);
-    assert.ok(lockAt >= 0);
-    assert.ok(lastLock > writeAt);
+    const writeFn = sdk.indexOf("private async writeControlPlaneHelpers()");
+    const writeAt = sdk.indexOf("file_path: CDP_HELPER_PATH");
+    const lockFn = sdk.indexOf("private async lockRootExecutedAssets()");
+    assert.ok(writeFn >= 0 && writeAt > writeFn, "CDP helper write lives in writeControlPlaneHelpers");
+    assert.ok(lockFn > writeAt, "lockRootExecutedAssets follows the helper write");
+    const ensureBody = sdk.slice(
+      sdk.indexOf("async ensureInteractiveStack"),
+      sdk.indexOf("private async finishBrowser"),
+    );
+    assert.match(ensureBody, /await this.writeControlPlaneHelpers\(\)/);
+    assert.match(ensureBody, /await this.lockRootExecutedAssets\(\)/);
+    assert.ok(
+      ensureBody.indexOf("writeControlPlaneHelpers") < ensureBody.indexOf("lockRootExecutedAssets"),
+    );
+    assert.match(sdk, /writeControlPlaneHelpers/);
+    assert.match(sdk, /ensureBotUser/);
     assert.match(sdk, /argv: \["node", CDP_HELPER_PATH\]/);
     assert.match(sdk, /argv: \[CDP_NODE_BIN, CDP_HELPER_PATH\]/);
-    assert.match(sdk, /launchChromeForCdp/);
-    assert.match(sdk, /http:\/\/127\.0\.0\.1:9222\/json\/version/);
-    assert.match(sdk, /chrome-launch/);
+    assert.match(sdk, /ensureBrowser\(/);
+    assert.match(sdk, /BROWSER_START_URL/);
+    assert.doesNotMatch(sdk, /launchChromeForCdp/);
+    const browser = readFileSync(join(here, "../../src/lib/computers/providers/runloop-browser.ts"), "utf8");
+    assert.match(browser, /about:blank/);
+    assert.match(browser, /http:\/\/127\.0\.0\.1:9222\/json\/version/);
     assert.doesNotMatch(sdk, /argvAsUiUser\(\[CDP_NODE_BIN, CDP_HELPER_PATH\]\)/);
     assert.doesNotMatch(sdk, /argvAsUiUser\(\["node", CDP_HELPER_PATH\]\)/);
     assert.equal(CDP_NODE_BIN, "/usr/bin/node");
-    assert.match(sdk, /chmod 755 \$\{cdpHelper\}/);
+    assert.match(sdk, /chmod 0700 \$\{cdpHelper\}/);
     assert.match(sdk, /CdpAxDumpSchema\.safeParse\(parsed\)/);
   });
 });
