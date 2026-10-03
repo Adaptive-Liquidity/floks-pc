@@ -22,6 +22,9 @@ import {
 } from "./runloop-interactive.js";
 import {
   BOT_BROWSER_DIR,
+  UI_BROWSER_DIR,
+  UI_BROWSER_MARKER,
+  UI_HOME_DIR,
   CONTROL_PLANE_CDP_AX_PATH,
   CONTROL_PLANE_CDP_NAV_PATH,
   CONTROL_PLANE_CDP_RUNTIME_DIR,
@@ -389,6 +392,9 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     const file = this.openatFile(path);
     if (!file.ok) return file;
     if (file.file.isDir) return { ok: false, errorCode: "NOT_FOUND" };
+    if (file.file.content.length > GUEST_FS_MAX_BYTES) {
+      return { ok: false, errorCode: "FILE_TOO_LARGE" };
+    }
     this.noteRaceWin(file.fileKey, file.file.content);
     return { ok: true, data: Buffer.from(file.file.content) };
   }
@@ -630,7 +636,15 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
 
   /** flok-ui Chrome profile + cookies. Not a customer file view. */
   plantBrowserCookies(): void {
+    this.fs.set("/home", memDir("root", 0o755));
+    this.fs.set(UI_HOME_DIR, memDir("root", 0o755));
     this.controlPlaneMkdir(BROWSER_PROFILE_DIR, "flok-ui", 0o700);
+    this.controlPlaneWrite(
+      `${UI_BROWSER_DIR}/${UI_BROWSER_MARKER}`,
+      Buffer.from("root", "utf8"),
+      "root",
+      0o600,
+    );
     this.controlPlaneWrite(
       `${BROWSER_PROFILE_DIR}/Cookies`,
       Buffer.from("chrome-cookie-secret", "utf8"),
@@ -638,8 +652,14 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
       0o600,
     );
     this.controlPlaneWrite(
-      `${BOT_BROWSER_DIR}/Local State`,
+      `${UI_BROWSER_DIR}/Local State`,
       Buffer.from("browser-local-state", "utf8"),
+      "flok-ui",
+      0o600,
+    );
+    this.controlPlaneWrite(
+      `${BOT_BROWSER_DIR}/Local State`,
+      Buffer.from("legacy-browser-local-state", "utf8"),
       "flok-ui",
       0o600,
     );
@@ -920,34 +940,62 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     for (const [key, file] of this.fs) {
       if (!key.startsWith(prefix)) continue;
       const top = key.slice(prefix.length).split("/")[0];
-      if (top === ".browser" || top === ".flok") continue;
+      if (top === ".browser" || top === ".flok" || top?.startsWith(".browser.quarantine-")) continue;
       this.recordChown(key, FLOK_BOT_USER, true);
       if (file.symlinkTo) continue;
       file.owner = FLOK_BOT_USER;
     }
-    const browser = this.fs.get(BOT_BROWSER_DIR);
-    if (browser?.symlinkTo) {
-      this.refusedBrowserSymlink = true;
-      this.fs.delete(BOT_BROWSER_DIR);
-      for (const key of [...this.fs.keys()]) {
-        if (key.startsWith(`${BOT_BROWSER_DIR}/`)) this.fs.delete(key);
+    this.quarantineWorkspaceBrowser();
+    this.ensureUiBrowser();
+  }
+
+  private renameTree(from: string, to: string): void {
+    const keys = [...this.fs.keys()].filter((key) => key === from || key.startsWith(`${from}/`));
+    for (const key of keys) {
+      const file = this.fs.get(key);
+      if (!file) continue;
+      this.fs.set(key === from ? to : `${to}${key.slice(from.length)}`, file);
+      this.fs.delete(key);
+    }
+  }
+
+  private quarantineWorkspaceBrowser(): void {
+    const leftover = this.fs.get(BOT_BROWSER_DIR);
+    if (!leftover) return;
+    if (leftover.symlinkTo) this.refusedBrowserSymlink = true;
+    const q = `${BOT_BROWSER_DIR}.quarantine-${Date.now()}`;
+    this.renameTree(BOT_BROWSER_DIR, q);
+  }
+
+  private ensureUiBrowser(): void {
+    if (!this.fs.get("/home")) this.fs.set("/home", memDir("root", 0o755));
+    const home = this.fs.get("/home");
+    if (home?.symlinkTo) return;
+    this.fs.set(UI_HOME_DIR, memDir("root", 0o755));
+    this.recordChown(UI_HOME_DIR, "root", false);
+    const existing = this.fs.get(UI_BROWSER_DIR);
+    const marker = this.fs.get(`${UI_BROWSER_DIR}/${UI_BROWSER_MARKER}`);
+    const trusted =
+      Boolean(existing && existing.isDir && !existing.symlinkTo) &&
+      Boolean(marker && !marker.isDir && !marker.symlinkTo);
+    if (!trusted) {
+      if (existing) {
+        this.renameTree(UI_BROWSER_DIR, `${UI_BROWSER_DIR}.quarantine-${Date.now()}`);
+      }
+      this.fs.set(UI_BROWSER_DIR, memDir("flok-ui", 0o700));
+      this.fs.set(
+        `${UI_BROWSER_DIR}/${UI_BROWSER_MARKER}`,
+        memFile(Buffer.from("root", "utf8"), "root", 0o600),
+      );
+      this.fs.set(`${UI_BROWSER_DIR}/profile`, memDir("flok-ui", 0o700));
+    } else if (existing) {
+      existing.owner = "flok-ui";
+      existing.mode = 0o700;
+      if (!this.fs.get(`${UI_BROWSER_DIR}/profile`)) {
+        this.fs.set(`${UI_BROWSER_DIR}/profile`, memDir("flok-ui", 0o700));
       }
     }
-    if (!this.fs.get(BOT_BROWSER_DIR)) {
-      this.fs.set(BOT_BROWSER_DIR, memDir("flok-ui", 0o700));
-    }
-    const locked = this.fs.get(BOT_BROWSER_DIR);
-    if (locked && !locked.symlinkTo) {
-      this.recordChown(BOT_BROWSER_DIR, "flok-ui", true);
-      locked.owner = "flok-ui";
-      locked.mode = 0o700;
-      for (const [key, file] of this.fs) {
-        if (key === BOT_BROWSER_DIR || !key.startsWith(`${BOT_BROWSER_DIR}/`)) continue;
-        this.recordChown(key, "flok-ui", true);
-        if (file.symlinkTo) continue;
-        file.owner = "flok-ui";
-      }
-    }
+    this.recordChown(UI_BROWSER_DIR, "flok-ui", true);
   }
 
   private recordChown(path: string, user: string, recursive: boolean): void {

@@ -9,7 +9,7 @@ This is fail-closed **launch** security, not a claim of production-ready multi-t
 3. **Fail closed.** Illegal state transitions, expired codes, revoked capabilities, path escapes, and cross-Node access all reject.
 4. **No secrets in the guest.** Provider API keys (`RUNLOOP_API_KEY`), long-lived credentials, and Flok capability tokens never enter a Node VM or appear in MCP responses / audit content.
 5. **Metadata-only audit.** Terminal output, screenshots, cookies, and page contents are not persisted by default. C3B temporary screenshot files are deleted after collection.
-6. **Browser profiles are Node-private.** `/home/user/flok/.browser` (Chrome profile, cookies, screenshots) is `flok-ui` `0700` and reserved from every bot tool (`computer_fs`, `computer_exec`). Never copy it between Nodes. Never put control-plane secrets in it.
+6. **Browser profiles are Node-private.** `/home/flok-ui/.flok-browser` (Chrome profile, cookies, screenshots) is `flok-ui` `0700` under a root-owned `0755` parent, outside the flok-owned workspace. Reserved from every bot tool (`computer_fs`, `computer_exec`). Leftover `/home/user/flok/.browser` is quarantined on ensure and never adopted. Never copy it between Nodes. Never put control-plane secrets in it.
 
 ## Pairing
 
@@ -41,7 +41,7 @@ C5 (MCP gateway) tools call `ComputerService` — never a provider, never skip t
 ## C6: Shell & Filesystem Hardening
 
 - `computer_exec`: argv[] enforced (no shell strings by default). `mode: "shell"` requires `shell` scope. Limits: argv count ≤64, item length ≤8192, cwd ≤1024, timeout ≤600s, env keys ≤32, key length ≤128, value length ≤4096. Result includes exit_code, stdout, stderr, stdout_truncated, stderr_truncated, timed_out. No stack traces, provider refs, host paths, pair codes, capability tokens, Authorization headers, or provider keys in responses.
-- `computer_fs`: stat, list, read, write, mkdir, move, copy, delete as `flok` (OS permissions apply). Path jail at `/home/user/flok`: rejects ../, null bytes, `/proc`, `/sys`, `/dev`, `/var/lib/flok`, `/run/flok-cdp`, leftover `.flok`, and `.browser`. Opens with an `openat` walk (`O_NOFOLLOW|O_DIRECTORY` per component from the workspace root) as the same user — no resolve-then-act as root, no parent-dir symlink follow. Writes stream the body on stdin (never argv) so a 1MB file does not hit Linux `MAX_ARG_STRLEN`. Read/write bounded to 1MB; above that returns `FILE_TOO_LARGE`. Structured errors (PATH_ESCAPE, PERMISSION_DENIED, NOT_FOUND, FILE_TOO_LARGE, MISSING_CONTENT, UNSUPPORTED). No host path leaks.
+- `computer_fs`: stat, list, read, write, mkdir, move, copy, delete as `flok` (OS permissions apply). Path jail at `/home/user/flok`: rejects ../, null bytes, `/proc`, `/sys`, `/dev`, `/var/lib/flok`, `/run/flok-cdp`, leftover `.flok`, leftover `.browser`, and `/home/flok-ui/.flok-browser`. Opens with an `openat` walk (`O_NOFOLLOW|O_DIRECTORY` per component from the workspace root) as the same user — no resolve-then-act as root, no parent-dir symlink follow. Writes stream the body on stdin (never argv) so a 1MB file does not hit Linux `MAX_ARG_STRLEN`. Each write uses a unique `/var/lib/flok/fs-spec-<uuid>.json`. Read/write bounded to 1MB; above that returns `FILE_TOO_LARGE`. Structured errors (PATH_ESCAPE, PERMISSION_DENIED, NOT_FOUND, FILE_TOO_LARGE, MISSING_CONTENT, UNSUPPORTED). No host path leaks.
 - Capability required for every operation. `exec` scope for argv exec, `shell` scope for shell mode, `fs` scope for filesystem. Wrapper Bearer / account_id / session metadata alone cannot authorize.
 - Cross-Node denial: capability bound to exact computer_id + bird_id + flock_id. Revoked/expired/missing capability denied.
 - No secrets in responses or logs: pair codes, capability tokens, Authorization headers redacted.
@@ -84,10 +84,16 @@ C3B installs localhost-only x11vnc + noVNC (`127.0.0.1:6080`). That is **not** a
 
 C3B Chrome runs as dedicated non-root user `flok-ui` (uid 1500). The DnD
 Devbox remains root so Docker-in-Docker still works. `--no-sandbox` is not
-used. Browser profile `/home/user/flok/.browser/profile` is `700` and owned by
-`flok-ui`. The workspace is sticky `1775` so `flok` cannot rename or replace
-`.browser`. A planted `.browser` symlink is replaced with a real directory on
-ensure/wake (old computers keep working). Root screenshot helpers refuse to
+used. Browser profile `/home/flok-ui/.flok-browser/profile` is `700` and owned by
+`flok-ui` under a root-owned `0755` `/home/flok-ui`. Sticky `1775` on the
+workspace does **not** protect a `.browser` name there: `flok` owns that
+directory, so the kernel exempts it from the sticky rule. Chrome therefore
+lives outside the workspace. A leftover or planted `/home/user/flok/.browser`
+is quarantined (`*.quarantine-<ts>`) on ensure/wake and never adopted as
+`--user-data-dir`. An untrusted pre-existing `/home/flok-ui/.flok-browser`
+without a root `.flok-root` marker is quarantined the same way; chown/chmod
+use `O_DIRECTORY|O_NOFOLLOW` fds (`fchown`/`fchmod`), not a path. Old
+computers keep working (fresh profile). Root screenshot helpers refuse to
 follow symlinks (`openat` + `O_NOFOLLOW`). Bots cannot read cookies or the
 profile through `computer_fs` or `computer_exec`. Screenshots and profile
 management stay on internal control-plane paths. x11vnc/noVNC bind

@@ -21,7 +21,9 @@ import {
   CONTROL_PLANE_CDP_RUNTIME_DIR,
   CONTROL_PLANE_DIR,
   CONTROL_PLANE_EXECVP_PATH,
+  CONTROL_PLANE_FS_SPEC_RE,
   ENSURE_BOT_USER_SH,
+  ENSURE_UI_BROWSER_PY,
   FLOK_BOT_HOME,
   FLOK_BOT_PATH,
   FLOK_BOT_UID,
@@ -32,7 +34,10 @@ import {
   argvTouchesReserved,
   filterBotVisibleListing,
   isReservedControlPlanePath,
+  uniqueControlPlaneFsSpecPath,
   unwrapBotArgv,
+  UI_BROWSER_DIR,
+  UI_HOME_DIR,
 } from "../../src/lib/computers/providers/runloop-bot-user.js";
 import {
   argvAsUiUser,
@@ -138,11 +143,23 @@ describe("reserved control-plane paths", () => {
     assert.equal(isReservedControlPlanePath(`${RUNLOOP_WORKSPACE_ROOT}/notes.txt`), false);
     assert.equal(isReservedControlPlanePath(BOT_BROWSER_DIR), true);
     assert.equal(isReservedControlPlanePath(`${RUNLOOP_WORKSPACE_ROOT}/.browser/profile`), true);
+    assert.equal(isReservedControlPlanePath(`${RUNLOOP_WORKSPACE_ROOT}/.browser.quarantine-1/Cookies`), true);
+    assert.equal(isReservedControlPlanePath(UI_HOME_DIR), true);
+    assert.equal(isReservedControlPlanePath(UI_BROWSER_DIR), true);
     assert.equal(isReservedControlPlanePath(`${BROWSER_PROFILE_DIR}/Cookies`), true);
     assert.deepEqual(
-      filterBotVisibleListing(RUNLOOP_WORKSPACE_ROOT, ["notes.txt", ".flok", ".browser"]),
+      filterBotVisibleListing(RUNLOOP_WORKSPACE_ROOT, [
+        "notes.txt",
+        ".flok",
+        ".browser",
+        ".browser.quarantine-1",
+      ]),
       ["notes.txt"],
     );
+    const spec = uniqueControlPlaneFsSpecPath();
+    assert.equal(CONTROL_PLANE_FS_SPEC_RE.test(spec), true);
+    assert.equal(CONTROL_PLANE_FS_SPEC_RE.test(`${CONTROL_PLANE_DIR}/fs-spec.json`), false);
+    assert.notEqual(uniqueControlPlaneFsSpecPath(), spec);
     assert.equal(argvTouchesReserved(["cat", CONTROL_PLANE_EXECVP_PATH]), true);
     assert.equal(argvTouchesReserved(["ls", "-a", `${CONTROL_PLANE_DIR}/*`]), true);
     assert.equal(argvTouchesReserved(["find", "/run/flok-cdp"]), true);
@@ -167,9 +184,18 @@ describe("ensure-bot-user script contract", () => {
     assert.equal(ENSURE_BOT_USER_SH.startsWith("#!/bin/bash"), true);
     assert.match(ENSURE_BOT_USER_SH, /chown -h root:root "\$CTRL"/);
     assert.match(ENSURE_BOT_USER_SH, /chown -hP -R "\$BOT_USER:\$BOT_USER"/);
-    assert.match(ENSURE_BOT_USER_SH, /chown -hP -R "\$UI_USER:\$UI_USER" "\$WS\/\.browser"/);
-    assert.match(ENSURE_BOT_USER_SH, /replacing symlink \$WS\/\.browser/);
     assert.match(ENSURE_BOT_USER_SH, /chmod 1775 "\$WS"/);
+    assert.match(ENSURE_BOT_USER_SH, /FLOK_UI_HOME/);
+    assert.match(ENSURE_BOT_USER_SH, /python3 - <<'PY'/);
+    assert.match(ENSURE_UI_BROWSER_PY, /O_DIRECTORY/);
+    assert.match(ENSURE_UI_BROWSER_PY, /O_NOFOLLOW/);
+    assert.match(ENSURE_UI_BROWSER_PY, /fchown/);
+    assert.match(ENSURE_UI_BROWSER_PY, /fchmod/);
+    assert.match(ENSURE_UI_BROWSER_PY, /\.flok-browser/);
+    assert.match(ENSURE_UI_BROWSER_PY, /\.flok-root/);
+    assert.match(ENSURE_UI_BROWSER_PY, /quarantine-/);
+    assert.doesNotMatch(ENSURE_BOT_USER_SH, /chown -hP -R "\$UI_USER:\$UI_USER" "\$WS\/\.browser"/);
+    assert.doesNotMatch(ENSURE_BOT_USER_SH, /chmod 700 "\$WS\/\.browser"/);
     assert.doesNotMatch(ENSURE_BOT_USER_SH, /chown [^-].*"\$WS"/);
   });
 });
@@ -242,7 +268,9 @@ describe("computer_exec as flok (memory — not live Runloop proof)", () => {
       ["cat", `${RUNLOOP_WORKSPACE_ROOT}/.flok/../.flok/cdp-ax.mjs`],
       ["cat", `${BROWSER_PROFILE_DIR}/Cookies`],
       ["cat", `${BOT_BROWSER_DIR}/Local State`],
+      ["cat", `${UI_BROWSER_DIR}/Local State`],
       ["ls", "-a", BOT_BROWSER_DIR],
+      ["ls", "-a", UI_BROWSER_DIR],
       ["ls", BROWSER_PROFILE_DIR],
       ["bash", "-lc", `cat ${CONTROL_PLANE_EXECVP_PATH}`],
       ["bash", "-lc", `cat ${BROWSER_PROFILE_DIR}/Cookies`],
@@ -256,6 +284,7 @@ describe("computer_exec as flok (memory — not live Runloop proof)", () => {
       assert.doesNotMatch(r.stdout, /execvp/);
       assert.doesNotMatch(r.stdout, /chrome-cookie-secret/);
       assert.doesNotMatch(r.stdout, /browser-local-state/);
+      assert.doesNotMatch(r.stdout, /legacy-browser-local-state/);
     }
     const findHome = await p.exec(ref, {
       argv: ["find", RUNLOOP_WORKSPACE_ROOT, "-name", "execvp.py"],
@@ -292,9 +321,11 @@ describe("computer_fs cannot reach helpers (memory — not live Runloop proof)",
       "/etc/passwd",
       "/root/flok/execvp.py",
       BOT_BROWSER_DIR,
+      UI_BROWSER_DIR,
       BROWSER_PROFILE_DIR,
       `${BROWSER_PROFILE_DIR}/Cookies`,
       `${BOT_BROWSER_DIR}/Local State`,
+      `${UI_BROWSER_DIR}/Local State`,
       `${RUNLOOP_WORKSPACE_ROOT}/notes/../.browser/profile/Cookies`,
     ];
     for (const path of paths) {
@@ -435,7 +466,7 @@ describe("browser / screenshot / click still work after the switch", () => {
       path: `${BROWSER_PROFILE_DIR}/last-url`,
     });
     assert.equal(marker.ok, false);
-    assert.equal(marker.errorCode, "PERMISSION_DENIED");
+    assert.ok(marker.errorCode === "PERMISSION_DENIED" || marker.errorCode === "PATH_ESCAPE");
   });
 });
 
@@ -447,9 +478,11 @@ describe("computer_fs cannot reach the browser profile (memory — not live)", (
     session.plantControlPlaneHelpers();
     const attacks = [
       BOT_BROWSER_DIR,
+      UI_BROWSER_DIR,
       BROWSER_PROFILE_DIR,
       `${BROWSER_PROFILE_DIR}/Cookies`,
       `${BOT_BROWSER_DIR}/Local State`,
+      `${UI_BROWSER_DIR}/Local State`,
       CONTROL_PLANE_DIR,
       CONTROL_PLANE_EXECVP_PATH,
     ];
@@ -609,46 +642,75 @@ describe("computer_fs size cap and byte-exact round-trip (memory)", () => {
     });
     assert.equal(viaProvider.ok, false);
     assert.equal(viaProvider.errorCode, "FILE_TOO_LARGE");
+    const mem = session as unknown as MemorySession;
+    mem.plantOwnedFile(
+      `${RUNLOOP_WORKSPACE_ROOT}/already-huge.bin`,
+      Buffer.alloc(GUEST_FS_MAX_BYTES + 1, 0x46).toString("latin1"),
+      FLOK_BOT_USER,
+    );
+    const hugeRead = await session.fsRead(`${RUNLOOP_WORKSPACE_ROOT}/already-huge.bin`);
+    assert.equal(hugeRead.ok, false);
+    assert.equal(hugeRead.errorCode, "FILE_TOO_LARGE");
   });
 });
 
-describe(".browser ownership and sticky workspace (memory)", () => {
-  it("owns .browser as flok-ui, sticky workspace, and replaces a planted symlink on wake", async () => {
+describe("Chrome profile lives outside the workspace (memory)", () => {
+  it("creates a marked flok-ui profile under a root-owned home and quarantines leftovers", async () => {
     const { plane, p } = provider();
-    const a = await p.provision({ birdId: "browser-sticky", flockId: "f" });
+    const a = await p.provision({ birdId: "browser-outside", flockId: "f" });
     const session = (await plane.get(a.providerRef)) as unknown as MemorySession;
     assert.equal(session.peekMode(RUNLOOP_WORKSPACE_ROOT), 0o1775);
-    assert.equal(session.peekOwner(BOT_BROWSER_DIR), FLOK_UI_USER);
-    assert.equal(session.peekMode(BOT_BROWSER_DIR), 0o700);
-    assert.equal(session.peekIsSymlink(BOT_BROWSER_DIR), false);
+    assert.equal(session.peekExists(BOT_BROWSER_DIR), false);
+    assert.equal(session.peekOwner(UI_HOME_DIR), "root");
+    assert.equal(session.peekMode(UI_HOME_DIR), 0o755);
+    assert.equal(session.peekOwner(UI_BROWSER_DIR), FLOK_UI_USER);
+    assert.equal(session.peekMode(UI_BROWSER_DIR), 0o700);
+    assert.equal(session.peekExists(`${UI_BROWSER_DIR}/.flok-root`), true);
+    assert.equal(session.peekIsSymlink(UI_BROWSER_DIR), false);
 
-    session.plantSymlink(BOT_BROWSER_DIR, "/tmp/evil-browser");
-    assert.equal(session.peekIsSymlink(BOT_BROWSER_DIR), true);
+    session.plantOwnedDir(BOT_BROWSER_DIR, FLOK_BOT_USER);
+    session.plantOwnedFile(`${BOT_BROWSER_DIR}/Cookies`, "stolen-cookies", FLOK_BOT_USER);
     session.botUserReady = false;
     await session.ensureBotUser();
-    assert.equal(session.peekIsSymlink(BOT_BROWSER_DIR), false);
-    assert.equal(session.peekOwner(BOT_BROWSER_DIR), FLOK_UI_USER);
-    assert.equal(session.peekMode(BOT_BROWSER_DIR), 0o700);
-    assert.equal(session.peekMode(RUNLOOP_WORKSPACE_ROOT), 0o1775);
+    assert.equal(session.peekExists(BOT_BROWSER_DIR), false);
+    assert.equal(
+      session.peekList(RUNLOOP_WORKSPACE_ROOT).some((name) => name.startsWith(".browser.quarantine-")),
+      true,
+    );
+    assert.equal(session.peekOwner(UI_BROWSER_DIR), FLOK_UI_USER);
+    assert.equal(session.peekExists(`${UI_BROWSER_DIR}/.flok-root`), true);
 
-    session.plantSymlink(BOT_BROWSER_DIR, "/tmp/evil-browser-2");
+    session.plantOwnedDir(UI_BROWSER_DIR, FLOK_BOT_USER);
+    session.plantOwnedFile(`${UI_BROWSER_DIR}/Cookies`, "flok-planted", FLOK_BOT_USER);
+    session.plantOwnedDir(`${UI_BROWSER_DIR}/.flok-root`, FLOK_BOT_USER);
+    session.botUserReady = false;
+    await session.ensureBotUser();
+    assert.equal(session.peekRead(`${UI_BROWSER_DIR}/Cookies`)?.toString("utf8"), undefined);
+    assert.equal(session.peekExists(`${UI_BROWSER_DIR}/.flok-root`), true);
+    assert.equal(
+      session.peekList(UI_HOME_DIR).some((name) => name.startsWith(".flok-browser.quarantine-")),
+      true,
+    );
+
+    session.plantSymlink(BOT_BROWSER_DIR, "/tmp/evil-browser");
     await p.pause(a.providerRef);
     await p.wake(a.providerRef);
     const afterWake = (await plane.get(a.providerRef)) as unknown as MemorySession;
-    assert.equal(afterWake.peekIsSymlink(BOT_BROWSER_DIR), false);
-    assert.equal(afterWake.peekOwner(BOT_BROWSER_DIR), FLOK_UI_USER);
+    assert.equal(afterWake.peekExists(BOT_BROWSER_DIR), false);
+    assert.equal(afterWake.peekIsSymlink(UI_BROWSER_DIR), false);
+    assert.equal(afterWake.peekOwner(UI_BROWSER_DIR), FLOK_UI_USER);
 
     const mv = await p.exec(a.providerRef, {
-      argv: ["mv", BOT_BROWSER_DIR, `${RUNLOOP_WORKSPACE_ROOT}/stolen-browser`],
+      argv: ["mv", UI_BROWSER_DIR, `${RUNLOOP_WORKSPACE_ROOT}/stolen-browser`],
     });
     assert.notEqual(mv.exitCode, 0);
-    assert.equal(afterWake.peekExists(BOT_BROWSER_DIR), true);
-    assert.equal(afterWake.peekOwner(BOT_BROWSER_DIR), FLOK_UI_USER);
+    assert.equal(afterWake.peekExists(UI_BROWSER_DIR), true);
+    assert.equal(afterWake.peekOwner(UI_BROWSER_DIR), FLOK_UI_USER);
     const ln = await p.exec(a.providerRef, {
-      argv: ["ln", "-s", "/tmp/evil", BOT_BROWSER_DIR],
+      argv: ["ln", "-s", "/tmp/evil", UI_BROWSER_DIR],
     });
     assert.notEqual(ln.exitCode, 0);
-    assert.equal(afterWake.peekIsSymlink(BOT_BROWSER_DIR), false);
+    assert.equal(afterWake.peekIsSymlink(UI_BROWSER_DIR), false);
   });
 });
 
@@ -720,8 +782,15 @@ describe("customer fs guest scripts are nofollow and not root file API", () => {
       assert.equal(body.includes("box.file.download"), false);
     }
     const specWrite = sdk.slice(sdk.indexOf("private async execViaSpecFile("));
-    assert.match(specWrite, /CONTROL_PLANE_FS_SPEC_PATH/);
+    assert.match(specWrite, /uniqueControlPlaneFsSpecPath/);
     assert.match(specWrite, /--spec-file/);
+    assert.match(sdk, /fs-spec-\[0-9a-f-\]\{36\}/);
+    assert.match(sdk, /st_nlink/);
+    assert.match(sdk, /st_uid/);
+    assert.match(sdk, /os\.unlink\(path\)/);
+    assert.equal(specWrite.includes("CONTROL_PLANE_FS_SPEC_PATH"), false);
+    assert.equal(specWrite.includes("/var/lib/flok/fs-spec.json"), false);
+    assert.equal(specWrite.includes("if [ -L"), false);
     assert.equal(specWrite.includes("/home/user/flok/"), false);
   });
 });

@@ -75,24 +75,31 @@ import {
   CONTROL_PLANE_BOT_USER_PATH,
   CONTROL_PLANE_DIR,
   CONTROL_PLANE_EXECVP_PATH,
-  CONTROL_PLANE_FS_SPEC_PATH,
   ENSURE_BOT_USER_SH,
   FLOK_BOT_USER,
   argvAsBotUser,
   isReservedControlPlanePath,
+  uniqueControlPlaneFsSpecPath,
 } from "./runloop-bot-user.js";
 
 const EXECVP_PY = [
-  "import os, sys, json, base64",
-  "SPEC='/var/lib/flok/fs-spec.json'",
+  "import os, sys, json, base64, re, stat",
+  "SPEC_RE=re.compile(r'^/var/lib/flok/fs-spec-[0-9a-f-]{36}\\.json$')",
   "def load_spec():",
   "    if len(sys.argv) >= 3 and sys.argv[1] == '--spec-file':",
   "        path = sys.argv[2]",
-  "        if path != SPEC:",
+  "        if not SPEC_RE.match(path):",
   "            sys.stderr.write('permission denied'); sys.exit(1)",
   "        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NOCTTY",
   "        fd = os.open(path, flags)",
   "        try:",
+  "            st = os.fstat(fd)",
+  "            if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_nlink != 1:",
+  "                sys.stderr.write('permission denied'); sys.exit(1)",
+  "            os.fchmod(fd, 0o600)",
+  "            st = os.fstat(fd)",
+  "            if (st.st_mode & 0o077) != 0:",
+  "                sys.stderr.write('permission denied'); sys.exit(1)",
   "            chunks = []",
   "            while True:",
   "                b = os.read(fd, 65536)",
@@ -100,9 +107,16 @@ const EXECVP_PY = [
   "                chunks.append(b)",
   "                if sum(len(x) for x in chunks) > 8000000:",
   "                    sys.stderr.write('file too large'); sys.exit(1)",
-  "            return json.loads(b''.join(chunks))",
+  "            data = json.loads(b''.join(chunks))",
   "        finally:",
   "            os.close(fd)",
+  "        try:",
+  "            os.unlink(path)",
+  "        except FileNotFoundError:",
+  "            pass",
+  "        except OSError:",
+  "            sys.stderr.write('permission denied'); sys.exit(1)",
+  "        return data",
   "    return json.loads(base64.b64decode(sys.argv[1]))",
   "def write_all(fd, data):",
   "    off = 0",
@@ -964,24 +978,14 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     cwd: string;
     stdin_b64?: string;
   }): Promise<RunloopExecResult> {
+    const specPath = uniqueControlPlaneFsSpecPath();
     await this.box.file.write({
-      file_path: CONTROL_PLANE_FS_SPEC_PATH,
+      file_path: specPath,
       contents: JSON.stringify(payload),
     });
-    const spec = shellSingle(CONTROL_PLANE_FS_SPEC_PATH);
+    const spec = shellSingle(specPath);
     const execvp = shellSingle(EXECVP_PATH);
     try {
-      const guard = await this.box.cmd.exec(
-        `if [ -L ${spec} ]; then echo refusing symlink ${spec} >&2; exit 1; fi; chmod 0600 ${spec}`,
-      );
-      if ((guard.exitCode ?? 1) !== 0) {
-        return {
-          exitCode: 1,
-          stdout: "",
-          stderr: await guard.stderr(),
-          timedOut: false,
-        };
-      }
       const result = await this.box.cmd.exec(`python3 ${execvp} --spec-file ${spec}`, {
         optimistic_timeout: 15,
       });

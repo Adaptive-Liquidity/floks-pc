@@ -51,14 +51,20 @@ RUN set -euo pipefail \
     && if ! id -u flok >/dev/null 2>&1; then \
          useradd -M -u 1501 -g 1501 -d /home/user/flok -s /bin/bash flok; \
        fi \
-    && mkdir -p /home/user/flok/.browser/profile /var/lib/flok /run/user/1500 \
+    && mkdir -p /home/user/flok /home/flok-ui/.flok-browser/profile \
+         /home/flok-ui/.config /home/flok-ui/.cache /home/flok-ui/.pki /home/flok-ui/.local \
+         /var/lib/flok /run/user/1500 \
     && chown flok:flok /home/user/flok \
     && chmod 1775 /home/user/flok \
-    && chown -R flok-ui:flok-ui /home/flok-ui /home/user/flok/.browser /run/user/1500 \
+    && chown root:root /home/flok-ui \
+    && chmod 0755 /home/flok-ui \
+    && chown -R flok-ui:flok-ui /home/flok-ui/.flok-browser /home/flok-ui/.config \
+         /home/flok-ui/.cache /home/flok-ui/.pki /home/flok-ui/.local /run/user/1500 \
+    && install -o root -g root -m 0600 /dev/null /home/flok-ui/.flok-browser/.flok-root \
     && chown root:root /var/lib/flok \
     && chmod 0700 /var/lib/flok \
     && echo "flok uid=$(id -u flok) home=/home/user/flok nosudo=1" > /etc/flok-bot-user \
-    && chmod 700 /home/user/flok/.browser /home/user/flok/.browser/profile /run/user/1500 \
+    && chmod 700 /home/flok-ui/.flok-browser /home/flok-ui/.flok-browser/profile /run/user/1500 \
     && SANDBOX="$(find /opt/google -name chrome-sandbox -type f 2>/dev/null | head -1 || true)" \
     && test -n "$SANDBOX" \
     && chmod 4755 "$SANDBOX" \

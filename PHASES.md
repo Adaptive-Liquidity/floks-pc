@@ -337,7 +337,7 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
 ### Implement
 - Reproducible interactive Blueprint under `blueprints/runloop-interactive/` based on `FROM runloop:runloop/universal-ubuntu-24.04-x86_64-dnd`
 - Graphical stack as non-root `flok-ui`; Chrome without `--no-sandbox`
-- Persistent profile `/home/user/flok/.browser/profile`
+- Persistent profile `/home/flok-ui/.flok-browser/profile`
 - `ensureInteractiveStack()` after provision, restore, and resume (disk survives suspend; RAM/processes do not)
 - `observe()` screenshot from `:99`
 - Bounded `act()`: click_coordinates, type, key, scroll, open_url, wait; `click_element` fail-closed
@@ -364,14 +364,14 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
   - Live case `one Devbox: stack, fixture, observe, input, profile, suspend/resume, local noVNC, cleanup` **64.1s, not skipped**
   - Chrome 151.0.7922.173; blueprint default `flok-runloop-interactive`
 - Live proofs encoded in `tests/live/runloop.c3b.live.test.ts` (all asserted; suite would fail otherwise):
-  - Chrome readiness / profile initialization (`pollUntilChromeReady`, `requireProfile: true`; `filesystem.list` of `/home/user/flok/.browser/profile` non-empty)
+  - Chrome readiness / profile initialization (`pollUntilChromeReady`, `requireProfile: true`; `filesystem.list` of `/home/flok-ui/.flok-browser/profile` non-empty)
   - Real screenshot (`observe` 1440×900 PNG IHDR; no accessibility fabrications)
   - `click_coordinates` / `type` / `key` / `scroll` all `success: true`
   - Localhost noVNC (`http://127.0.0.1:6080/`)
   - No public VNC (ports 5900 and 6080 listen on loopback only)
   - Suspend / resume: profile marker `c3b-marker` survived disk suspend
   - Graphical stack recovery: Xvfb `:99` + Openbox + Chrome-ready after resume; screenshot after resume
-  - Profile persistence: Chrome `--user-data-dir=/home/user/flok/.browser/profile` without `--no-sandbox`
+  - Profile persistence: Chrome `--user-data-dir=/home/flok-ui/.flok-browser/profile` without `--no-sandbox`
   - Devbox cleanup: `finally` `destroy` (no `destroy failed` log)
 - Isolation: zero writes under Floks-main
 - Nexus / graph flags remain false

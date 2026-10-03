@@ -41,11 +41,14 @@ assert.equal(bot.isReservedControlPlanePath("/var/lib/flok/execvp.py"), true);
 assert.equal(bot.isReservedControlPlanePath("/home/user/flok/.flok/cdp-ax.mjs"), true);
 assert.equal(bot.isReservedControlPlanePath("/run/flok-cdp/ws"), true);
 assert.equal(bot.isReservedControlPlanePath("/home/user/flok/.browser/profile/Cookies"), true);
+assert.equal(bot.isReservedControlPlanePath("/home/flok-ui/.flok-browser/profile/Cookies"), true);
 assert.equal(bot.isReservedControlPlanePath("/home/user/flok/notes.txt"), false);
 assert.match(bot.ENSURE_BOT_USER_SH, /chown -hP -R/);
 assert.match(bot.ENSURE_BOT_USER_SH, /chown -h /);
 assert.match(bot.ENSURE_BOT_USER_SH, /chmod 1775/);
-assert.match(bot.ENSURE_BOT_USER_SH, /replacing symlink/);
+assert.match(bot.ENSURE_BOT_USER_SH, /python3 - <<'PY'/);
+assert.match(bot.ENSURE_UI_BROWSER_PY, /fchown/);
+assert.match(bot.ENSURE_UI_BROWSER_PY, /\.flok-browser/);
 
 const computers = await import(pathToFileURL(distIndex).href);
 const plane = new computers.MemoryRunloopControlPlane();
@@ -73,6 +76,11 @@ const profileList = await p.filesystem(a.providerRef, {
   path: "/home/user/flok/.browser",
 });
 assert.equal(profileList.ok, false);
+const uiProfile = await p.filesystem(a.providerRef, {
+  operation: "read",
+  path: "/home/flok-ui/.flok-browser/profile/Cookies",
+});
+assert.equal(uiProfile.ok, false);
 const obs = await p.observe(a.providerRef, { includeScreenshot: true });
 assert.equal(obs.screenWidth, 1440);
 assert.ok(obs.screenshotBase64 && obs.screenshotBase64.length > 10);

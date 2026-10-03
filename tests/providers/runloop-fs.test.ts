@@ -84,6 +84,8 @@ describe("L1 Runloop guest file helpers", () => {
     }
     assert.match(GUEST_NOFOLLOW_WRITE_STDIN_PY, /sys\.stdin\.buffer\.read/);
     assert.match(GUEST_NOFOLLOW_WRITE_STDIN_PY, /file too large/);
+    assert.match(GUEST_NOFOLLOW_READ_B64_PY, /read_capped/);
+    assert.match(GUEST_NOFOLLOW_READ_B64_PY, /file too large/);
     assert.equal(GUEST_NOFOLLOW_WRITE_STDIN_PY.includes("sys.argv[2]"), false);
     assert.equal(GUEST_NOFOLLOW_WRITE_STDIN_PY.includes("b64decode"), false);
     assert.equal(GUEST_FS_MAX_BYTES, 1_000_000);
@@ -92,7 +94,7 @@ describe("L1 Runloop guest file helpers", () => {
 
 describe("guest write stdin + openat (local python3)", () => {
   function patchRoot(code: string, root: string): string {
-    return code.replace("ROOT='/home/user/flok'", `ROOT=${JSON.stringify(root)}`);
+    return code.replace('ROOT="/home/user/flok"', `ROOT=${JSON.stringify(root)}`);
   }
 
   function runGuest(
@@ -139,6 +141,11 @@ describe("guest write stdin + openat (local python3)", () => {
       const fail = runGuest(GUEST_NOFOLLOW_WRITE_STDIN_PY, root, [tooBig], over);
       assert.notEqual(fail.status, 0);
       assert.match(fail.stderr, /file too large/);
+      const planted = join(root, "planted-over.bin");
+      writeFileSync(planted, over);
+      const readOver = runGuest(GUEST_NOFOLLOW_READ_B64_PY, root, [planted]);
+      assert.notEqual(readOver.status, 0);
+      assert.match(readOver.stderr, /file too large/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

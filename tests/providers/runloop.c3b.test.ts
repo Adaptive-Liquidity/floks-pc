@@ -165,14 +165,16 @@ describe("C3B Dockerfile and ensure contract", () => {
     assert.match(dockerfile, /chmod 1775 \/home\/user\/flok/);
     assert.match(
       dockerfile,
-      /chmod 700 \/home\/user\/flok\/\.browser \/home\/user\/flok\/\.browser\/profile/,
+      /chmod 700 \/home\/flok-ui\/\.flok-browser \/home\/flok-ui\/\.flok-browser\/profile/,
     );
+    assert.match(dockerfile, /chown root:root \/home\/flok-ui/);
+    assert.match(dockerfile, /\.flok-root/);
     assert.equal(/^(RUN|CMD|ENTRYPOINT).*(--no-sandbox)/m.test(dockerfile), false);
     assert.match(dockerfile, /chown root:root \/var\/lib\/flok/);
     assert.match(dockerfile, /chmod 0700 \/var\/lib\/flok/);
     assert.match(dockerfile, /useradd -M -u 1501/);
     assert.match(dockerfile, /BLUEPRINT REBUILD NOT REQUIRED/);
-    assert.doesNotMatch(dockerfile, /chown -R flok-ui:flok-ui[^\n]*\.flok/);
+    assert.doesNotMatch(dockerfile, /chown -R flok-ui:flok-ui[^\n]*\/home\/user\/flok\/\.flok/);
     assert.doesNotMatch(dockerfile, /NOPASSWD|sudoers/);
   });
 
@@ -182,7 +184,7 @@ describe("C3B Dockerfile and ensure contract", () => {
       assert.match(src, /x11vnc .* -localhost /);
       assert.match(src, /127\.0\.0\.1:\$\{NOVNC_PORT\}/);
       assert.match(src, /rm -f \/tmp\/\.X11-unix\/X99 \/tmp\/\.X99-lock/);
-      assert.match(src, /chmod 700 "\$PROFILE"/);
+      assert.match(src, /\/home\/flok-ui\/\.flok-browser\/profile/);
       assert.match(src, /\/tmp\/flok-chrome\.log/);
       assert.match(src, /not a regular file/);
       assert.match(src, /chmod 640 \/tmp\/flok-chrome\.log/);
@@ -192,10 +194,15 @@ describe("C3B Dockerfile and ensure contract", () => {
       assert.match(src, /CTRL="\$\{FLOK_CONTROL_PLANE_DIR:-\/var\/lib\/flok\}"/);
       assert.match(src, /chmod 0700 "\$CTRL"/);
       assert.match(src, /rm -rf \/home\/user\/flok\/\.flok/);
-      assert.match(src, /chown -hP -R "\$UI_USER:\$UI_USER" \/home\/user\/flok\/\.browser/);
-      assert.match(src, /replacing symlink \/home\/user\/flok\/\.browser/);
+      assert.match(src, /python3 - <<'PY'/);
+      assert.match(src, /fchown/);
+      assert.match(src, /fchmod/);
+      assert.match(src, /O_NOFOLLOW/);
+      assert.match(src, /quarantine-/);
       assert.match(src, /chmod 1775 \/home\/user\/flok/);
       assert.match(src, /chown -h root:root "\$CTRL"/);
+      assert.doesNotMatch(src, /chown -hP -R "\$UI_USER:\$UI_USER" \/home\/user\/flok\/\.browser/);
+      assert.doesNotMatch(src, /chmod 700 "\$PROFILE"/);
       assert.doesNotMatch(src, /chown -R .* \/home\/user\/flok\/\.browser \/home\/user\/flok\/\.flok/);
       assert.doesNotMatch(src, /--no-sandbox/);
       assert.doesNotMatch(src, /chmod 777/);
@@ -368,7 +375,7 @@ describe("C3B RunloopProvider (memory)", () => {
     assert.equal(r.results[3]?.error, "not executed");
   });
 
-  it("uniqueObsShotPath is under .browser and unique per call", () => {
+  it("uniqueObsShotPath is under the UI browser dir and unique per call", () => {
     const a = uniqueObsShotPath();
     const b = uniqueObsShotPath();
     assert.notEqual(a, b);
@@ -378,7 +385,7 @@ describe("C3B RunloopProvider (memory)", () => {
     assert.equal(a.includes("/.flok/"), false);
   });
 
-  it("browser profile is under the workspace but reserved from computer_fs", async () => {
+  it("browser profile is outside the workspace and reserved from computer_fs", async () => {
     const plane = new MemoryRunloopControlPlane();
     const p = new RunloopProvider({ client: plane, blueprint: "memory" });
     const a = await p.provision({ birdId: "prof", flockId: "f" });
@@ -397,7 +404,7 @@ describe("C3B RunloopProvider (memory)", () => {
       path: `${BROWSER_PROFILE_DIR}/last-url`,
     });
     assert.equal(marker.ok, false);
-    assert.equal(marker.errorCode, "PERMISSION_DENIED");
+    assert.ok(marker.errorCode === "PERMISSION_DENIED" || marker.errorCode === "PATH_ESCAPE");
   });
 
   it("two Devboxes do not share browser profiles", async () => {
@@ -440,7 +447,7 @@ describe("C3B RunloopProvider (memory)", () => {
       path: `${BROWSER_PROFILE_DIR}/last-url`,
     });
     assert.equal(kept.ok, false);
-    assert.equal(kept.errorCode, "PERMISSION_DENIED");
+    assert.ok(kept.errorCode === "PERMISSION_DENIED" || kept.errorCode === "PATH_ESCAPE");
   });
 
   it("takeover remains fail-closed; vnc capability false", async () => {
@@ -478,7 +485,7 @@ describe("C3B RunloopProvider (memory)", () => {
 });
 
 const CHROME_CMD =
-  "1500 google-chrome-stable --user-data-dir=/home/user/flok/.browser/profile --window-size=1440,900 --app=file:///home/user/flok/.flok/fixture.html";
+  "1500 google-chrome-stable --user-data-dir=/home/flok-ui/.flok-browser/profile --window-size=1440,900 --app=file:///home/user/flok/fixture.html";
 
 function evidence(over: Partial<ChromeReadyEvidence> = {}): ChromeReadyEvidence {
   return {
@@ -732,7 +739,7 @@ describe("C3B Chrome readiness classification", () => {
     assert.equal(chromeHasUserDataDir(parsed.chromeCmdlines[0] ?? ""), true);
     assert.doesNotMatch(parsed.chromeLogTail, /api_key/);
     assert.match(CHROME_READY_PROBE_PY, /\/tmp\/flok-chrome\.log/);
-    assert.match(CHROME_READY_PROBE_PY, /\/home\/user\/flok\/\.browser\/profile/);
+    assert.match(CHROME_READY_PROBE_PY, /\/home\/flok-ui\/\.flok-browser\/profile/);
     assert.match(CHROME_READY_PROBE_PY, /flok-ui/);
     assert.match(CHROME_READY_PROBE_PY, /unprivileged_userns_clone/);
     assert.equal(CHROME_LOG_PATH, "/tmp/flok-chrome.log");

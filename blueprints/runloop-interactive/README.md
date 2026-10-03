@@ -21,9 +21,10 @@ Runloop's DnD profile is **root**. The graphical stack does **not** run as root.
 | `flok` (uid 1501, home `/home/user/flok`) | `computer_exec` / `computer_fs` default. **No sudo.** |
 
 Workspace stays `/home/user/flok` (`flok:flok`, sticky mode 1775). Browser profile
-`/home/user/flok/.browser/profile` is `flok-ui:flok-ui` mode 700. Helpers live
-in `/var/lib/flok` (root:root, mode `0700`) and are not in the customer file
-view.
+`/home/flok-ui/.flok-browser/profile` is `flok-ui:flok-ui` mode 700 under a
+root-owned `0755` `/home/flok-ui`. Sticky does not protect a workspace `.browser`
+(the directory owner is exempt). Helpers live in `/var/lib/flok` (root:root,
+mode `0700`) and are not in the customer file view.
 
 **Blueprint rebuild is not required** for the `flok` user or `/var/lib/flok`.
 Older computers create both lazily on wake/ensure. The Dockerfile change is

@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { posix as pathPosix } from "node:path";
 import type { Action } from "../types.js";
 import { RUNLOOP_WORKSPACE_ROOT } from "./runloop-client.js";
-import { CONTROL_PLANE_DIR } from "./runloop-bot-user.js";
+import { CONTROL_PLANE_DIR, ENSURE_UI_BROWSER_PY, UI_BROWSER_DIR } from "./runloop-bot-user.js";
 import { CDP_DEBUG_ADDRESS, CDP_DEBUG_PORT } from "./runloop-cdp.js";
 
 export {
@@ -31,11 +31,11 @@ export const FLOK_DISPLAY = ":99";
 export const DISPLAY_WIDTH = 1440;
 export const DISPLAY_HEIGHT = 900;
 export const DISPLAY_DEPTH = 24;
-export const BROWSER_PROFILE_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser/profile`;
+export const BROWSER_PROFILE_DIR = `${UI_BROWSER_DIR}/profile`;
 /** Root-owned helpers. Not in the customer workspace file view. */
 export const INTERACTIVE_DIR = CONTROL_PLANE_DIR;
 /** Unique PNG path under the flok-ui-writable browser dir (not root-locked helpers). */
-export const OBS_SHOT_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser`;
+export const OBS_SHOT_DIR = UI_BROWSER_DIR;
 export function uniqueObsShotPath(): string {
   return `${OBS_SHOT_DIR}/obs-${randomUUID()}.png`;
 }
@@ -530,8 +530,8 @@ export const CHROME_READY_PROBE_PY = [
   "import json,os,subprocess,pathlib",
   "UID=1500",
   "USER='flok-ui'",
-  "PROFILE='/home/user/flok/.browser/profile'",
-  "BROWSER='/home/user/flok/.browser'",
+  "PROFILE='/home/flok-ui/.flok-browser/profile'",
+  "BROWSER='/home/flok-ui/.flok-browser'",
   "WS='/home/user/flok'",
   "LOG='/tmp/flok-chrome.log'",
   "FALLBACK='/home/flok-ui/.config/google-chrome'",
@@ -608,7 +608,7 @@ export const CHROME_READY_PROBE_PY = [
   "def userns():",
   "    try: return pathlib.Path('/proc/sys/kernel/unprivileged_userns_clone').read_text().strip()",
   "    except Exception: return None",
-  "cmd=pgrep('google-chrome')+pgrep('--user-data-dir=/home/user/flok/.browser/profile')",
+  "cmd=pgrep('google-chrome')+pgrep('--user-data-dir=/home/flok-ui/.flok-browser/profile')",
   "seen=set(); cmdlines=[]",
   "for ln in cmd:",
   "    if ln not in seen: seen.add(ln); cmdlines.append(ln)",
@@ -652,7 +652,7 @@ export DISPLAY="\${FLOK_DISPLAY:-:99}"
 WIDTH="\${FLOK_DISPLAY_WIDTH:-1440}"
 HEIGHT="\${FLOK_DISPLAY_HEIGHT:-900}"
 DEPTH="\${FLOK_DISPLAY_DEPTH:-24}"
-PROFILE="\${FLOK_BROWSER_PROFILE:-/home/user/flok/.browser/profile}"
+PROFILE="\${FLOK_BROWSER_PROFILE:-/home/flok-ui/.flok-browser/profile}"
 RUNDIR="/tmp/flok-interactive"
 NOVNC_PORT="\${FLOK_NOVNC_PORT:-6080}"
 UI_USER="\${FLOK_UI_USER:-${FLOK_UI_USER}}"
@@ -661,11 +661,12 @@ UI_UID="\${FLOK_UI_UID:-${FLOK_UI_UID}}"
 XDG_RUNTIME_DIR="/run/user/\${UI_UID}"
 
 mkdir -p "$RUNDIR"
-if [ -L /home/user/flok/.browser ]; then
-  echo "replacing symlink /home/user/flok/.browser with a directory" >&2
-  rm -f /home/user/flok/.browser
-fi
-mkdir -p /home/user/flok/.browser
+export FLOK_UI_HOME="$UI_HOME"
+export FLOK_UI_UID="$UI_UID"
+export FLOK_BOT_HOME="/home/user/flok"
+python3 - <<'PY'
+${ENSURE_UI_BROWSER_PY}
+PY
 
 if ! command -v Xvfb >/dev/null 2>&1; then
   echo "ok missing-xvfb profile=$PROFILE"
@@ -702,14 +703,9 @@ for helper in execvp.py ensure-interactive.sh ensure-bot-user.sh cdp-ax.mjs cdp-
   fi
 done
 rm -rf /home/user/flok/.flok
-if [ -L /home/user/flok/.browser ]; then
-  echo "replacing symlink /home/user/flok/.browser with a directory" >&2
-  rm -f /home/user/flok/.browser
-fi
-mkdir -p /home/user/flok/.browser "$PROFILE"
-chown -hP -R "$UI_USER:$UI_USER" /home/user/flok/.browser
-chmod 700 /home/user/flok/.browser
-chmod 700 "$PROFILE" || true
+python3 - <<'PY'
+${ENSURE_UI_BROWSER_PY}
+PY
 chmod 1775 /home/user/flok || true
 if [ -L /tmp/flok-chrome.log ] || { [ -e /tmp/flok-chrome.log ] && [ ! -f /tmp/flok-chrome.log ]; }; then
   echo "refusing to use /tmp/flok-chrome.log: not a regular file" >&2
@@ -725,7 +721,7 @@ chown --no-dereference "$UI_USER:$UI_USER" /tmp/flok-chrome.log
 chmod 640 /tmp/flok-chrome.log
 if ! runuser -u "$UI_USER" -- test -w "$PROFILE"; then
   echo "profile not writable by $UI_USER: $PROFILE" >&2
-  ls -ld "$PROFILE" /home/user/flok/.browser /home/user/flok >&2
+  ls -ld "$PROFILE" "$UI_HOME/.flok-browser" "$UI_HOME" /home/user/flok >&2
   exit 1
 fi
 
