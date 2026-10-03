@@ -182,6 +182,11 @@ export interface RunloopDevboxSession {
 
   /** C3B: start or no-op restart of display/WM/VNC. Idempotent. */
   ensureInteractiveStack(opts?: { browser?: "strict" | "best-effort" }): Promise<void>;
+  /**
+   * Idempotent unprivileged bot user + root-owned helpers.
+   * Safe on computers created before the bot-user change.
+   */
+  ensureBotUser(): Promise<void>;
   screenshot(): Promise<{ width: number; height: number; png: Buffer; activeWindow?: string }>;
   novncLocalOk(): Promise<boolean>;
   uiAction(action: Action): Promise<{ finalUrl?: string } | void>;

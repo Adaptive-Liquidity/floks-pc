@@ -514,7 +514,7 @@ export class McpGateway {
         isError: true,
         payload: {
           code: result.errorCode ?? "FS_FAILED",
-          message: result.errorCode === "PATH_ESCAPE" ? "path escapes workspace jail" : "filesystem operation failed",
+          message: fsErrorMessage(result.errorCode),
         },
       };
     }
@@ -746,4 +746,10 @@ function protocolVersionFrom(params: unknown): string | undefined {
 
 function isKnownTool(name: string): name is (typeof MCP_TOOL_NAMES)[number] {
   return (MCP_TOOL_NAMES as readonly string[]).includes(name);
+}
+
+function fsErrorMessage(code: string | undefined): string {
+  if (code === "PATH_ESCAPE") return "path escapes workspace jail";
+  if (code === "FILE_TOO_LARGE") return "file exceeds the 1MB computer_fs limit";
+  return "filesystem operation failed";
 }

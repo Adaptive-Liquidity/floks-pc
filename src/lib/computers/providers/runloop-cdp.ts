@@ -6,12 +6,11 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { NAVIGATION_REACHED_JS } from "./runloop-browser.js";
-import { RUNLOOP_WORKSPACE_ROOT } from "./runloop-client.js";
 
 export const CDP_DEBUG_PORT = 9222;
 export const CDP_DEBUG_ADDRESS = "127.0.0.1";
-export const CDP_HELPER_PATH = `${RUNLOOP_WORKSPACE_ROOT}/.flok/cdp-ax.mjs`;
-export const CDP_NAV_HELPER_PATH = `${RUNLOOP_WORKSPACE_ROOT}/.flok/cdp-nav.mjs`;
+export const CDP_HELPER_PATH = "/var/lib/flok/cdp-ax.mjs";
+export const CDP_NAV_HELPER_PATH = "/var/lib/flok/cdp-nav.mjs";
 export const CDP_AX_NODE_CAP = 500;
 /** Guest helper hard deadline. Under the host exec hint; Runloop optimistic_timeout does not kill. */
 export const CDP_AX_HELPER_DEADLINE_MS = 12_000;

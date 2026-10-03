@@ -25,6 +25,7 @@ Runloop is the working production-v1 `ComputerProvider`. Do not replace it for l
 - Interactive blueprint: `flok-runloop-interactive` (creates `flok-ui`, Chrome, private display). The generic DnD Ubuntu blueprint is compute-only and is **not** an Agent Computer.
 - Workspace jail: `/home/user/flok`.
 - Chrome as `flok-ui` without `--no-sandbox`.
+- `computer_exec` / `computer_fs` as unprivileged `flok` (no sudo). Helpers in `/var/lib/flok`, not the workspace. Chrome profile `/home/flok-ui/.flok-browser` (cookies / screenshots) is reserved from every bot tool, owned by `flok-ui` under a root-owned parent, outside the workspace.
 - CDP loopback only: `127.0.0.1:9222`. Never `0.0.0.0`.
 - `ComputerService` is the only path from MCP tools to the provider.
 

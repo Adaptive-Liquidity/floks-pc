@@ -36,7 +36,12 @@ import {
   SELECT_PAGE_TARGET_JS,
   selectPageTarget,
 } from "../../src/lib/computers/providers/runloop-cdp.ts";
-import { ENSURE_INTERACTIVE_SH, chromeLaunchArgv } from "../../src/lib/computers/providers/runloop-interactive.ts";
+import {
+  BROWSER_PROFILE_DIR,
+  ENSURE_INTERACTIVE_SH,
+  chromeHasUserDataDir,
+  chromeLaunchArgv,
+} from "../../src/lib/computers/providers/runloop-interactive.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const PNG_1X1 = Buffer.from(
@@ -323,11 +328,63 @@ describe("visible browser ensure", () => {
           return ok("launched\n");
         }
         if (text.includes("json/version")) return ok("cdp-ready\n");
+        if (text.includes("flok-managed-chrome-cmdlines")) {
+          return ok(`google-chrome-stable --user-data-dir=${BROWSER_PROFILE_DIR}\n`);
+        }
         return ok();
       },
     });
     assert.equal(result.started, false);
     assert.equal(launches, 0);
+  });
+
+  it("stops an old-profile Chrome and launches with the flok-ui profile", async () => {
+    let chrome: "old" | "none" | "new" = "old";
+    let launches = 0;
+    let killed = false;
+    const launchArgv = chromeLaunchArgv(BROWSER_START_URL);
+    const exec = async (argv: string[]): Promise<GuestExecResult> => {
+      const text = argv.join(" ");
+      if (text.includes("pkill")) return ok();
+      if (text.includes("json/version")) {
+        return chrome === "none"
+          ? { exitCode: 1, stdout: "cdp-down\n", stderr: "" }
+          : ok("cdp-ready\n");
+      }
+      if (text.includes("flok-managed-chrome-cmdlines")) {
+        if (chrome === "old") {
+          return ok("google-chrome-stable --user-data-dir=/home/user/flok/.browser/profile\n");
+        }
+        if (chrome === "new") {
+          const cmdline = `google-chrome-stable --user-data-dir=${BROWSER_PROFILE_DIR}`;
+          assert.equal(chromeHasUserDataDir(cmdline), true);
+          return ok(`${cmdline}\n`);
+        }
+        return ok("");
+      }
+      if (text.includes("flok-stale-managed-chrome")) {
+        assert.equal(chrome, "old");
+        killed = true;
+        chrome = "none";
+        return ok();
+      }
+      if (text.includes("about:blank")) {
+        launches += 1;
+        assert.match(text, /\/home\/flok-ui\/\.flok-browser\/profile/);
+        assert.equal(text.includes("/home/user/flok/.browser"), false);
+        chrome = "new";
+        return ok("launched\n");
+      }
+      return ok();
+    };
+    const first = await ensureManagedBrowser({ launchArgv, sleep: async () => {}, exec });
+    assert.equal(killed, true);
+    assert.equal(first.started, true);
+    assert.equal(launches, 1);
+    const second = await ensureManagedBrowser({ launchArgv, sleep: async () => {}, exec });
+    assert.equal(second.started, false);
+    assert.equal(launches, 1);
+    assert.equal(chrome, "new");
   });
 
   it("screenshots only after Chrome is launched", async () => {
@@ -601,7 +658,7 @@ describe("screen truth and fixture removal", () => {
 
   it("keeps the fixture out of customer source and starts a visible background", () => {
     assert.match(ENSURE_INTERACTIVE_SH, /xsetroot -solid '#1f2933'/);
-    assert.match(ENSURE_INTERACTIVE_SH, /rm -f \/home\/user\/flok\/\.flok\/fixture\.html/);
+    assert.match(ENSURE_INTERACTIVE_SH, /rm -rf \/home\/user\/flok\/\.flok/);
     const banned = ["FLOKS C3B fixture", "FIXTURE_HTML", "fixture.html"];
     for (const dir of ["src", "web"]) {
       for (const file of filesUnder(join(root, dir))) {

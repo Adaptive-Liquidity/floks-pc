@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { posix as pathPosix } from "node:path";
 import type { Action } from "../types.js";
 import { RUNLOOP_WORKSPACE_ROOT } from "./runloop-client.js";
+import { CONTROL_PLANE_DIR, ENSURE_UI_BROWSER_PY, UI_BROWSER_DIR } from "./runloop-bot-user.js";
 import { CDP_DEBUG_ADDRESS, CDP_DEBUG_PORT } from "./runloop-cdp.js";
 
 export {
@@ -30,10 +31,11 @@ export const FLOK_DISPLAY = ":99";
 export const DISPLAY_WIDTH = 1440;
 export const DISPLAY_HEIGHT = 900;
 export const DISPLAY_DEPTH = 24;
-export const BROWSER_PROFILE_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser/profile`;
-export const INTERACTIVE_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.flok`;
-/** Unique PNG path under the flok-ui-writable browser dir (not root-locked .flok). */
-export const OBS_SHOT_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser`;
+export const BROWSER_PROFILE_DIR = `${UI_BROWSER_DIR}/profile`;
+/** Root-owned helpers. Not in the customer workspace file view. */
+export const INTERACTIVE_DIR = CONTROL_PLANE_DIR;
+/** Unique PNG path under the flok-ui-writable browser dir (not root-locked helpers). */
+export const OBS_SHOT_DIR = UI_BROWSER_DIR;
 export function uniqueObsShotPath(): string {
   return `${OBS_SHOT_DIR}/obs-${randomUUID()}.png`;
 }
@@ -528,8 +530,8 @@ export const CHROME_READY_PROBE_PY = [
   "import json,os,subprocess,pathlib",
   "UID=1500",
   "USER='flok-ui'",
-  "PROFILE='/home/user/flok/.browser/profile'",
-  "BROWSER='/home/user/flok/.browser'",
+  "PROFILE='/home/flok-ui/.flok-browser/profile'",
+  "BROWSER='/home/flok-ui/.flok-browser'",
   "WS='/home/user/flok'",
   "LOG='/tmp/flok-chrome.log'",
   "FALLBACK='/home/flok-ui/.config/google-chrome'",
@@ -606,7 +608,7 @@ export const CHROME_READY_PROBE_PY = [
   "def userns():",
   "    try: return pathlib.Path('/proc/sys/kernel/unprivileged_userns_clone').read_text().strip()",
   "    except Exception: return None",
-  "cmd=pgrep('google-chrome')+pgrep('--user-data-dir=/home/user/flok/.browser/profile')",
+  "cmd=pgrep('google-chrome')+pgrep('--user-data-dir=/home/flok-ui/.flok-browser/profile')",
   "seen=set(); cmdlines=[]",
   "for ln in cmd:",
   "    if ln not in seen: seen.add(ln); cmdlines.append(ln)",
@@ -650,7 +652,7 @@ export DISPLAY="\${FLOK_DISPLAY:-:99}"
 WIDTH="\${FLOK_DISPLAY_WIDTH:-1440}"
 HEIGHT="\${FLOK_DISPLAY_HEIGHT:-900}"
 DEPTH="\${FLOK_DISPLAY_DEPTH:-24}"
-PROFILE="\${FLOK_BROWSER_PROFILE:-/home/user/flok/.browser/profile}"
+PROFILE="\${FLOK_BROWSER_PROFILE:-/home/flok-ui/.flok-browser/profile}"
 RUNDIR="/tmp/flok-interactive"
 NOVNC_PORT="\${FLOK_NOVNC_PORT:-6080}"
 UI_USER="\${FLOK_UI_USER:-${FLOK_UI_USER}}"
@@ -658,7 +660,13 @@ UI_HOME="\${FLOK_UI_HOME:-${FLOK_UI_HOME}}"
 UI_UID="\${FLOK_UI_UID:-${FLOK_UI_UID}}"
 XDG_RUNTIME_DIR="/run/user/\${UI_UID}"
 
-mkdir -p "$RUNDIR" "$PROFILE" /home/user/flok/.flok /home/user/flok/.browser
+mkdir -p "$RUNDIR"
+export FLOK_UI_HOME="$UI_HOME"
+export FLOK_UI_UID="$UI_UID"
+export FLOK_BOT_HOME="/home/user/flok"
+python3 - <<'PY'
+${ENSURE_UI_BROWSER_PY}
+PY
 
 if ! command -v Xvfb >/dev/null 2>&1; then
   echo "ok missing-xvfb profile=$PROFILE"
@@ -675,34 +683,30 @@ if ! command -v runuser >/dev/null 2>&1; then
 fi
 
 mkdir -p "$XDG_RUNTIME_DIR" /tmp/.X11-unix
-chown "$UI_USER:$UI_USER" "$XDG_RUNTIME_DIR"
+chown -h "$UI_USER:$UI_USER" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 chmod 1777 /tmp/.X11-unix || true
-chown "$UI_USER:$UI_USER" "$RUNDIR" || true
-# Root-executed helpers live in .flok; never hand that directory to flok-ui.
-chown root:root /home/user/flok/.flok
-chmod 755 /home/user/flok/.flok
-if [ -f /home/user/flok/.flok/execvp.py ]; then
-  chown root:root /home/user/flok/.flok/execvp.py
-  chmod 755 /home/user/flok/.flok/execvp.py
+chown -h "$UI_USER:$UI_USER" "$RUNDIR" || true
+# Control-plane helpers live in /var/lib/flok (root 0700), never the customer workspace.
+CTRL="\${FLOK_CONTROL_PLANE_DIR:-/var/lib/flok}"
+mkdir -p "$CTRL"
+if [ -L "$CTRL" ]; then
+  echo "refusing symlink $CTRL" >&2
+  exit 1
 fi
-if [ -f /home/user/flok/.flok/ensure-interactive.sh ]; then
-  chown root:root /home/user/flok/.flok/ensure-interactive.sh
-  chmod 755 /home/user/flok/.flok/ensure-interactive.sh
-fi
-rm -f /home/user/flok/.flok/fixture.html
-if [ -f /home/user/flok/.flok/cdp-ax.mjs ]; then
-  chown root:root /home/user/flok/.flok/cdp-ax.mjs
-  chmod 755 /home/user/flok/.flok/cdp-ax.mjs
-fi
-if [ -f /home/user/flok/.flok/cdp-nav.mjs ]; then
-  chown root:root /home/user/flok/.flok/cdp-nav.mjs
-  chmod 755 /home/user/flok/.flok/cdp-nav.mjs
-fi
-chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser
-chmod 700 /home/user/flok/.browser
-chmod 700 "$PROFILE" || true
-chmod 775 /home/user/flok || true
+chown -h root:root "$CTRL"
+chmod 0700 "$CTRL"
+for helper in execvp.py ensure-interactive.sh ensure-bot-user.sh cdp-ax.mjs cdp-nav.mjs; do
+  if [ -f "$CTRL/$helper" ] && [ ! -L "$CTRL/$helper" ]; then
+    chown -h root:root "$CTRL/$helper"
+    chmod 0700 "$CTRL/$helper"
+  fi
+done
+rm -rf /home/user/flok/.flok
+python3 - <<'PY'
+${ENSURE_UI_BROWSER_PY}
+PY
+chmod 1775 /home/user/flok || true
 if [ -L /tmp/flok-chrome.log ] || { [ -e /tmp/flok-chrome.log ] && [ ! -f /tmp/flok-chrome.log ]; }; then
   echo "refusing to use /tmp/flok-chrome.log: not a regular file" >&2
   ls -ld /tmp/flok-chrome.log >&2
@@ -717,7 +721,7 @@ chown --no-dereference "$UI_USER:$UI_USER" /tmp/flok-chrome.log
 chmod 640 /tmp/flok-chrome.log
 if ! runuser -u "$UI_USER" -- test -w "$PROFILE"; then
   echo "profile not writable by $UI_USER: $PROFILE" >&2
-  ls -ld "$PROFILE" /home/user/flok/.browser /home/user/flok >&2
+  ls -ld "$PROFILE" "$UI_HOME/.flok-browser" "$UI_HOME" /home/user/flok >&2
   exit 1
 fi
 
@@ -782,7 +786,7 @@ if [ -L /run/flok-cdp ]; then
   exit 1
 fi
 mkdir -p /run/flok-cdp
-chown root:root /run/flok-cdp
+chown -h root:root /run/flok-cdp
 chmod 0700 /run/flok-cdp
 echo "ok display=$DISPLAY profile=$PROFILE ui=$UI_USER"
 `;

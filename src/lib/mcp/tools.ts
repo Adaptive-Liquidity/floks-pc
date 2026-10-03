@@ -77,7 +77,7 @@ export const ComputerFsArgsSchema = z.object({
   computer_handle: handle,
   operation: FsOperationSchema,
   path: z.string().min(1).max(2048),
-  content: z.string().max(1_000_000).optional(),
+  content: z.string().max(1_400_000).optional(),
   destination: z.string().max(2048).optional(),
   encoding: z.enum(["utf8", "base64"]).optional(),
 });

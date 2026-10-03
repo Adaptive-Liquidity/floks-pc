@@ -102,4 +102,16 @@ describe("L1 MCP Runloop computer_fs write/read", () => {
     assert.equal(list.isError, false);
     assert.deepEqual(list.structuredContent.data, ["hello.txt"]);
   });
+
+  it("returns FILE_TOO_LARGE above the 1MB computer_fs cap", async () => {
+    const { gateway, token, handle } = await pair();
+    const res = await fs(gateway, token, handle, {
+      operation: "write",
+      path: "/home/user/flok/too-big.txt",
+      content: "x".repeat(1_000_001),
+    });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, "FILE_TOO_LARGE");
+    assert.equal(res.structuredContent.message, "file exceeds the 1MB computer_fs limit");
+  });
 });

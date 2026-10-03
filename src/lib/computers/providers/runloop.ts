@@ -60,6 +60,13 @@ import {
   buildAgentComputerLabels,
   resolveAgentComputerBlueprint,
 } from "./interactive-blueprint.js";
+import {
+  applyBotUserToExec,
+  filterBotVisibleListing,
+  isReservedControlPlanePath,
+  reservedFilesystemError,
+} from "./runloop-bot-user.js";
+import { GUEST_FS_MAX_BYTES } from "./runloop-fs.js";
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_OUTPUT = 1_000_000;
@@ -188,6 +195,7 @@ export class RunloopProvider implements ComputerProvider {
       : await this.plane.create(params);
     this.sessions.set(session.id, session);
     try {
+      await session.ensureBotUser();
       await session.fsMkdir(RUNLOOP_WORKSPACE_ROOT).catch(() => undefined);
       await session.ensureInteractiveStack();
       if (this.requireInteractive && !session.interactiveGuest) {
@@ -322,17 +330,35 @@ export class RunloopProvider implements ComputerProvider {
     }
 
     const timeoutMs = Math.min(request.timeoutMs ?? 30_000, 600_000);
-    const execReq: {
-      argv: string[];
-      cwd: string;
-      env?: Record<string, string>;
-      timeoutMs: number;
-    } = {
+    if (isReservedControlPlanePath(cwd)) {
+      return {
+        exitCode: 126,
+        stdout: "",
+        stderr: "PERMISSION_DENIED: cwd is reserved",
+        timedOut: false,
+      };
+    }
+    for (const arg of request.argv) {
+      if (typeof arg !== "string" || arg.length === 0 || arg.startsWith("-")) continue;
+      const resolved = arg.startsWith("/")
+        ? pathPosix.normalize(arg)
+        : pathPosix.normalize(pathPosix.join(cwd, arg));
+      if (isReservedControlPlanePath(resolved)) {
+        return {
+          exitCode: 126,
+          stdout: "",
+          stderr: "PERMISSION_DENIED: path is reserved",
+          timedOut: false,
+        };
+      }
+    }
+    await s.ensureBotUser();
+    const execReq = applyBotUserToExec({
       argv: request.argv,
       cwd,
       timeoutMs,
-    };
-    if (request.env) execReq.env = request.env;
+      ...(request.env ? { env: request.env } : {}),
+    });
     try {
       const result = await s.exec(execReq);
       return {
@@ -351,12 +377,16 @@ export class RunloopProvider implements ComputerProvider {
 
   async filesystem(ref: string, request: FsRequest): Promise<FsResult> {
     const s = await this.requireSession(ref);
+    await s.ensureBotUser();
     let canonical: string;
     try {
       canonical = assertInsideRoot(request.path, RUNLOOP_WORKSPACE_ROOT);
     } catch (e) {
       if (e instanceof PathEscape) return { ok: false, errorCode: "PATH_ESCAPE" };
       throw e;
+    }
+    if (isReservedControlPlanePath(canonical)) {
+      return reservedFilesystemError(canonical);
     }
 
     switch (request.operation) {
@@ -368,7 +398,7 @@ export class RunloopProvider implements ComputerProvider {
       case "list": {
         const r = await s.fsList(canonical);
         if (!r.ok) return { ok: false, errorCode: r.errorCode };
-        return { ok: true, data: r.data };
+        return { ok: true, data: filterBotVisibleListing(canonical, r.data ?? []) };
       }
       case "read": {
         const r = await s.fsRead(canonical);
@@ -382,10 +412,16 @@ export class RunloopProvider implements ComputerProvider {
         if (request.content === undefined) {
           return { ok: false, errorCode: "MISSING_CONTENT" };
         }
+        const raw = request.content;
         const body =
-          typeof request.content === "string"
-            ? Buffer.from(request.content)
-            : Buffer.from(request.content);
+          typeof raw === "string"
+            ? request.encoding === "base64"
+              ? Buffer.from(raw, "base64")
+              : Buffer.from(raw, "utf8")
+            : Buffer.from(raw);
+        if (body.length > GUEST_FS_MAX_BYTES) {
+          return { ok: false, errorCode: "FILE_TOO_LARGE" };
+        }
         const r = await s.fsWrite(canonical, body);
         if (!r.ok) return { ok: false, errorCode: r.errorCode };
         return { ok: true };
@@ -413,6 +449,9 @@ export class RunloopProvider implements ComputerProvider {
           dest = assertInsideRoot(request.destination, RUNLOOP_WORKSPACE_ROOT);
         } catch {
           return { ok: false, errorCode: "PATH_ESCAPE" };
+        }
+        if (isReservedControlPlanePath(dest)) {
+          return reservedFilesystemError(dest);
         }
         const r =
           request.operation === "move"

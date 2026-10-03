@@ -6,6 +6,7 @@
 import { inflateSync } from "node:zlib";
 import { z } from "zod";
 import type { Action, ActionResult } from "../types.js";
+import { UI_BROWSER_DIR } from "./runloop-bot-user.js";
 
 export const BROWSER_START_URL = "about:blank";
 const CDP_VERSION_URL = "http://127.0.0.1:9222/json/version";
@@ -53,6 +54,87 @@ export function cdpReadyProbeArgv(): string[] {
   ];
 }
 
+/** Guest probe: flok-ui Chrome cmdlines. Marker is for tests. */
+export const MANAGED_CHROME_CMDLINE_PROBE_PY = [
+  "import os",
+  "# flok-managed-chrome-cmdlines",
+  "UI_UID=1500",
+  "out=[]",
+  "try: names=os.listdir('/proc')",
+  "except OSError: names=[]",
+  "for name in names:",
+  "    if not name.isdigit(): continue",
+  "    try:",
+  "        if os.stat('/proc/'+name).st_uid!=UI_UID: continue",
+  "        cmd=open('/proc/%s/cmdline'%name,'rb').read().replace(b'\\x00',b' ').decode('utf-8','replace')",
+  "        if 'chrome' in cmd.lower() or '--user-data-dir=' in cmd: out.append(cmd)",
+  "    except OSError: continue",
+  "print('\\n'.join(out))",
+].join("\n");
+
+export function managedChromeCmdlineProbeArgv(): string[] {
+  return ["python3", "-c", MANAGED_CHROME_CMDLINE_PROBE_PY];
+}
+
+export function parseManagedChromeCmdlines(stdout: string): string[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+const MANAGED_PROFILE_DIR = `${UI_BROWSER_DIR}/profile`;
+
+/** Kill flok-ui Chrome that is not using the managed profile. Waits for exit. */
+export const STALE_MANAGED_CHROME_KILL_PY = [
+  "import os,time",
+  "# flok-stale-managed-chrome",
+  `KEEP=${JSON.stringify(`--user-data-dir=${MANAGED_PROFILE_DIR}`)}`,
+  "UI_UID=1500",
+  "self=os.getpid()",
+  "pids=[]",
+  "try: names=os.listdir('/proc')",
+  "except OSError: names=[]",
+  "for name in names:",
+  "    if not name.isdigit() or int(name)==self: continue",
+  "    try:",
+  "        if os.stat('/proc/'+name).st_uid!=UI_UID: continue",
+  "        cmd=open('/proc/%s/cmdline'%name,'rb').read().replace(b'\\x00',b' ').decode('utf-8','replace')",
+  "        if KEEP in cmd: continue",
+  "        if 'chrome' in cmd.lower() or '--user-data-dir=' in cmd or '--remote-debugging-port=9222' in cmd:",
+  "            pids.append(int(name))",
+  "    except OSError: continue",
+  "for pid in pids:",
+  "    try: os.kill(pid, 15)",
+  "    except OSError: pass",
+  "deadline=time.time()+3",
+  "while time.time()<deadline and pids:",
+  "    live=[]",
+  "    for pid in pids:",
+  "        try:",
+  "            os.kill(pid, 0); live.append(pid)",
+  "        except OSError: pass",
+  "    if not live: break",
+  "    pids=live; time.sleep(0.1)",
+  "else:",
+  "    for pid in pids:",
+  "        try: os.kill(pid, 9)",
+  "        except OSError: pass",
+  "    deadline=time.time()+1",
+  "    while time.time()<deadline and pids:",
+  "        live=[]",
+  "        for pid in pids:",
+  "            try:",
+  "                os.kill(pid, 0); live.append(pid)",
+  "            except OSError: pass",
+  "        if not live: break",
+  "        pids=live; time.sleep(0.05)",
+].join("\n");
+
+export function staleManagedChromeKillArgv(): string[] {
+  return ["python3", "-c", STALE_MANAGED_CHROME_KILL_PY];
+}
+
 function logBrowserEnsure(started: boolean, readyMs: number): void {
   process.stderr.write(`flok-browser ensure started=${started} ready_ms=${readyMs}\n`);
 }
@@ -62,10 +144,17 @@ async function cdpAnswers(exec: GuestExec): Promise<boolean> {
   return probe.exitCode === 0 && probe.stdout.includes("cdp-ready");
 }
 
+async function managedChromeUsesNewProfile(exec: GuestExec): Promise<boolean> {
+  const { chromeHasUserDataDir } = await import("./runloop-interactive.js");
+  const probe = await exec(managedChromeCmdlineProbeArgv());
+  if (probe.exitCode !== 0) return false;
+  return parseManagedChromeCmdlines(probe.stdout).some(chromeHasUserDataDir);
+}
+
 /**
- * Delete a leftover fixture page, then reuse Chrome if CDP is already up.
- * Otherwise launch exactly one about:blank Chrome and wait for port 9222.
- * Cleanup runs before the CDP probe so a fixture process cannot look ready.
+ * Delete a leftover fixture page, then reuse Chrome only if CDP is up and a
+ * cmdline matches chromeHasUserDataDir (the flok-ui profile). A leftover
+ * workspace-profile Chrome answering on 9222 is killed and relaunched.
  */
 export async function ensureManagedBrowser(opts: {
   exec: GuestExec;
@@ -82,9 +171,12 @@ export async function ensureManagedBrowser(opts: {
   const startedAt = now();
   await opts.exec(fixtureCleanupArgv());
   if (await cdpAnswers(opts.exec)) {
-    const readyMs = Math.max(0, now() - startedAt);
-    logBrowserEnsure(false, readyMs);
-    return { started: false, readyMs };
+    if (await managedChromeUsesNewProfile(opts.exec)) {
+      const readyMs = Math.max(0, now() - startedAt);
+      logBrowserEnsure(false, readyMs);
+      return { started: false, readyMs };
+    }
+    await opts.exec(staleManagedChromeKillArgv());
   }
   const launched = await opts.exec(opts.launchArgv);
   if (launched.exitCode !== 0) {
