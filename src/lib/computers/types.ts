@@ -44,6 +44,22 @@ export const LEGAL_TRANSITIONS: Readonly<Record<ComputerState, readonly Computer
   deleted: [],
 } as const;
 
+/** Owner restart is allowed only from these states. */
+export const RESTARTABLE_STATES = [
+  "ready",
+  "running",
+  "paused",
+  "stopped",
+  "waking",
+  "recovery_failed",
+] as const satisfies readonly ComputerState[];
+
+export type RestartableState = (typeof RESTARTABLE_STATES)[number];
+
+export function isRestartableState(state: ComputerState): state is RestartableState {
+  return (RESTARTABLE_STATES as readonly ComputerState[]).includes(state);
+}
+
 export type OsType = "linux" | "windows";
 
 /** Concrete providers currently implemented. Do not add a factory in C3. */

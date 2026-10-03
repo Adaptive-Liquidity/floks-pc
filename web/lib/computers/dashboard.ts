@@ -1,22 +1,28 @@
-import type { ComputerState } from "../../../src/lib/computers/index";
+import { isRestartableState, type ComputerState } from "../../../src/lib/computers/types";
 import type { DeskState } from "../types";
 
-export const DASHBOARD_STATUSES = ["running", "paused", "starting", "stopped"] as const;
+export const DASHBOARD_STATUSES = ["running", "paused", "starting", "stopped", "working"] as const;
 export type DashboardStatus = (typeof DASHBOARD_STATUSES)[number];
 
-const STARTING = new Set<ComputerState>([
-  "requested",
-  "provisioning",
-  "waking",
+const STARTING = new Set<ComputerState>(["requested", "provisioning", "waking"]);
+const WORKING = new Set<ComputerState>([
   "recovering",
   "checkpointing",
+  "error",
+  "restore_failed",
+  "cleanup_needed",
 ]);
 
 export function dashboardStatus(state: ComputerState): DashboardStatus {
   if (state === "ready" || state === "running") return "running";
   if (state === "paused") return "paused";
+  if (WORKING.has(state)) return "working";
   if (STARTING.has(state)) return "starting";
   return "stopped";
+}
+
+export function dashboardStatusLabel(status: DashboardStatus): string {
+  return status === "working" ? "working on it" : status;
 }
 
 export function dashboardStatusFromDesk(state: DeskState): DashboardStatus {
@@ -24,6 +30,18 @@ export function dashboardStatusFromDesk(state: DeskState): DashboardStatus {
   if (state === "sleeping") return "paused";
   if (state === "provisioning") return "starting";
   return "stopped";
+}
+
+export function lifecycleActionsForState(state: ComputerState): {
+  pause: boolean;
+  resume: boolean;
+  restart: boolean;
+} {
+  return {
+    pause: state === "ready" || state === "running",
+    resume: state === "paused" || state === "stopped",
+    restart: isRestartableState(state),
+  };
 }
 
 export function lifecycleActionsFor(status: DashboardStatus): {
@@ -34,7 +52,7 @@ export function lifecycleActionsFor(status: DashboardStatus): {
   return {
     pause: status === "running",
     resume: status === "paused" || status === "stopped",
-    restart: true,
+    restart: status === "running" || status === "paused" || status === "stopped",
   };
 }
 

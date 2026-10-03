@@ -7,6 +7,7 @@ import {
   ComputerService,
   FakeProvider,
   MemoryActivityStore,
+  MemoryControlPlaneStore,
   ProviderNeedsReplacement,
   RebuildConfirmRequired,
   type ActivityEvent,
@@ -24,6 +25,7 @@ import {
   dashboardStatusFromDesk,
   formatLastActive,
   lifecycleActionsFor,
+  lifecycleActionsForState,
   lifecycleFailure,
   REBUILD_WARNING,
 } from "../../web/lib/computers/owner.ts";
@@ -140,6 +142,7 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
     for (const rel of files) {
       const text = readFileSync(join(WEB_ROOT, rel), "utf8");
       assert.doesNotMatch(text, /computers\/owner/, rel);
+      assert.doesNotMatch(text, /computers\/index/, rel);
       assert.doesNotMatch(text, /from ["'].*billing\/seats/, rel);
       assert.doesNotMatch(text, /from ["']pg["']|require\(["']pg["']\)/, rel);
     }
@@ -148,8 +151,16 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
   it("maps desk and domain states onto running/paused/starting/stopped", () => {
     assert.equal(dashboardStatus("ready"), "running");
     assert.equal(dashboardStatus("paused"), "paused");
+    assert.equal(dashboardStatus("requested"), "starting");
+    assert.equal(dashboardStatus("provisioning"), "starting");
     assert.equal(dashboardStatus("waking"), "starting");
     assert.equal(dashboardStatus("stopped"), "stopped");
+    assert.equal(dashboardStatus("recovering"), "working");
+    assert.equal(dashboardStatus("checkpointing"), "working");
+    assert.equal(dashboardStatus("error"), "working");
+    assert.equal(dashboardStatus("restore_failed"), "working");
+    assert.equal(dashboardStatus("cleanup_needed"), "working");
+    assert.equal(dashboardStatus("recovery_failed"), "stopped");
     assert.equal(dashboardStatusFromDesk("running"), "running");
     assert.equal(dashboardStatusFromDesk("sleeping"), "paused");
     assert.equal(dashboardStatusFromDesk("provisioning"), "starting");
@@ -161,7 +172,12 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
     assert.deepEqual(lifecycleActionsFor("starting"), {
       pause: false,
       resume: false,
-      restart: true,
+      restart: false,
+    });
+    assert.deepEqual(lifecycleActionsFor("working"), {
+      pause: false,
+      resume: false,
+      restart: false,
     });
     assert.deepEqual(lifecycleActionsFor("stopped"), {
       pause: false,
@@ -172,6 +188,31 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
       pause: false,
       resume: true,
       restart: true,
+    });
+    assert.deepEqual(lifecycleActionsForState("waking"), {
+      pause: false,
+      resume: false,
+      restart: true,
+    });
+    assert.deepEqual(lifecycleActionsForState("recovery_failed"), {
+      pause: false,
+      resume: false,
+      restart: true,
+    });
+    assert.deepEqual(lifecycleActionsForState("recovering"), {
+      pause: false,
+      resume: false,
+      restart: false,
+    });
+    assert.deepEqual(lifecycleActionsForState("requested"), {
+      pause: false,
+      resume: false,
+      restart: false,
+    });
+    assert.deepEqual(lifecycleActionsForState("provisioning"), {
+      pause: false,
+      resume: false,
+      restart: false,
     });
     assert.equal(formatLastActive(null), "never");
     assert.match(REBUILD_WARNING, /delete its files/);
@@ -637,5 +678,70 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
     assert.equal(confirmed.status, 200);
     assert.equal((await service.get(computer.id)).state, "ready");
     assert.equal((await service.get(computer.id)).rebuildConfirmRequired, false);
+  });
+
+  it("refuses dashboard restart from working-on-it states and keeps the state", async () => {
+    const blocked: Array<{ via: string[]; expectStatus: string }> = [
+      { via: ["recovering"], expectStatus: "working" },
+      { via: ["checkpointing"], expectStatus: "working" },
+      { via: ["error"], expectStatus: "working" },
+      { via: ["recovering", "restore_failed"], expectStatus: "working" },
+      { via: ["recovering", "cleanup_needed"], expectStatus: "working" },
+    ];
+    for (const row of blocked) {
+      const service = new ComputerService(new FakeProvider(), { activityStore: new MemoryActivityStore() });
+      setComputerServiceForTests(service);
+      const computer = await seatWithComputer("owner@example.com", service, `bird-${row.via.join("-")}`);
+      for (const to of row.via) {
+        await service.transition(computer.id, to as "recovering" | "checkpointing" | "error" | "restore_failed" | "cleanup_needed");
+      }
+      const before = (await service.get(computer.id)).state;
+      const denied = await postLifecycle(
+        postReq(computer.id, "owner@example.com", { action: "restart", confirmRebuild: true }),
+        params(computer.id),
+      );
+      assert.equal(denied.status, 409, row.via.join(">"));
+      assert.equal(((await denied.json()) as { code?: string }).code, "RESTART_NOT_AVAILABLE", row.via.join(">"));
+      assert.equal((await service.get(computer.id)).state, before);
+      const get = await getLifecycle(getReq(computer.id, "owner@example.com"), params(computer.id));
+      const body = (await get.json()) as {
+        status?: string;
+        actions?: { restart: boolean };
+      };
+      assert.equal(body.status, row.expectStatus, row.via.join(">"));
+      assert.equal(body.actions?.restart, false, row.via.join(">"));
+    }
+
+    for (const state of ["requested", "provisioning"] as const) {
+      const store = new MemoryControlPlaneStore();
+      const service = new ComputerService(new FakeProvider(), {
+        store,
+        activityStore: new MemoryActivityStore(),
+      });
+      setComputerServiceForTests(service);
+      const computer = await seatWithComputer("owner@example.com", service, `bird-dash-${state}`);
+      const snap = await store.load();
+      assert.ok(snap);
+      const row = snap.computers.find((item) => item.id === computer.id);
+      assert.ok(row);
+      row.state = state;
+      await store.save(snap);
+      await service.reloadIfRevisionChanged();
+      const before = (await service.get(computer.id)).state;
+      const denied = await postLifecycle(
+        postReq(computer.id, "owner@example.com", { action: "restart", confirmRebuild: true }),
+        params(computer.id),
+      );
+      assert.equal(denied.status, 409, state);
+      assert.equal(((await denied.json()) as { code?: string }).code, "RESTART_NOT_AVAILABLE", state);
+      assert.equal((await service.get(computer.id)).state, before);
+      const get = await getLifecycle(getReq(computer.id, "owner@example.com"), params(computer.id));
+      const body = (await get.json()) as {
+        status?: string;
+        actions?: { restart: boolean };
+      };
+      assert.equal(body.status, "starting", state);
+      assert.equal(body.actions?.restart, false, state);
+    }
   });
 });

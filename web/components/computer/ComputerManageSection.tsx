@@ -45,7 +45,13 @@ const PREVIEW_EVENTS: ActivityRow[] = [
 ];
 
 function asStatus(value: unknown): DashboardStatus | null {
-  if (value === "running" || value === "paused" || value === "starting" || value === "stopped") {
+  if (
+    value === "running" ||
+    value === "paused" ||
+    value === "starting" ||
+    value === "stopped" ||
+    value === "working"
+  ) {
     return value;
   }
   return null;

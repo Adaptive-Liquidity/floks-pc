@@ -47,7 +47,7 @@ export type {
   TakeoverGrant,
 } from "./types.js";
 
-export { LEGAL_TRANSITIONS, CAPABILITY_SCOPES } from "./types.js";
+export { LEGAL_TRANSITIONS, CAPABILITY_SCOPES, RESTARTABLE_STATES, isRestartableState } from "./types.js";
 
 export {
   BotClaimSchema,
@@ -104,6 +104,8 @@ export {
   RebuildConfirmRequired,
   InvalidActivityCursor,
   RestoreUnsupported,
+  ControlPlaneBusy,
+  RestartNotAvailable,
 } from "./errors.js";
 
 export type { ComputerProvider } from "./providers/provider.js";

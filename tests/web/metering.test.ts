@@ -110,7 +110,7 @@ describe("usage metering and suspend", () => {
     if (past.action === "shutdown") assert.equal(past.reason, "past_due");
   });
 
-  it("does not meter a refused rebuild, even if the stored state is still waking", () => {
+  it("meters by runtime state only, ignoring a leftover rebuild flag", () => {
     const seat = createSeat({
       email: "rebuild@example.com",
       plan: "personal",
@@ -118,34 +118,41 @@ describe("usage metering and suspend", () => {
       lastMeteredAt: "2026-09-28T00:00:00.000Z",
     });
     const nowMs = Date.parse("2026-09-28T01:00:00.000Z");
-    const stuckWake = decideMetering({
+    const ready = decideMetering({
+      seat,
+      computerState: "ready",
+      lastActiveAt: "2026-09-28T00:30:00.000Z",
+      nowMs,
+      idleMinutes: 180,
+    });
+    assert.equal(ready.action, "meter");
+    if (ready.action === "meter") assert.equal(ready.addSeconds, 3600);
+
+    const waking = decideMetering({
       seat,
       computerState: "waking",
-      lastActiveAt: "2026-09-28T00:00:00.000Z",
+      lastActiveAt: "2026-09-28T00:30:00.000Z",
       nowMs,
-      rebuildConfirmRequired: true,
+      idleMinutes: 180,
     });
-    assert.equal(stuckWake.action, "none");
-    if (stuckWake.action === "none") assert.equal(stuckWake.reason, "not_billable");
+    assert.equal(waking.action, "meter");
 
     const parked = decideMetering({
       seat,
       computerState: "stopped",
       lastActiveAt: "2026-09-28T00:00:00.000Z",
       nowMs,
-      rebuildConfirmRequired: true,
     });
     assert.equal(parked.action, "none");
 
-    const liveWake = decideMetering({
+    const idleReady = decideMetering({
       seat,
-      computerState: "waking",
-      lastActiveAt: "2026-09-28T00:30:00.000Z",
+      computerState: "ready",
+      lastActiveAt: "2026-09-28T00:00:00.000Z",
       nowMs,
-      idleMinutes: 180,
-      rebuildConfirmRequired: false,
+      idleMinutes: 30,
     });
-    assert.equal(liveWake.action, "meter");
-    if (liveWake.action === "meter") assert.equal(liveWake.addSeconds, 3600);
+    assert.equal(idleReady.action, "suspend");
+    if (idleReady.action === "suspend") assert.equal(idleReady.reason, "idle");
   });
 });

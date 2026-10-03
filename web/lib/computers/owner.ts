@@ -6,7 +6,7 @@ import { getComputerService } from "../desks/runtime";
 import {
   dashboardStatus,
   formatLastActive,
-  lifecycleActionsFor,
+  lifecycleActionsForState,
   type DashboardStatus,
 } from "./dashboard";
 
@@ -14,8 +14,10 @@ export {
   DASHBOARD_STATUSES,
   dashboardStatus,
   dashboardStatusFromDesk,
+  dashboardStatusLabel,
   formatLastActive,
   lifecycleActionsFor,
+  lifecycleActionsForState,
   REBUILD_WARNING,
   RESTART_NOTE,
 } from "./dashboard";
@@ -90,7 +92,7 @@ export function ownerComputerPayload(computer: Computer): {
     status,
     lastActiveAt,
     lastActiveLabel: formatLastActive(lastActiveAt),
-    actions: lifecycleActionsFor(status),
+    actions: lifecycleActionsForState(computer.state),
     ...(computer.rebuildConfirmRequired ? { needsRebuildConfirm: true as const } : {}),
   };
 }
@@ -142,9 +144,25 @@ export function lifecycleFailure(err: unknown): {
       body: { ok: false, code: typed.code, message: typed.message },
     };
   }
+  if (
+    typed?.code === "RESTART_NOT_AVAILABLE" ||
+    typed?.code === "CONTROL_PLANE_BUSY" ||
+    typed?.code === "ILLEGAL_STATE_TRANSITION"
+  ) {
+    return { status: 409, body: { ok: false, code: typed.code, message: typed.message } };
+  }
+  if (err && typeof err === "object" && "name" in err && err.name === "StaleControlPlane") {
+    return {
+      status: 409,
+      body: {
+        ok: false,
+        code: "CONTROL_PLANE_BUSY",
+        message: "This computer is busy. Try again in a moment.",
+      },
+    };
+  }
   if (typed) {
-    const status = typed.code === "ILLEGAL_STATE_TRANSITION" ? 409 : 400;
-    return { status, body: { ok: false, code: typed.code, message: typed.message } };
+    return { status: 400, body: { ok: false, code: typed.code, message: typed.message } };
   }
   return {
     status: 500,

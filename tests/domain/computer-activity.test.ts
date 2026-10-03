@@ -6,18 +6,26 @@ import { fileURLToPath } from "node:url";
 import {
   ComputerService,
   ComputerAsleep,
+  ComputerRebuilt,
+  ControlPlaneBusy,
   FakeProvider,
   InvalidActivityCursor,
   MemoryActivityStore,
+  MemoryControlPlaneStore,
   ProviderNeedsReplacement,
   RebuildConfirmRequired,
+  RestartNotAvailable,
+  StaleControlPlane,
   ACTIVITY_RETENTION_MS,
   decodeActivityCursor,
   encodeActivityCursor,
   paginateActivityEvents,
   type ActivityEvent,
   type ActivityStore,
+  type ComputerState,
 } from "../../src/lib/computers/index.js";
+import { decideMetering } from "../../web/lib/billing/metering.ts";
+import { createSeat } from "../../web/lib/billing/seats.ts";
 import { MCP_TOOL_NAMES } from "../../src/lib/mcp/index.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -34,6 +42,47 @@ async function pairedComputer(
 
 function auth(token: string) {
   return { kind: "capability" as const, token };
+}
+
+function holdUntilTwoRefReplacements(
+  store: MemoryControlPlaneStore,
+  computerId: string,
+  originalRef: string,
+): void {
+  const orig = store.compareAndSave.bind(store);
+  let started = 0;
+  let release!: () => void;
+  const bothStarted = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  store.compareAndSave = async (snapshot, expectedRevision) => {
+    const row = snapshot.computers.find((item) => item.id === computerId);
+    if (row?.providerRef && row.providerRef !== originalRef) {
+      started += 1;
+      if (started >= 2) release();
+      await bothStarted;
+    }
+    return orig(snapshot, expectedRevision);
+  };
+}
+
+function summarizeSettled(results: PromiseSettledResult<unknown>[]): string {
+  return results
+    .map((row) =>
+      row.status === "fulfilled"
+        ? "fulfilled"
+        : `rejected:${row.reason instanceof Error ? row.reason.name : String(row.reason)}`,
+    )
+    .join(",");
+}
+
+function isReplaceRaceLoss(row: PromiseSettledResult<unknown>): boolean {
+  return (
+    row.status === "rejected" &&
+    (row.reason instanceof ControlPlaneBusy ||
+      row.reason instanceof ComputerRebuilt ||
+      row.reason instanceof RebuildConfirmRequired)
+  );
 }
 
 class ThrowingActivityStore implements ActivityStore {
@@ -461,6 +510,227 @@ describe("computer activity + owner lifecycle", () => {
     const rebuilt = await service.restartThisComputer(id, { confirmRebuild: true });
     assert.equal(rebuilt.state, "ready");
     assert.equal(rebuilt.rebuildConfirmRequired, false);
+  });
+
+  it("clears the rebuild flag when the old devbox is already up and meters the ready box", async () => {
+    const provider = new FakeProvider();
+    const service = new ComputerService(provider);
+    const { id, token } = await pairedComputer(service, "bird-vendor-back");
+    const cap = auth(token);
+    const originalStatus = provider.status.bind(provider);
+    provider.wake = async () => {
+      throw new ProviderNeedsReplacement("fake");
+    };
+    await assert.rejects(
+      () => service.restartThisComputer(id),
+      (err: unknown) => err instanceof RebuildConfirmRequired,
+    );
+    assert.equal((await service.get(id)).rebuildConfirmRequired, true);
+    assert.equal((await service.get(id)).state, "stopped");
+
+    provider.status = async (ref: string) => ({ ...(await originalStatus(ref)), state: "running" });
+    const exec = await service.exec(cap, id, { argv: ["echo", "back"] });
+    assert.equal(exec.exitCode, 0);
+    const after = await service.get(id);
+    assert.ok(after.state === "ready" || after.state === "running");
+    assert.equal(after.rebuildConfirmRequired, false);
+
+    const decision = decideMetering({
+      seat: createSeat({
+        email: "back@example.com",
+        plan: "personal",
+        stripeCustomerId: "cus_back",
+        lastMeteredAt: "2026-09-28T00:00:00.000Z",
+      }),
+      computerState: after.state,
+      lastActiveAt: "2026-09-28T00:00:00.000Z",
+      nowMs: Date.parse("2026-09-28T01:00:00.000Z"),
+      idleMinutes: 30,
+    });
+    assert.equal(decision.action, "suspend");
+    if (decision.action === "suspend") assert.equal(decision.reason, "idle");
+  });
+
+  it("allows restart only from stopped, waking, recovery_failed, ready, running, and paused", async () => {
+    const allowed: ComputerState[] = ["ready", "running", "paused", "stopped", "waking", "recovery_failed"];
+    for (const state of allowed) {
+      const service = new ComputerService(new FakeProvider());
+      const { id } = await pairedComputer(service, `bird-restart-ok-${state}`);
+      if (state === "paused") await service.pauseThisComputer(id);
+      else if (state === "stopped") await service.transition(id, "stopped");
+      else if (state === "waking") {
+        await service.transition(id, "stopped");
+        await service.transition(id, "waking");
+      } else if (state === "recovery_failed") {
+        await service.transition(id, "recovering");
+        await service.transition(id, "recovery_failed");
+      } else if (state === "running") {
+        await service.transition(id, "running");
+      }
+      const restarted = await service.restartThisComputer(id);
+      assert.ok(restarted.state === "ready" || restarted.state === "running", state);
+    }
+
+    const blocked: Array<{ via: ComputerState[] }> = [
+      { via: ["recovering"] },
+      { via: ["checkpointing"] },
+      { via: ["error"] },
+      { via: ["recovering", "restore_failed"] },
+      { via: ["recovering", "cleanup_needed"] },
+    ];
+    for (const row of blocked) {
+      const service = new ComputerService(new FakeProvider());
+      const { id } = await pairedComputer(service, `bird-restart-no-${row.via.join("-")}`);
+      for (const to of row.via) await service.transition(id, to);
+      const before = (await service.get(id)).state;
+      await assert.rejects(
+        () => service.restartThisComputer(id, { confirmRebuild: true }),
+        (err: unknown) => err instanceof RestartNotAvailable,
+        before,
+      );
+      assert.equal((await service.get(id)).state, before);
+    }
+
+    for (const state of ["requested", "provisioning"] as const) {
+      const store = new MemoryControlPlaneStore();
+      const service = new ComputerService(new FakeProvider(), { store });
+      const { id } = await pairedComputer(service, `bird-restart-no-${state}`);
+      const snap = await store.load();
+      assert.ok(snap);
+      const row = snap.computers.find((computer) => computer.id === id);
+      assert.ok(row);
+      row.state = state;
+      await store.save(snap);
+      await service.reloadIfRevisionChanged();
+      await assert.rejects(
+        () => service.restartThisComputer(id, { confirmRebuild: true }),
+        (err: unknown) => err instanceof RestartNotAvailable,
+        state,
+      );
+      assert.equal((await service.get(id)).state, state);
+    }
+  });
+
+  it("maps a stale persist on pause or wake to ControlPlaneBusy", async () => {
+    const pauseStore = new MemoryControlPlaneStore();
+    const pauseService = new ComputerService(new FakeProvider(), { store: pauseStore });
+    const paused = await pairedComputer(pauseService, "bird-stale-pause");
+    pauseStore.compareAndSave = async () => {
+      throw new StaleControlPlane();
+    };
+    await assert.rejects(
+      () => pauseService.pauseThisComputer(paused.id),
+      (err: unknown) => err instanceof ControlPlaneBusy && err.retryable === true,
+    );
+
+    const wakeStore = new MemoryControlPlaneStore();
+    const wakeService = new ComputerService(new FakeProvider(), { store: wakeStore });
+    const stopped = await wakeService.requestComputer({
+      birdId: "bird-stale-wake",
+      flockId: "flock-stale-wake",
+    });
+    await wakeService.transition(stopped.id, "stopped");
+    wakeStore.compareAndSave = async () => {
+      throw new StaleControlPlane();
+    };
+    await assert.rejects(
+      () => wakeService.wakeThisComputer(stopped.id),
+      (err: unknown) => err instanceof ControlPlaneBusy && err.retryable === true,
+    );
+  });
+
+  it("destroys a newly provisioned replacement when the control-plane save is stale", async () => {
+    const store = new MemoryControlPlaneStore();
+    const provider = new FakeProvider();
+    const service = new ComputerService(provider, { store });
+    const computer = await service.requestComputer({
+      birdId: "bird-stale-replace",
+      flockId: "flock-stale-replace",
+    });
+    const originalRef = computer.providerRef;
+    assert.ok(originalRef);
+    const origCas = store.compareAndSave.bind(store);
+    store.compareAndSave = async (snapshot, expectedRevision) => {
+      const row = snapshot.computers.find((item) => item.id === computer.id);
+      if (row?.providerRef && row.providerRef !== originalRef) {
+        throw new StaleControlPlane();
+      }
+      return origCas(snapshot, expectedRevision);
+    };
+    provider.wake = async () => {
+      throw new ProviderNeedsReplacement("fake");
+    };
+    await assert.rejects(
+      () => service.restartThisComputer(computer.id, { confirmRebuild: true }),
+      (err: unknown) => err instanceof ControlPlaneBusy,
+    );
+    const live = provider.liveRefs();
+    assert.equal(live.length, 1, live.join(","));
+    assert.equal(live[0], originalRef);
+    assert.equal((await service.get(computer.id)).providerRef, originalRef);
+  });
+
+  it("destroys a losing replace so two confirmed restarts leave one live devbox", async () => {
+    const store = new MemoryControlPlaneStore();
+    const provider = new FakeProvider();
+    provider.wake = async () => {
+      throw new ProviderNeedsReplacement("fake");
+    };
+    const a = new ComputerService(provider, { store });
+    const computer = await a.requestComputer({ birdId: "bird-race-restart", flockId: "flock-race" });
+    const originalRef = computer.providerRef;
+    assert.ok(originalRef);
+    holdUntilTwoRefReplacements(store, computer.id, originalRef);
+    const b = new ComputerService(provider, { store });
+    await b.hydrate();
+    const results = await Promise.allSettled([
+      a.restartThisComputer(computer.id, { confirmRebuild: true }),
+      b.restartThisComputer(computer.id, { confirmRebuild: true }),
+    ]);
+    const wins = results.filter((row) => row.status === "fulfilled");
+    const losses = results.filter(
+      (row) => row.status === "rejected" && row.reason instanceof ControlPlaneBusy,
+    );
+    assert.equal(wins.length, 1, summarizeSettled(results));
+    assert.equal(losses.length, 1, summarizeSettled(results));
+    await a.reloadIfRevisionChanged();
+    const live = provider.liveRefs();
+    assert.equal(live.length, 1, live.join(","));
+    assert.equal((await a.get(computer.id)).providerRef, live[0]);
+    assert.notEqual(live[0], originalRef);
+  });
+
+  it("destroys a losing replace when a bot call races a confirmed rebuild", async () => {
+    const store = new MemoryControlPlaneStore();
+    const provider = new FakeProvider();
+    const a = new ComputerService(provider, { store });
+    const { id, token } = await pairedComputer(a, "bird-race-bot");
+    const originalRef = (await a.get(id)).providerRef;
+    assert.ok(originalRef);
+    holdUntilTwoRefReplacements(store, id, originalRef);
+    provider.status = async () => ({ state: "stopped" });
+    provider.wake = async () => {
+      throw new ProviderNeedsReplacement("fake");
+    };
+    const b = new ComputerService(provider, { store });
+    await b.hydrate();
+    const results = await Promise.allSettled([
+      a.restartThisComputer(id, { confirmRebuild: true }),
+      b.exec(auth(token), id, { argv: ["echo", "race"] }),
+    ]);
+    const live = provider.liveRefs();
+    assert.equal(live.length, 1, `${live.join(",")} ${summarizeSettled(results)}`);
+    await a.reloadIfRevisionChanged();
+    assert.equal((await a.get(id)).providerRef, live[0]);
+    assert.notEqual(live[0], originalRef);
+    assert.ok(
+      results.some((row) => row.status === "fulfilled" || isReplaceRaceLoss(row)),
+      summarizeSettled(results),
+    );
+    assert.ok(
+      results.every((row) => row.status === "fulfilled" || isReplaceRaceLoss(row)),
+      summarizeSettled(results),
+    );
   });
 });
 

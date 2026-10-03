@@ -75,7 +75,6 @@ export function decideMetering(input: {
   lastActiveAt: string | null;
   nowMs: number;
   idleMinutes?: number;
-  rebuildConfirmRequired?: boolean;
 }): MeterDecision {
   const status: SeatStatus = input.seat.status;
   if (status === "canceled") {
@@ -89,7 +88,7 @@ export function decideMetering(input: {
       : { action: "none", reason: "already_stopped" };
   }
 
-  const metered = isBillableState(input.computerState) && input.rebuildConfirmRequired !== true;
+  const metered = isBillableState(input.computerState);
   const addSeconds = metered ? secondsBetween(input.seat.lastMeteredAt, input.nowMs) : 0;
   const nextUsed = input.seat.secondsUsed + addSeconds;
   const nextSeat = { ...input.seat, secondsUsed: nextUsed };

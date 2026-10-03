@@ -1,6 +1,11 @@
 "use client";
 
-import { REBUILD_WARNING, RESTART_NOTE, type DashboardStatus } from "@/lib/computers/dashboard";
+import {
+  dashboardStatusLabel,
+  REBUILD_WARNING,
+  RESTART_NOTE,
+  type DashboardStatus,
+} from "@/lib/computers/dashboard";
 
 export function ComputerLifecyclePanel({
   status,
@@ -27,10 +32,10 @@ export function ComputerLifecyclePanel({
     <div>
       <h3>Computer</h3>
       <div className="computer-status-row">
-        <span className="computer-status">{status}</span>
+        <span className="computer-status">{dashboardStatusLabel(status)}</span>
         <span className="meta">Last active {lastActiveLabel}</span>
       </div>
-      <p className="note">{RESTART_NOTE}</p>
+      <p className="note">{status === "working" ? "This computer is working on it." : RESTART_NOTE}</p>
       <div className="computer-actions">
         <button
           className="ghost"

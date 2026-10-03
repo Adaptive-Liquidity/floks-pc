@@ -310,3 +310,26 @@ export class CleanupFailed extends ComputerError {
     this.name = "CleanupFailed";
   }
 }
+
+/** Shared control plane changed under this instance. Caller should reload and retry. */
+export class ControlPlaneBusy extends ComputerError {
+  readonly retryable = true;
+  constructor() {
+    super("CONTROL_PLANE_BUSY", "This computer is busy. Try again in a moment.", {
+      retryable: true,
+    });
+    this.name = "ControlPlaneBusy";
+  }
+}
+
+/** Restart is only legal from stopped, waking, recovery_failed, ready, running, or paused. */
+export class RestartNotAvailable extends ComputerError {
+  constructor(state: string) {
+    super(
+      "RESTART_NOT_AVAILABLE",
+      "This computer is working on it. Try again in a minute.",
+      { state },
+    );
+    this.name = "RestartNotAvailable";
+  }
+}
