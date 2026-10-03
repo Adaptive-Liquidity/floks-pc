@@ -8,12 +8,14 @@ import {
 import { getOauthStore } from "../oauth";
 import { getSeatStore, type SeatRecord } from "./seats";
 import { withSeatProvisionLock } from "./provision-lock";
+import { graceExpired, startGrace } from "./grace";
 import {
   ensureComputersForSeat,
   getComputerService,
   paidProviderForbiddenMessage,
   pauseComputer,
   pingKeepAlive,
+  resumeComputer,
   revokeSeatPairing,
   shutdownComputer,
   webProviderName,
@@ -55,6 +57,43 @@ export async function provisionSeatComputers(seat: SeatRecord): Promise<Computer
   });
 }
 
+export async function resumeSeatComputers(seat: SeatRecord): Promise<number> {
+  if (seat.status !== "active") return 0;
+  const ids = uniqueComputerIds(seat);
+  let n = 0;
+  for (const id of ids) {
+    try {
+      await resumeComputer(id);
+      n += 1;
+    } catch (err) {
+      console.error("[seat.resume]", err instanceof Error ? err.message : err);
+    }
+  }
+  return n;
+}
+
+/** After grace: suspend and keep files. Never destroy from billing. Preview does not need cron. */
+export async function enforceBillingHold(seat: SeatRecord, nowMs: number = Date.now()): Promise<SeatRecord> {
+  const store = getSeatStore();
+  if (seat.status === "active") {
+    if (!seat.graceUntil) return seat;
+    return store.upsert({ ...seat, graceUntil: null });
+  }
+  let current = seat;
+  if (!current.graceUntil) {
+    current = await store.upsert(startGrace(current, nowMs));
+  }
+  if (!graceExpired(current, nowMs)) return current;
+  for (const id of uniqueComputerIds(current)) {
+    try {
+      await pauseComputer(id);
+    } catch (err) {
+      console.error("[seat.hold]", err instanceof Error ? err.message : err);
+    }
+  }
+  return current;
+}
+
 export async function shutdownSeatComputers(
   seat: SeatRecord,
   mode: "stop" | "destroy" = "stop",
@@ -92,11 +131,30 @@ export async function runComputerMaintenance(nowMs: number = Date.now()): Promis
   const rows: MaintenanceRow[] = [];
 
   for (const seat of seats) {
-    const ids = uniqueComputerIds(seat);
-    if (ids.length === 0 && (seat.status === "canceled" || seat.status === "past_due")) {
-      rows.push({ seatId: seat.id, computerId: null, action: "none", reason: "no_computer" });
+    if (seat.status === "canceled" || seat.status === "past_due") {
+      const held = await enforceBillingHold(seat, nowMs);
+      const ids = uniqueComputerIds(held);
+      const expired = graceExpired(held, nowMs);
+      if (ids.length === 0) {
+        rows.push({
+          seatId: seat.id,
+          computerId: null,
+          action: expired ? "none" : "grace",
+          reason: expired ? "no_computer" : seat.status,
+        });
+        continue;
+      }
+      for (const computerId of ids) {
+        rows.push({
+          seatId: seat.id,
+          computerId,
+          action: expired ? "suspend" : "grace",
+          reason: seat.status,
+        });
+      }
       continue;
     }
+    const ids = uniqueComputerIds(seat);
     if (ids.length === 0 && seat.status === "active") {
       try {
         const created = await provisionSeatComputers(seat);
@@ -141,7 +199,7 @@ export async function runComputerMaintenance(nowMs: number = Date.now()): Promis
         await pauseComputer(computer.id);
       }
       if (decision.action === "shutdown" && computer) {
-        await shutdownComputer(computer.id, decision.reason === "canceled" ? "destroy" : "stop");
+        await pauseComputer(computer.id);
       }
       if (
         (decision.action === "meter" || decision.action === "none") &&

@@ -142,6 +142,8 @@ export async function createBuyLink(input: {
     expiresAt: exp,
     openedAt: null,
     usedAt: null,
+    failedAt: null,
+    failReason: null,
   });
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const token = `${body}.${sign(body, material)}`;

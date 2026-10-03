@@ -6,7 +6,15 @@ import { PayPills } from "@/components/PayPills";
 import { ComputerManageSection } from "@/components/computer/ComputerManageSection";
 import { dashboardStatusFromDesk } from "@/lib/computers/dashboard";
 import { publicConnector, SETUP_ACTIONS } from "@/lib/config";
-import { ACCOUNT_EMPTY, ACCOUNT_HOME_LINE, PAST_DUE, WEBHOOK_LAG, ZERO_SEATS } from "@/lib/copy";
+import {
+  ACCOUNT_EMPTY,
+  ACCOUNT_HOME_LINE,
+  CANCELED_HOLD,
+  PAST_DUE,
+  SETUP_RECONNECT_BOT,
+  WEBHOOK_LAG,
+  ZERO_SEATS,
+} from "@/lib/copy";
 import type { SeatSession } from "@/lib/types";
 
 export function SetupDesk({
@@ -47,6 +55,8 @@ export function SetupDesk({
       </section>
 
       {session.flockStatus === "past_due" ? <p className="banner danger">{PAST_DUE}</p> : null}
+      {session.canceledHold ? <p className="banner">{CANCELED_HOLD}</p> : null}
+      {session.reconnectBot ? <p className="banner">{SETUP_RECONNECT_BOT}</p> : null}
       {session.webhookPending ? <p className="banner">{WEBHOOK_LAG}</p> : null}
       {showPay ? (
         <>
@@ -71,6 +81,11 @@ export function SetupDesk({
                   : `Bot: ${desk.botName}`
                 : "Bot: none"}
             </p>
+            {desk.computerId && !preview ? (
+              <a className="ghost wide" href={`/setup/computers/${desk.computerId}`}>
+                Open screen
+              </a>
+            ) : null}
             {desk.computerId ? (
               <ComputerManageSection
                 computerId={desk.computerId}

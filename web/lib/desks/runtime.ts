@@ -9,12 +9,13 @@ import {
 } from "../../../src/lib/computers/index";
 import { PostgresActivityStore } from "../store/activity-pg";
 import type { Computer, ComputerPairCode, ComputerProvider } from "../../../src/lib/computers/index";
-import { shouldSuspendForCap } from "../billing/metering";
+import { graceAllowsAccess } from "../billing/grace";
 import { getSeatStore, type SeatRecord } from "../billing/seats";
 import { webControlPlaneStore } from "../store/control-plane-pg";
 import { mapComputerState } from "./map-state";
 import { MemoryPairRevealStore, PostgresPairRevealStore, type PairRevealStore } from "./reveal-store";
 import type { DeskRecord } from "../types";
+import { admitComputerWake } from "./wake-admission";
 
 export function paidProviderForbiddenMessage(): string {
   return "Paid Staxions computers require FLOK_WEB_PROVIDER=runloop, RUNLOOP_API_KEY, and FLOK_RUNLOOP_BLUEPRINT. The demo provider cannot be served to a paying customer in production.";
@@ -77,7 +78,7 @@ export async function getComputerService(): Promise<ComputerService> {
         store,
         activityStore: sharedActivityStore(),
       });
-      service.setWakeAdmission(admitWakeForComputer);
+      service.setWakeAdmission(admitComputerWake);
       await service.hydrate();
       return service;
     })();
@@ -90,23 +91,11 @@ export function setPairRevealStoreForTests(store: PairRevealStore | null): void 
   globalDesk.__staxReveal = store;
 }
 
-/** Same entitlement gate MCP ensureAwake uses. Missing seats are allowed. */
-export async function admitWakeForComputer(computerId: string): Promise<boolean> {
-  try {
-    const seats = await getSeatStore().listAll();
-    const seat = seats.find(
-      (row) => row.computerId === computerId || row.computerIds.includes(computerId),
-    );
-    if (!seat) return true;
-    if (seat.status !== "active") return false;
-    return !shouldSuspendForCap(seat);
-  } catch {
-    return false;
-  }
-}
+/** Tests that imported the pre-grace name still hit the single admitComputerWake gate. */
+export const admitWakeForComputer = admitComputerWake;
 
 export function setComputerServiceForTests(service: ComputerService | null): void {
-  if (service) service.setWakeAdmission(admitWakeForComputer);
+  if (service) service.setWakeAdmission(admitComputerWake);
   globalDesk.__staxDeskService = service ? Promise.resolve(service) : null;
 }
 
@@ -139,6 +128,7 @@ function toDesk(
     hoursUsed: seat.hoursUsed,
     hoursIncluded: seat.hoursIncluded,
     seatStatus: seat.status,
+    graceActive: graceAllowsAccess(seat),
   });
   const revealedCode = revealed?.code ?? null;
   return {
@@ -320,6 +310,11 @@ export function webProviderName(): "fake" | "runloop" {
 export async function pauseComputer(computerId: string): Promise<void> {
   const service = await getComputerService();
   await service.pauseThisComputer(computerId);
+}
+
+export async function resumeComputer(computerId: string): Promise<void> {
+  const service = await getComputerService();
+  await service.wakeThisComputer(computerId);
 }
 
 export async function shutdownComputer(

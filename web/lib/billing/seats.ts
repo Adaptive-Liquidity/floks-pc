@@ -9,6 +9,13 @@ import {
   type PlanId,
 } from "./catalog";
 import { normalizeEmail } from "./plans";
+import {
+  graceProbeIsStale,
+  isUndefinedColumnError,
+  resetGraceColumnsForTests,
+  setGraceColumnsReady,
+  warnMissingGraceColumnsOnce,
+} from "./grace-schema";
 
 function hoursFromSeconds(seconds: number): number {
   return seconds / 3600;
@@ -36,6 +43,8 @@ export type SeatRecord = {
   computerId: string | null;
   computerIds: string[];
   lastMeteredAt: string | null;
+  graceUntil: string | null;
+  billingEventAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -90,6 +99,8 @@ export function createSeat(input: {
   computerId?: string | null;
   computerIds?: string[];
   lastMeteredAt?: string | null;
+  graceUntil?: string | null;
+  billingEventAt?: string | null;
 }): SeatRecord {
   const now = new Date().toISOString();
   const plan = asCheckoutPlan(input.plan);
@@ -121,6 +132,8 @@ export function createSeat(input: {
     computerId: computerIds[0] ?? input.computerId ?? null,
     computerIds,
     lastMeteredAt: input.lastMeteredAt ?? now,
+    graceUntil: input.graceUntil ?? null,
+    billingEventAt: input.billingEventAt ?? null,
     createdAt: now,
     updatedAt: now,
   };
@@ -143,6 +156,8 @@ function normalizeSeat(seat: SeatRecord): SeatRecord {
     overageEnabled: Boolean(seat.overageEnabled),
     maxComputers: seat.maxComputers || 1,
     agentQuantity: seat.agentQuantity || 1,
+    graceUntil: seat.graceUntil ?? null,
+    billingEventAt: seat.billingEventAt ?? null,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -269,10 +284,23 @@ function hydrateSeat(row: SeatRecord): SeatRecord {
     computerIds,
     computerId: computerIds[0] ?? row.computerId ?? null,
     lastMeteredAt: row.lastMeteredAt ?? row.updatedAt ?? null,
+    graceUntil: asIso(row.graceUntil),
+    billingEventAt: asIso(row.billingEventAt),
   };
 }
 
-const SEAT_SELECT = `SELECT id, email, plan, status,
+function asIso(value: unknown): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString();
+  const raw = String(value);
+  if (!raw || raw === "null" || raw === "undefined") return null;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : raw;
+}
+
+export type SeatSqlQuery = <T>(text: string, values: unknown[]) => Promise<T[]>;
+
+const SEAT_SELECT_CORE = `SELECT id, email, plan, status,
               stripe_customer_id AS "stripeCustomerId",
               stripe_subscription_id AS "stripeSubscriptionId",
               stripe_checkout_session_id AS "stripeCheckoutSessionId",
@@ -287,68 +315,52 @@ const SEAT_SELECT = `SELECT id, email, plan, status,
               period_end AS "periodEnd",
               computer_id AS "computerId",
               computer_ids AS "computerIds",
-              last_metered_at AS "lastMeteredAt",
+              last_metered_at AS "lastMeteredAt"`;
+
+const SEAT_SELECT_GRACE = `,
+              grace_until AS "graceUntil",
+              billing_event_at AS "billingEventAt"`;
+
+export function seatSelectSql(hasGraceColumns: boolean): string {
+  return `${SEAT_SELECT_CORE}${hasGraceColumns ? SEAT_SELECT_GRACE : ""},
               created_at AS "createdAt",
               updated_at AS "updatedAt"
          FROM billing_seats`;
+}
 
-export class PostgresSeatStore implements SeatStore {
-  constructor(private readonly databaseUrl: string) {}
-
-  private async query<T>(text: string, values: unknown[]): Promise<T[]> {
-    const pg = await import("pg");
-    const client = new pg.default.Client({ connectionString: this.databaseUrl });
-    await client.connect();
-    try {
-      const result = await client.query(text, values);
-      return result.rows as T[];
-    } finally {
-      await client.end();
-    }
+export function seatUpsertSql(hasGraceColumns: boolean): string {
+  if (hasGraceColumns) {
+    return `INSERT INTO billing_seats (
+          id, email, plan, status, stripe_customer_id, stripe_subscription_id,
+          stripe_checkout_session_id, stripe_price_id, hours_included, hours_used,
+          seconds_used, overage_enabled, max_computers, agent_quantity, period_start,
+          period_end, computer_id, computer_ids, last_metered_at, grace_until,
+          billing_event_at, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+        ON CONFLICT (id) DO UPDATE SET
+          email = EXCLUDED.email,
+          plan = EXCLUDED.plan,
+          status = EXCLUDED.status,
+          stripe_customer_id = EXCLUDED.stripe_customer_id,
+          stripe_subscription_id = EXCLUDED.stripe_subscription_id,
+          stripe_checkout_session_id = EXCLUDED.stripe_checkout_session_id,
+          stripe_price_id = EXCLUDED.stripe_price_id,
+          hours_included = EXCLUDED.hours_included,
+          hours_used = EXCLUDED.hours_used,
+          seconds_used = EXCLUDED.seconds_used,
+          overage_enabled = EXCLUDED.overage_enabled,
+          max_computers = EXCLUDED.max_computers,
+          agent_quantity = EXCLUDED.agent_quantity,
+          period_start = EXCLUDED.period_start,
+          period_end = EXCLUDED.period_end,
+          computer_id = EXCLUDED.computer_id,
+          computer_ids = EXCLUDED.computer_ids,
+          last_metered_at = EXCLUDED.last_metered_at,
+          grace_until = EXCLUDED.grace_until,
+          billing_event_at = EXCLUDED.billing_event_at,
+          updated_at = EXCLUDED.updated_at`;
   }
-
-  private map(row: SeatRecord): SeatRecord {
-    const computerIds = Array.isArray(row.computerIds)
-      ? row.computerIds
-      : typeof row.computerIds === "string"
-        ? (JSON.parse(row.computerIds) as string[])
-        : [];
-    return hydrateSeat({ ...row, computerIds });
-  }
-
-  async listByEmail(email: string): Promise<SeatRecord[]> {
-    const rows = await this.query<SeatRecord>(`${SEAT_SELECT} WHERE email = $1`, [
-      normalizeEmail(email),
-    ]);
-    return rows.map((row) => this.map(row));
-  }
-
-  async listAll(): Promise<SeatRecord[]> {
-    const rows = await this.query<SeatRecord>(SEAT_SELECT, []);
-    return rows.map((row) => this.map(row));
-  }
-
-  async getById(id: string): Promise<SeatRecord | null> {
-    const rows = await this.query<SeatRecord>(`${SEAT_SELECT} WHERE id = $1`, [id]);
-    return rows[0] ? this.map(rows[0]) : null;
-  }
-
-  async getByCheckoutSession(id: string): Promise<SeatRecord | null> {
-    const rows = await this.query<SeatRecord>(`${SEAT_SELECT} WHERE stripe_checkout_session_id = $1`, [
-      id,
-    ]);
-    return rows[0] ? this.map(rows[0]) : null;
-  }
-
-  async getBySubscription(id: string): Promise<SeatRecord | null> {
-    const rows = await this.query<SeatRecord>(`${SEAT_SELECT} WHERE stripe_subscription_id = $1`, [id]);
-    return rows[0] ? this.map(rows[0]) : null;
-  }
-
-  async upsert(seat: SeatRecord): Promise<SeatRecord> {
-    const next = normalizeSeat(seat);
-    await this.query(
-      `INSERT INTO billing_seats (
+  return `INSERT INTO billing_seats (
           id, email, plan, status, stripe_customer_id, stripe_subscription_id,
           stripe_checkout_session_id, stripe_price_id, hours_included, hours_used,
           seconds_used, overage_enabled, max_computers, agent_quantity, period_start,
@@ -373,32 +385,147 @@ export class PostgresSeatStore implements SeatStore {
           computer_id = EXCLUDED.computer_id,
           computer_ids = EXCLUDED.computer_ids,
           last_metered_at = EXCLUDED.last_metered_at,
-          updated_at = EXCLUDED.updated_at`,
-      [
-        next.id,
-        next.email,
-        next.plan,
-        next.status,
-        next.stripeCustomerId,
-        next.stripeSubscriptionId,
-        next.stripeCheckoutSessionId,
-        next.stripePriceId,
-        next.hoursIncluded,
-        next.hoursUsed,
-        next.secondsUsed,
-        next.overageEnabled,
-        next.maxComputers,
-        next.agentQuantity,
-        next.periodStart,
-        next.periodEnd,
-        next.computerId,
-        next.computerIds,
-        next.lastMeteredAt,
-        next.createdAt,
-        next.updatedAt,
-      ],
-    );
+          updated_at = EXCLUDED.updated_at`;
+}
+
+export function seatUpsertValues(seat: SeatRecord, hasGraceColumns: boolean): unknown[] {
+  const core = [
+    seat.id,
+    seat.email,
+    seat.plan,
+    seat.status,
+    seat.stripeCustomerId,
+    seat.stripeSubscriptionId,
+    seat.stripeCheckoutSessionId,
+    seat.stripePriceId,
+    seat.hoursIncluded,
+    seat.hoursUsed,
+    seat.secondsUsed,
+    seat.overageEnabled,
+    seat.maxComputers,
+    seat.agentQuantity,
+    seat.periodStart,
+    seat.periodEnd,
+    seat.computerId,
+    seat.computerIds,
+    seat.lastMeteredAt,
+  ];
+  if (hasGraceColumns) {
+    return [...core, seat.graceUntil, seat.billingEventAt, seat.createdAt, seat.updatedAt];
+  }
+  return [...core, seat.createdAt, seat.updatedAt];
+}
+
+const GRACE_PROBE_SQL = `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'billing_seats'
+           AND column_name = 'grace_until'
+       ) AS exists`;
+
+export class PostgresSeatStore implements SeatStore {
+  private graceColumns: boolean | null = null;
+
+  constructor(
+    private readonly databaseUrl: string,
+    private readonly injectedQuery?: SeatSqlQuery,
+  ) {}
+
+  private async rawQuery<T>(text: string, values: unknown[]): Promise<T[]> {
+    if (this.injectedQuery) return this.injectedQuery<T>(text, values);
+    const pg = await import("pg");
+    const client = new pg.default.Client({ connectionString: this.databaseUrl });
+    await client.connect();
+    try {
+      const result = await client.query(text, values);
+      return result.rows as T[];
+    } finally {
+      await client.end();
+    }
+  }
+
+  private async resolveGraceColumns(): Promise<boolean> {
+    if (this.graceColumns === true) return true;
+    if (this.graceColumns === false && !graceProbeIsStale()) return false;
+    try {
+      const rows = await this.rawQuery<{ exists?: boolean | string }>(GRACE_PROBE_SQL, []);
+      const value = rows[0]?.exists;
+      this.graceColumns = value === true || value === "t";
+    } catch {
+      this.graceColumns = true;
+    }
+    if (this.graceColumns) setGraceColumnsReady(true);
+    else warnMissingGraceColumnsOnce();
+    return this.graceColumns;
+  }
+
+  private markGraceMissing(): void {
+    this.graceColumns = false;
+    warnMissingGraceColumnsOnce();
+  }
+
+  private async withGraceFallback<T>(run: (hasGrace: boolean) => Promise<T>): Promise<T> {
+    const hasGrace = await this.resolveGraceColumns();
+    try {
+      return await run(hasGrace);
+    } catch (err) {
+      if (hasGrace && isUndefinedColumnError(err)) {
+        this.markGraceMissing();
+        return run(false);
+      }
+      throw err;
+    }
+  }
+
+  private map(row: SeatRecord): SeatRecord {
+    const computerIds = Array.isArray(row.computerIds)
+      ? row.computerIds
+      : typeof row.computerIds === "string"
+        ? (JSON.parse(row.computerIds) as string[])
+        : [];
+    return hydrateSeat({ ...row, computerIds });
+  }
+
+  async listByEmail(email: string): Promise<SeatRecord[]> {
+    return this.runSelect(`WHERE email = $1`, [normalizeEmail(email)]);
+  }
+
+  async listAll(): Promise<SeatRecord[]> {
+    return this.runSelect("", []);
+  }
+
+  async getById(id: string): Promise<SeatRecord | null> {
+    const rows = await this.runSelect(`WHERE id = $1`, [id]);
+    return rows[0] ?? null;
+  }
+
+  async getByCheckoutSession(id: string): Promise<SeatRecord | null> {
+    const rows = await this.runSelect(`WHERE stripe_checkout_session_id = $1`, [id]);
+    return rows[0] ?? null;
+  }
+
+  async getBySubscription(id: string): Promise<SeatRecord | null> {
+    const rows = await this.runSelect(`WHERE stripe_subscription_id = $1`, [id]);
+    return rows[0] ?? null;
+  }
+
+  async upsert(seat: SeatRecord): Promise<SeatRecord> {
+    const next = normalizeSeat(seat);
+    await this.withGraceFallback(async (hasGrace) => {
+      await this.rawQuery(seatUpsertSql(hasGrace), seatUpsertValues(next, hasGrace));
+    });
+    if (!(await this.resolveGraceColumns())) {
+      return { ...next, graceUntil: null, billingEventAt: null };
+    }
     return next;
+  }
+
+  private async runSelect(where: string, values: unknown[]): Promise<SeatRecord[]> {
+    return this.withGraceFallback(async (hasGrace) => {
+      const sql = `${seatSelectSql(hasGrace)}${where ? ` ${where}` : ""}`;
+      const rows = await this.rawQuery<SeatRecord>(sql, values);
+      return rows.map((row) => this.map(row));
+    });
   }
 }
 
@@ -442,10 +569,15 @@ export function getSeatStore(): SeatStore {
   return globalSeats.__staxSeatStore;
 }
 
+export function setSeatStoreForTests(store: SeatStore | null): void {
+  globalSeats.__staxSeatStore = store;
+}
+
 export function resetSeatStoreForTests(): void {
   const memory = sharedMemory();
   memory.reset();
   globalSeats.__staxSeatStore = memory;
+  resetGraceColumnsForTests();
 }
 
 export function periodLabel(seat: SeatRecord): string | null {

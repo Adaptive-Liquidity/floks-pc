@@ -194,6 +194,8 @@ describe("per-bot computer keys", () => {
       expiresAt: Date.now() + 60_000,
       openedAt: null,
       usedAt: null,
+      failedAt: null,
+      failReason: null,
     });
     const seat = createSeat({
       email,
@@ -219,7 +221,7 @@ describe("per-bot computer keys", () => {
       { ...taken },
       { ...fresh },
     ]);
-    assert.equal(ok, true);
+    assert.equal(ok.ok, true);
     const stored = await service.getBotClaim(claim.claimId);
     assert.equal(stored?.computerId, fresh.id);
     delete process.env.FLOK_PER_BOT_KEYS;
@@ -331,6 +333,8 @@ describe("per-bot computer keys", () => {
       expiresAt: Date.now() + 60_000,
       openedAt: null,
       usedAt: null,
+      failedAt: null,
+      failReason: null,
     });
     const seat = createSeat({
       email,
@@ -353,7 +357,7 @@ describe("per-bot computer keys", () => {
       },
     } as unknown as import("stripe").Stripe.Event;
     const ok = await bindPurchasedComputer(event, seat, [{ ...fresh }]);
-    assert.equal(ok, true);
+    assert.equal(ok.ok, true);
     const stored = await service.getBotClaim(claim.claimId);
     assert.equal(stored?.status, "approved");
     assert.equal(stored?.computerId, fresh.id);

@@ -83,31 +83,39 @@ describe("usage metering and suspend", () => {
     if (decision.action === "suspend") assert.equal(decision.reason, "idle");
   });
 
-  it("shuts down canceled or past-due seats", () => {
+  it("suspends canceled or past-due seats only after grace", () => {
     const canceled = createSeat({
       email: "x@example.com",
       plan: "personal",
       stripeCustomerId: "cus_x",
       status: "canceled",
+      graceUntil: "2026-09-29T00:00:00.000Z",
     });
     assert.equal(
       decideMetering({
         seat: canceled,
         computerState: "running",
         lastActiveAt: "2026-09-28T00:00:00.000Z",
-        nowMs: Date.now(),
+        nowMs: Date.parse("2026-09-28T12:00:00.000Z"),
       }).action,
-      "shutdown",
+      "none",
     );
+    const after = decideMetering({
+      seat: canceled,
+      computerState: "running",
+      lastActiveAt: "2026-09-28T00:00:00.000Z",
+      nowMs: Date.parse("2026-09-29T00:00:01.000Z"),
+    });
+    assert.equal(after.action, "suspend");
+    if (after.action === "suspend") assert.equal(after.reason, "canceled");
     const pastDue = { ...canceled, status: "past_due" as const };
     const past = decideMetering({
       seat: pastDue,
       computerState: "paused",
       lastActiveAt: "2026-09-28T00:00:00.000Z",
-      nowMs: Date.now(),
+      nowMs: Date.parse("2026-09-29T00:00:01.000Z"),
     });
-    assert.equal(past.action, "shutdown");
-    if (past.action === "shutdown") assert.equal(past.reason, "past_due");
+    assert.equal(past.action, "none");
   });
 
   it("meters by runtime state only, ignoring a leftover rebuild flag", () => {

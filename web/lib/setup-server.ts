@@ -1,8 +1,15 @@
+import type Stripe from "stripe";
 import { cookies } from "next/headers";
 import { COOKIE_NAME, loadAuthSession } from "./auth/workos";
 import { getSeatStore } from "./billing/seats";
-import { ensureSeatFromCheckout, getStripeCheckoutEmail } from "./billing/stripe";
-import { provisionSeatComputers } from "./billing/lifecycle";
+import {
+  bindFailedForEmail,
+  bindPurchasedComputer,
+  completeOpenPurchase,
+  recordPermanentBindFailure,
+} from "./billing/bind-purchase";
+import { enforceBillingHold, provisionSeatComputers } from "./billing/lifecycle";
+import { ensureSeatFromCheckout, getStripe, getStripeCheckoutEmail } from "./billing/stripe";
 import { desksForSeats, getComputerService } from "./desks/runtime";
 import { getOauthStore } from "./oauth";
 import { sessionFromSeats } from "./setup-payload";
@@ -26,13 +33,46 @@ export async function readAuthFromCookies(): Promise<{
   };
 }
 
+async function finishPaidCheckoutForSetup(sessionId: string, email: string) {
+  const seat = await ensureSeatFromCheckout(sessionId, email);
+  if (!seat || seat.status !== "active") return seat;
+  const computers = await provisionSeatComputers(seat);
+  const client = getStripe();
+  if (!client) return seat;
+  try {
+    const session = await client.checkout.sessions.retrieve(sessionId);
+    const outcome = await bindPurchasedComputer(
+      {
+        type: "checkout.session.completed",
+        id: `setup:${sessionId}`,
+        data: { object: session },
+        created: session.created ?? 0,
+      } as unknown as Stripe.Event,
+      seat,
+      computers,
+    );
+    if (!outcome.ok && outcome.kind === "permanent") {
+      const nonce = session.metadata?.bind_nonce?.trim() ?? "";
+      if (nonce) await recordPermanentBindFailure(nonce, outcome.reason);
+    }
+  } catch (err) {
+    console.error("[setup.bind]", err instanceof Error ? err.message : err);
+  }
+  return seat;
+}
+
 export async function liveSeatSession(email: string, webhookPending = false): Promise<SeatSession> {
   const store = getSeatStore();
+  try {
+    await completeOpenPurchase({ email });
+  } catch (err) {
+    console.error("[setup.complete]", err instanceof Error ? err.message : err);
+  }
   let seats = await store.listByEmail(email);
   for (const seat of seats) {
-    if (seat.status !== "active") continue;
     try {
-      await provisionSeatComputers(seat);
+      if (seat.status === "active") await provisionSeatComputers(seat);
+      else await enforceBillingHold(seat);
     } catch (err) {
       console.error("[setup.provision]", seat.id, err instanceof Error ? err.message : err);
     }
@@ -55,7 +95,13 @@ export async function liveSeatSession(email: string, webhookPending = false): Pr
     const client = await getOauthStore().getClient(binding.clientId);
     desk.botName = client?.clientName || "another Bot";
   }
-  return sessionFromSeats({ email, seats, desks, webhookPending });
+  return sessionFromSeats({
+    email,
+    seats,
+    desks,
+    webhookPending,
+    reconnectBot: await bindFailedForEmail(email),
+  });
 }
 
 export async function resolveSetupView(search: {
@@ -73,7 +119,7 @@ export async function resolveSetupView(search: {
   if (auth.email) {
     let webhookPending = false;
     if (search.session_id) {
-      const applied = await ensureSeatFromCheckout(search.session_id, auth.email);
+      const applied = await finishPaidCheckoutForSetup(search.session_id, auth.email);
       const seats = await getSeatStore().listByEmail(auth.email);
       const already = Boolean(applied) || seats.some((seat) => seat.stripeCheckoutSessionId === search.session_id);
       webhookPending = !already;

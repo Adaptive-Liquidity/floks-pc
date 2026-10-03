@@ -97,7 +97,14 @@ export const WEBHOOK_LAG =
 export const ZERO_SEATS =
   "No seat yet. Buy a computer from this account. Allowing the plugin does not mint a computer.";
 
-export const PAST_DUE = "Card failed. Update billing or the seat stays past due.";
+export const PAST_DUE =
+  "Card failed. Update billing during the grace period. After that the computer sleeps; files stay.";
+
+export const CANCELED_HOLD =
+  "Subscription ended. The computer stays available through the grace period, then sleeps. Files stay. It is not deleted immediately.";
+
+export const SETUP_RECONNECT_BOT =
+  "Reconnect your bot. Reconnect Staxions in Grok and pick a computer on the Allow screen.";
 
 export const DESK_COPY = {
   unused: "Unused. Create a pair key, then approve a pending Bot claim to bind this desk.",
@@ -179,7 +186,7 @@ export const FAQ_QA: ReadonlyArray<[string, string]> = [
   ],
   [
     "Does sleep wipe the computer?",
-    "No. Sleep does not wipe. When the subscription ends, the disk is not kept. Copy files off while it’s up if you need them.",
+    "No. Sleep does not wipe. After cancel or a failed payment there is a grace period, then the computer sleeps and files stay. We do not delete the machine on that event.",
   ],
   [
     "How do I start?",
