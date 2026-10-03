@@ -28,6 +28,8 @@ export interface PendingBindStore {
   claimOpen(nonce: string, now: number): Promise<PendingBindClaim>;
   markUsed(nonce: string, now?: number): Promise<boolean>;
   markFailed(nonce: string, reason: string, now?: number): Promise<boolean>;
+  /** False only before 0010 adds failed_at / fail_reason. */
+  failureColumnsReady(): Promise<boolean>;
 }
 
 function isOpenPending(row: PendingBind, now: number): boolean {
@@ -38,6 +40,15 @@ function isOpenPending(row: PendingBind, now: number): boolean {
 
 export class MemoryPendingBindStore implements PendingBindStore {
   readonly rows = new Map<string, PendingBind>();
+  private failureColumns = true;
+
+  setFailureColumnsReady(ready: boolean): void {
+    this.failureColumns = ready;
+  }
+
+  async failureColumnsReady(): Promise<boolean> {
+    return this.failureColumns;
+  }
 
   async save(row: PendingBind): Promise<void> {
     this.rows.set(row.nonce, {
@@ -91,10 +102,26 @@ type PgClient = {
 };
 
 export class PostgresPendingBindStore implements PendingBindStore {
+  private failureColumnsPresent: boolean | undefined;
+
   constructor(
     private readonly databaseUrl: string,
     private readonly injectedQuery?: PgClient["query"],
   ) {}
+
+  async failureColumnsReady(): Promise<boolean> {
+    if (this.failureColumnsPresent === true) return true;
+    try {
+      await this.withClient((query) =>
+        query("SELECT failed_at, fail_reason FROM pending_binds LIMIT 0"),
+      );
+      this.failureColumnsPresent = true;
+      return true;
+    } catch (err) {
+      if (!isUndefinedColumnError(err)) throw err;
+      return false;
+    }
+  }
 
   private async withClient<T>(fn: (query: PgClient["query"]) => Promise<T>): Promise<T> {
     if (this.injectedQuery) return fn(this.injectedQuery);
@@ -187,6 +214,7 @@ export class PostgresPendingBindStore implements PendingBindStore {
           [nonce, now, reason],
         ),
       );
+      this.failureColumnsPresent = true;
       return result.rows.length > 0;
     } catch (err) {
       if (!isUndefinedColumnError(err)) throw err;
@@ -228,6 +256,10 @@ export function getPendingBindStore(): PendingBindStore {
     ? new PostgresPendingBindStore(databaseUrl)
     : new MemoryPendingBindStore();
   return globalBinds.__staxPendingBinds;
+}
+
+export async function computerIdsForEmail(email: string): Promise<string[]> {
+  return computerIdsFrom(await getSeatStore().listByEmail(email));
 }
 
 export async function activeComputerIdsForEmail(email: string): Promise<string[]> {

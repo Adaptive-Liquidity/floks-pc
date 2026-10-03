@@ -80,7 +80,7 @@ export async function handleStripeWebhookRequest(request: Request): Promise<Next
   const raw = await request.text();
   const signature = request.headers.get("stripe-signature");
   let eventId: string | null = null;
-  let claimedAt: number | null = null;
+  let claimedAt: number | null | undefined;
   try {
     const event = signature
       ? constructStripeEvent(raw, signature)
@@ -103,7 +103,7 @@ export async function handleStripeWebhookRequest(request: Request): Promise<Next
     return NextResponse.json({ ok: true, seatId: seat?.id ?? null });
   } catch (err) {
     if (eventId && !(err instanceof DurableStoreRequired)) {
-      if (claimedAt !== null) {
+      if (claimedAt !== undefined) {
         try {
           await releaseStripeEvent(eventId, claimedAt);
         } catch {

@@ -3,7 +3,7 @@ import type { Computer } from "../../../src/lib/computers/index";
 import { flockIdForEmail, getComputerService } from "../desks/runtime";
 import { getOauthStore } from "../oauth";
 import { enforceBillingHold, provisionSeatComputers } from "./lifecycle";
-import { activeComputerIdsForEmail, getPendingBindStore } from "./pending-binds";
+import { computerIdsForEmail, getPendingBindStore } from "./pending-binds";
 import { getSeatStore, type SeatRecord } from "./seats";
 
 /** Mint a capability for a computer this flock already owns. The raw token is not stored. */
@@ -136,13 +136,17 @@ async function alreadyBoundToSeat(
 }
 
 export async function bindFailedForEmail(email: string): Promise<boolean> {
-  const rows = await getPendingBindStore().listByEmail(email);
-  // Pre-0010 markFailed falls back to used_at only. Used + no live binding is reconnect.
-  if (!rows.some((row) => Boolean(row.failReason) || row.failedAt !== null || row.usedAt !== null)) {
-    return false;
-  }
-  const ids = await activeComputerIdsForEmail(email);
-  if (ids.length === 0) return true;
+  const store = getPendingBindStore();
+  const rows = await store.listByEmail(email);
+  const useUsedAt = !(await store.failureColumnsReady());
+  const flagged = rows.some(
+    (row) =>
+      Boolean(row.failReason) || row.failedAt !== null || (useUsedAt && row.usedAt !== null),
+  );
+  if (!flagged) return false;
+  const seats = await getSeatStore().listByEmail(email);
+  if (seats.length === 0) return false;
+  const ids = await computerIdsForEmail(email);
   const oauth = getOauthStore();
   for (const id of ids) {
     if (await oauth.liveComputerBinding(id)) return false;

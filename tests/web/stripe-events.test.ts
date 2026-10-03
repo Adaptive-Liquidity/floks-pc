@@ -105,11 +105,104 @@ describe("stripe event lease", { concurrency: 1 }, () => {
       return { rows: [] as T[] };
     });
     const first = await store.claim("evt_pre", "checkout.session.completed");
-    assert.equal(first.claim, "new");
-    if (first.claim !== "new") return;
+    assert.deepEqual(first, { claim: "new", claimedAt: null });
     assert.deepEqual(await store.claim("evt_pre", "checkout.session.completed"), { claim: "duplicate" });
-    await store.release("evt_pre", first.claimedAt);
+    await store.release("evt_pre", first.claim === "new" ? first.claimedAt : null);
     assert.equal((await store.claim("evt_pre", "checkout.session.completed")).claim, "new");
+  });
+
+  it("releases a pre-0010 claim after 0010 so the redelivery is new", async () => {
+    type Row = { id: string; event_type: string; status?: string; claimed_at?: Date | null };
+    const table = new Map<string, Row>();
+    let leaseColumns = false;
+    const store = new PostgresStripeEventStore("postgres://unused", async <T>(text: string, values?: unknown[]) => {
+      if (!leaseColumns && (text.includes("status") || text.includes("claimed_at"))) throw undefinedColumn();
+      const id = String(values?.[0] ?? "");
+      if (text.includes("INSERT INTO stripe_events (id, event_type, status")) {
+        if (table.has(id)) return { rows: [] as T[] };
+        const claimedAt = new Date(Number(values?.[2]));
+        table.set(id, { id, event_type: String(values?.[1]), status: "processing", claimed_at: claimedAt });
+        return { rows: [{ id, claimed_at: claimedAt }] as T[] };
+      }
+      if (text.includes("INSERT INTO stripe_events (id, event_type)")) {
+        if (table.has(id)) return { rows: [] as T[] };
+        table.set(id, { id, event_type: String(values?.[1]) });
+        return { rows: [{ id }] as T[] };
+      }
+      if (text.includes("SELECT id, event_type, status, claimed_at")) {
+        const row = table.get(id);
+        return { rows: (row ? [row] : []) as T[] };
+      }
+      if (text.includes("SET status = 'failed'") && !text.includes("claimed_at")) {
+        const row = table.get(id);
+        if (row) row.status = "failed";
+        return { rows: [] as T[] };
+      }
+      if (text.includes("SET status = 'processing'")) {
+        const row = table.get(id);
+        if (row && (row.status === "failed" || row.status === "processing")) {
+          row.status = "processing";
+          row.event_type = String(values?.[1]);
+          row.claimed_at = new Date(Number(values?.[2]));
+          return { rows: [{ id, claimed_at: row.claimed_at }] as T[] };
+        }
+        return { rows: [] as T[] };
+      }
+      if (text.includes("DELETE")) {
+        table.delete(id);
+        return { rows: [] as T[] };
+      }
+      throw new Error(`unexpected sql: ${text}`);
+    });
+    assert.deepEqual(await store.claim("evt_straddle", "checkout.session.completed"), {
+      claim: "new",
+      claimedAt: null,
+    });
+    leaseColumns = true;
+    for (const row of table.values()) {
+      if (row.status === undefined) row.status = "done";
+    }
+    await store.release("evt_straddle", null);
+    assert.equal((await store.claim("evt_straddle", "checkout.session.completed")).claim, "new");
+  });
+
+  it("completes a claimPre0010 row after 0010 so the row is done", async () => {
+    type Row = { id: string; event_type: string; status: string; claimed_at: Date | null };
+    const table = new Map<string, Row>();
+    const store = new PostgresStripeEventStore("postgres://unused", async <T>(text: string, values?: unknown[]) => {
+      const id = String(values?.[0] ?? "");
+      if (text.includes("INSERT INTO stripe_events (id, event_type)") && !text.includes("status")) {
+        if (table.has(id)) return { rows: [] as T[] };
+        table.set(id, {
+          id,
+          event_type: String(values?.[1]),
+          status: "processing",
+          claimed_at: new Date(),
+        });
+        return { rows: [{ id }] as T[] };
+      }
+      if (text.includes("SET status = 'done'") && !text.includes("claimed_at")) {
+        const row = table.get(id);
+        if (row) row.status = "done";
+        return { rows: [] as T[] };
+      }
+      if (text.includes("INSERT INTO stripe_events (id, event_type, status")) {
+        if (table.has(id)) return { rows: [] as T[] };
+        const claimedAt = new Date(Number(values?.[2]));
+        table.set(id, { id, event_type: String(values?.[1]), status: "processing", claimed_at: claimedAt });
+        return { rows: [{ id, claimed_at: claimedAt }] as T[] };
+      }
+      if (text.includes("SELECT id, event_type, status, claimed_at")) {
+        const row = table.get(id);
+        return { rows: (row ? [row] : []) as T[] };
+      }
+      throw new Error(`unexpected sql: ${text}`);
+    });
+    const first = await store.claimPre0010("evt_late_pre", "invoice.paid");
+    assert.deepEqual(first, { claim: "new", claimedAt: null });
+    await store.complete("evt_late_pre", null);
+    assert.equal(table.get("evt_late_pre")?.status, "done");
+    assert.deepEqual(await store.claim("evt_late_pre", "invoice.paid"), { claim: "duplicate" });
   });
 
   it("retries the lease insert after a missing-column error instead of caching it", async () => {
@@ -209,14 +302,28 @@ describe("stripe event lease", { concurrency: 1 }, () => {
       }
       if (text.includes("SET status = 'done'")) {
         const row = table.get(id);
-        const owner = Number(values?.[1]);
-        if (row && row.claimed_at.getTime() === owner) row.status = "done";
+        if (!row) return { rows: [] as T[] };
+        if (!text.includes("claimed_at")) {
+          row.status = "done";
+        } else if (row.claimed_at.getTime() === Number(values?.[1])) {
+          row.status = "done";
+        }
         return { rows: [] as T[] };
       }
       if (text.includes("SET status = 'failed'")) {
         const row = table.get(id);
-        const owner = Number(values?.[1]);
-        if (row && row.claimed_at.getTime() === owner && row.status !== "done") row.status = "failed";
+        if (!row) return { rows: [] as T[] };
+        if (!text.includes("claimed_at")) {
+          row.status = "failed";
+        } else {
+          const owner = Number(values?.[1]);
+          if (
+            (row.claimed_at.getTime() === owner && row.status !== "done") ||
+            Number.isNaN(row.claimed_at.getTime())
+          ) {
+            row.status = "failed";
+          }
+        }
         return { rows: [] as T[] };
       }
       throw new Error(`unexpected sql: ${text}`);

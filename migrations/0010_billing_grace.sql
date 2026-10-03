@@ -20,6 +20,8 @@ UPDATE stripe_events
    SET status = 'done'
  WHERE status IS NULL;
 
+-- Re-running this file after the r4-era 0010 (status DEFAULT 'done') is a no-op
+-- on ADD COLUMN IF NOT EXISTS. Apply this ALTER by hand if the runner skipped it.
 ALTER TABLE stripe_events
   ALTER COLUMN status SET DEFAULT 'processing',
   ALTER COLUMN status SET NOT NULL,

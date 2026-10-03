@@ -7,7 +7,7 @@ export type StripeEventClaim = "new" | "duplicate" | "in_flight";
 export type StripeEventStatus = "processing" | "done" | "failed";
 
 export type StripeEventLease =
-  | { claim: "new"; claimedAt: number }
+  | { claim: "new"; claimedAt: number | null }
   | { claim: "duplicate" }
   | { claim: "in_flight" };
 
@@ -20,8 +20,8 @@ export type StripeEventRow = {
 
 export interface StripeEventStore {
   claim(id: string, eventType: string, now?: number): Promise<StripeEventLease>;
-  complete(id: string, claimedAt: number): Promise<void>;
-  release(id: string, claimedAt: number): Promise<void>;
+  complete(id: string, claimedAt: number | null): Promise<void>;
+  release(id: string, claimedAt: number | null): Promise<void>;
 }
 
 export type StripeEventSqlQuery = <T>(
@@ -56,14 +56,16 @@ export class MemoryStripeEventStore implements StripeEventStore {
     return { claim: "new", claimedAt: now };
   }
 
-  async complete(id: string, claimedAt: number): Promise<void> {
+  async complete(id: string, claimedAt: number | null): Promise<void> {
     const row = this.rows.get(id);
-    if (row && ownsLease(row, claimedAt)) row.status = "done";
+    if (row && (claimedAt === null || ownsLease(row, claimedAt))) row.status = "done";
   }
 
-  async release(id: string, claimedAt: number): Promise<void> {
+  async release(id: string, claimedAt: number | null): Promise<void> {
     const row = this.rows.get(id);
-    if (row && ownsLease(row, claimedAt) && row.status !== "done") row.status = "failed";
+    if (row && (claimedAt === null || ownsLease(row, claimedAt)) && row.status !== "done") {
+      row.status = "failed";
+    }
   }
 
   reset(): void {
@@ -97,9 +99,16 @@ const LEASE_COMPLETE = `UPDATE stripe_events
         SET status = 'done'
       WHERE id = $1 AND claimed_at = to_timestamp($2 / 1000.0)`;
 
+const COMPLETE_BY_ID = `UPDATE stripe_events SET status = 'done' WHERE id = $1`;
+
 const LEASE_RELEASE = `UPDATE stripe_events
         SET status = 'failed'
-      WHERE id = $1 AND claimed_at = to_timestamp($2 / 1000.0) AND status <> 'done'`;
+      WHERE id = $1 AND (
+        (claimed_at = to_timestamp($2 / 1000.0) AND status <> 'done')
+        OR claimed_at IS NULL
+      )`;
+
+const RELEASE_BY_ID = `UPDATE stripe_events SET status = 'failed' WHERE id = $1`;
 
 const PRE_LEASE_DELETE = `DELETE FROM stripe_events WHERE id = $1`;
 
@@ -156,22 +165,24 @@ export class PostgresStripeEventStore implements StripeEventStore {
     }
   }
 
-  private async claimPre0010(id: string, eventType: string, now: number): Promise<StripeEventLease> {
+  async claimPre0010(id: string, eventType: string, _now = Date.now()): Promise<StripeEventLease> {
     const inserted = await this.rawQuery<{ id: string }>(PRE_LEASE_INSERT, [id, eventType]);
-    return inserted.rows.length > 0 ? { claim: "new", claimedAt: now } : { claim: "duplicate" };
+    return inserted.rows.length > 0 ? { claim: "new", claimedAt: null } : { claim: "duplicate" };
   }
 
-  async complete(id: string, claimedAt: number): Promise<void> {
+  async complete(id: string, claimedAt: number | null): Promise<void> {
     try {
-      await this.rawQuery(LEASE_COMPLETE, [id, claimedAt]);
+      if (claimedAt === null) await this.rawQuery(COMPLETE_BY_ID, [id]);
+      else await this.rawQuery(LEASE_COMPLETE, [id, claimedAt]);
     } catch (err) {
       if (!isUndefinedColumnError(err)) throw err;
     }
   }
 
-  async release(id: string, claimedAt: number): Promise<void> {
+  async release(id: string, claimedAt: number | null): Promise<void> {
     try {
-      await this.rawQuery(LEASE_RELEASE, [id, claimedAt]);
+      if (claimedAt === null) await this.rawQuery(RELEASE_BY_ID, [id]);
+      else await this.rawQuery(LEASE_RELEASE, [id, claimedAt]);
     } catch (err) {
       if (!isUndefinedColumnError(err)) throw err;
       await this.rawQuery(PRE_LEASE_DELETE, [id]);
@@ -225,10 +236,10 @@ export async function claimStripeEvent(
   return getStripeEventStore().claim(id, eventType, now);
 }
 
-export async function completeStripeEvent(id: string, claimedAt: number): Promise<void> {
+export async function completeStripeEvent(id: string, claimedAt: number | null): Promise<void> {
   await getStripeEventStore().complete(id, claimedAt);
 }
 
-export async function releaseStripeEvent(id: string, claimedAt: number): Promise<void> {
+export async function releaseStripeEvent(id: string, claimedAt: number | null): Promise<void> {
   await getStripeEventStore().release(id, claimedAt);
 }

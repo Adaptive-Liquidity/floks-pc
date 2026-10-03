@@ -23,7 +23,7 @@ import {
   resetStripeForTests,
 } from "../../web/lib/billing/stripe.ts";
 import { resetStripeEventsForTests } from "../../web/lib/billing/stripe-events.ts";
-import { getSeatStore, resetSeatStoreForTests } from "../../web/lib/billing/seats.ts";
+import { createSeat, getSeatStore, resetSeatStoreForTests } from "../../web/lib/billing/seats.ts";
 import { flockIdForEmail, resetDeskRuntimeForTests, setComputerServiceForTests } from "../../web/lib/desks/runtime.ts";
 import {
   MemoryOauthStore,
@@ -420,10 +420,59 @@ describe("stripe webhook HTTP", { concurrency: 1 }, () => {
     assert.equal(bound?.computerId, seats[0]?.computerId);
   });
 
-  it("shows reconnect when a used nonce has no live binding (pre-0010 markUsed fallback)", async () => {
+  it("does not show reconnect for past_due or canceled seats that still have a live binding", async () => {
     process.env.STAXIONS_BIND_SECRET = "test-bind-0123456789-abcdef-0123456789";
-    const email = "usedunbound@example.com";
-    const subject = "user_usedunbound";
+    for (const status of ["past_due", "canceled"] as const) {
+      const email = `${status.replace("_", "")}@example.com`;
+      const subject = `user_${status}`;
+      const client = registerClient(["https://grok.com/callback"]);
+      await getOauthStore().saveClient(client);
+      const flock = flockIdForEmail(email);
+      const link = await createBuyLink({
+        origin: "https://example.test",
+        email,
+        subject,
+        flock,
+        clientId: client.id,
+        plan: "personal",
+      });
+      assert.equal(await getPendingBindStore().markUsed(link.nonce), true);
+      await getPendingBindStore().markFailed(link.nonce, "expired");
+      const computerId = `comp_${status}`;
+      await getSeatStore().upsert(
+        createSeat({
+          email,
+          plan: "personal",
+          stripeCustomerId: `cus_${status}`,
+          status,
+          computerId,
+          computerIds: [computerId],
+        }),
+      );
+      await getOauthStore().saveAccess({
+        tokenHash: `hash_${status}`,
+        refreshHash: `refresh_${status}`,
+        subject,
+        flock,
+        clientId: client.id,
+        email,
+        computerId,
+        capabilityId: `cap_${status}`,
+        expiresAt: Date.now() + 60_000,
+        refreshExpiresAt: Date.now() + 86_400_000,
+        revoked: false,
+      });
+      assert.equal(await bindFailedForEmail(email), false, status);
+    }
+  });
+
+  it("shows reconnect for a pre-0010 expired nonce when no live binding exists", async () => {
+    process.env.STAXIONS_BIND_SECRET = "test-bind-0123456789-abcdef-0123456789";
+    const binds = new MemoryPendingBindStore();
+    binds.setFailureColumnsReady(false);
+    setPendingBindStoreForTests(binds);
+    const email = "pre0010expired@example.com";
+    const subject = "user_pre0010expired";
     const client = registerClient(["https://grok.com/callback"]);
     await getOauthStore().saveClient(client);
     const flock = flockIdForEmail(email);
@@ -440,10 +489,20 @@ describe("stripe webhook HTTP", { concurrency: 1 }, () => {
     assert.ok(pending?.usedAt);
     assert.equal(pending?.failedAt, null);
     assert.equal(pending?.failReason, null);
+    await getSeatStore().upsert(
+      createSeat({
+        email,
+        plan: "personal",
+        stripeCustomerId: "cus_pre0010expired",
+        status: "active",
+        computerId: "comp_pre0010expired",
+        computerIds: ["comp_pre0010expired"],
+      }),
+    );
     assert.equal(await bindFailedForEmail(email), true);
     const session = sessionFromSeats({
       email,
-      seats: [],
+      seats: await getSeatStore().listByEmail(email),
       desks: [],
       reconnectBot: await bindFailedForEmail(email),
     });
@@ -510,5 +569,20 @@ describe("stripe webhook HTTP", { concurrency: 1 }, () => {
     assert.equal(await store.markFailed("nonce-fail", "expired"), true);
     assert.equal(written[0]?.[2], "expired");
     assert.equal((await store.get("nonce-fail"))?.failReason, "expired");
+  });
+
+  it("exposes missing pending_binds failure columns from Postgres", async () => {
+    const missing = new PostgresPendingBindStore("postgres://unused", async (text: string) => {
+      if (text.includes("failed_at") || text.includes("fail_reason")) {
+        const err = new Error('column "failed_at" does not exist') as Error & { code: string };
+        err.code = "42703";
+        throw err;
+      }
+      return { rows: [] };
+    });
+    assert.equal(await missing.failureColumnsReady(), false);
+    const present = new PostgresPendingBindStore("postgres://unused", async () => ({ rows: [] }));
+    assert.equal(await present.failureColumnsReady(), true);
+    assert.equal(await present.failureColumnsReady(), true);
   });
 });
