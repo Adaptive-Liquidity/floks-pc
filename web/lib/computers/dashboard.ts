@@ -5,17 +5,19 @@ export const DASHBOARD_STATUSES = ["running", "paused", "starting", "stopped", "
 export type DashboardStatus = (typeof DASHBOARD_STATUSES)[number];
 
 const STARTING = new Set<ComputerState>(["requested", "provisioning", "waking"]);
-const WORKING = new Set<ComputerState>([
-  "recovering",
-  "checkpointing",
+const WORKING = new Set<ComputerState>(["recovering", "checkpointing"]);
+const TERMINAL = new Set<ComputerState>([
   "error",
   "restore_failed",
   "cleanup_needed",
+  "deleting",
+  "deleted",
 ]);
 
 export function dashboardStatus(state: ComputerState): DashboardStatus {
   if (state === "ready" || state === "running") return "running";
   if (state === "paused") return "paused";
+  if (TERMINAL.has(state)) return "stopped";
   if (WORKING.has(state)) return "working";
   if (STARTING.has(state)) return "starting";
   return "stopped";

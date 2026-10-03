@@ -670,6 +670,41 @@ describe("computer activity + owner lifecycle", () => {
     assert.equal((await service.get(computer.id)).providerRef, originalRef);
   });
 
+  it("records a failed orphan destroy on the control plane, not only the activity log", async () => {
+    const store = new MemoryControlPlaneStore();
+    const provider = new FakeProvider();
+    const service = new ComputerService(provider, { store });
+    const computer = await service.requestComputer({
+      birdId: "bird-orphan-note",
+      flockId: "flock-orphan-note",
+    });
+    const originalRef = computer.providerRef;
+    assert.ok(originalRef);
+    const origCas = store.compareAndSave.bind(store);
+    store.compareAndSave = async (snapshot, expectedRevision) => {
+      const row = snapshot.computers.find((item) => item.id === computer.id);
+      if (row?.providerRef && row.providerRef !== originalRef) {
+        throw new StaleControlPlane();
+      }
+      return origCas(snapshot, expectedRevision);
+    };
+    const origDestroy = provider.destroy.bind(provider);
+    provider.destroy = async (ref) => {
+      if (ref !== originalRef) throw new Error("vendor destroy failed");
+      return origDestroy(ref);
+    };
+    provider.wake = async () => {
+      throw new ProviderNeedsReplacement("fake");
+    };
+    await assert.rejects(
+      () => service.restartThisComputer(computer.id, { confirmRebuild: true }),
+      (err: unknown) => err instanceof ControlPlaneBusy,
+    );
+    const other = new ComputerService(new FakeProvider(), { store });
+    await other.hydrate();
+    assert.equal((await other.get(computer.id)).recoveryNote, "Replacement leftover could not be destroyed.");
+  });
+
   it("destroys a losing replace so two confirmed restarts leave one live devbox", async () => {
     const store = new MemoryControlPlaneStore();
     const provider = new FakeProvider();

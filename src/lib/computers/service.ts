@@ -1643,6 +1643,13 @@ export class ComputerService {
         success: false,
         errorCode: "REPLACE_ORPHAN_DESTROY_FAILED",
       });
+      const stored = this.committed
+        ? computersFromSnapshot(this.committed).find((row) => row.id === computer.id)
+        : undefined;
+      if (stored) this.computers.set(computer.id, stored);
+      await this.patchComputer(computer.id, {
+        recoveryNote: "Replacement leftover could not be destroyed.",
+      }).catch(() => undefined);
     }
   }
 

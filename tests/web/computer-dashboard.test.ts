@@ -157,9 +157,10 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
     assert.equal(dashboardStatus("stopped"), "stopped");
     assert.equal(dashboardStatus("recovering"), "working");
     assert.equal(dashboardStatus("checkpointing"), "working");
-    assert.equal(dashboardStatus("error"), "working");
-    assert.equal(dashboardStatus("restore_failed"), "working");
-    assert.equal(dashboardStatus("cleanup_needed"), "working");
+    assert.equal(dashboardStatus("error"), "stopped");
+    assert.equal(dashboardStatus("restore_failed"), "stopped");
+    assert.equal(dashboardStatus("cleanup_needed"), "stopped");
+    assert.equal(dashboardStatus("deleted"), "stopped");
     assert.equal(dashboardStatus("recovery_failed"), "stopped");
     assert.equal(dashboardStatusFromDesk("running"), "running");
     assert.equal(dashboardStatusFromDesk("sleeping"), "paused");
@@ -684,9 +685,9 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
     const blocked: Array<{ via: string[]; expectStatus: string }> = [
       { via: ["recovering"], expectStatus: "working" },
       { via: ["checkpointing"], expectStatus: "working" },
-      { via: ["error"], expectStatus: "working" },
-      { via: ["recovering", "restore_failed"], expectStatus: "working" },
-      { via: ["recovering", "cleanup_needed"], expectStatus: "working" },
+      { via: ["error"], expectStatus: "stopped" },
+      { via: ["recovering", "restore_failed"], expectStatus: "stopped" },
+      { via: ["recovering", "cleanup_needed"], expectStatus: "stopped" },
     ];
     for (const row of blocked) {
       const service = new ComputerService(new FakeProvider(), { activityStore: new MemoryActivityStore() });
