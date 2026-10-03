@@ -179,6 +179,11 @@ export interface Computer {
   recoveryNote: string | null;
   /** Durable: owner must confirm a wipe-rebuild. Survives Vercel instances. */
   rebuildConfirmRequired: boolean;
+  /**
+   * Last validated Runloop policy assignment for a paid computer.
+   * Absent on fake/docker records and on rows written before network enforcement.
+   */
+  networkAttachment?: NetworkPolicyAttachment | null;
 }
 
 /** Durable checkpoint pointer. No workspace bytes, tokens, or API keys. */
@@ -199,7 +204,39 @@ export interface ProviderCapabilities {
   snapshots: boolean;
   forks: boolean;
   customImages: boolean;
+  /**
+   * Provider is able to attach an egress policy.
+   * `true` is not proof a restrictive policy is attached.
+   */
   networkPolicy: boolean;
+}
+
+/** Governed GitHub access, or a distinct weaker public-browser computer. */
+export const NETWORK_POLICY_PROFILES = ["governed-github", "public-browser"] as const;
+export type NetworkPolicyProfile = (typeof NETWORK_POLICY_PROFILES)[number];
+
+/** Opt-in package registry host sets. Never applied unless the operator selects one. */
+export const PACKAGE_PRESETS = ["npm", "pypi", "crates", "apt"] as const;
+export type PackagePreset = (typeof PACKAGE_PRESETS)[number];
+
+/**
+ * Observed assignment of a validated restrictive policy.
+ * `enforcement: "eventually-consistent"` means vendor acceptance is not an instant dataplane revoke.
+ */
+export interface NetworkPolicyAttachment {
+  profile: NetworkPolicyProfile;
+  policyId: string;
+  revisionMs: number;
+  contentHash: string;
+  effectivePolicyId: string;
+  allowAll: false;
+  allowDevboxToDevbox: false;
+  allowAgentGateway: false;
+  allowMcpGateway: false;
+  allowRunloopMirrors: boolean;
+  packagePreset: PackagePreset | null;
+  enforcement: "eventually-consistent";
+  observedAt: string;
 }
 
 export type ComputerJobType =
@@ -311,6 +348,8 @@ export interface ProviderComputer {
   providerRef: string;
   status: ComputerState;
   endpoints?: Record<string, string>;
+  /** Present when this create/restore attached a validated restrictive policy. */
+  networkAttachment?: NetworkPolicyAttachment;
 }
 
 export interface ComputerStatus {

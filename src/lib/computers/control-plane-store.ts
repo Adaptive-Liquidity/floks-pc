@@ -149,18 +149,26 @@ export function assertSnapshotHasNoRawSecrets(snapshot: ControlPlaneSnapshot): v
   if (/"token"\s*:\s*"[^"]{16,}"/.test(blob) && blob.includes("capability")) {
     throw new Error("refusing to persist a raw capability token");
   }
+  if (blob.includes("RUNLOOP_API_KEY")) {
+    throw new Error("refusing to persist RUNLOOP_API_KEY");
+  }
 }
 
 export type PairIssueExtras = { scopes: CapabilityScope[]; capabilityTtlMs: number };
 
 export function computersFromSnapshot(snapshot: ControlPlaneSnapshot): Computer[] {
-  return snapshot.computers.map((c) => ({
-    ...c,
-    createdAt: new Date(c.createdAt),
-    updatedAt: new Date(c.updatedAt),
-    lastActiveAt: c.lastActiveAt ? new Date(c.lastActiveAt) : null,
-    rebuildConfirmRequired: c.rebuildConfirmRequired === true,
-  }));
+  return snapshot.computers.map((c) => {
+    const { networkAttachment, ...rest } = c;
+    const computer: Computer = {
+      ...rest,
+      createdAt: new Date(c.createdAt),
+      updatedAt: new Date(c.updatedAt),
+      lastActiveAt: c.lastActiveAt ? new Date(c.lastActiveAt) : null,
+      rebuildConfirmRequired: c.rebuildConfirmRequired === true,
+    };
+    if (networkAttachment) computer.networkAttachment = networkAttachment;
+    return computer;
+  });
 }
 
 export function pairCodesFromSnapshot(snapshot: ControlPlaneSnapshot): ComputerPairCode[] {

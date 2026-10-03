@@ -4,6 +4,9 @@ This is fail-closed launch security, not production-ready multi-tenant security.
 
 - `click_element` uses the last `observe({ include_accessibility: true })` AX bounds (15s). Missing tree, unknown id, no box model, and offscreen targets fail closed. Guessed clicks are not allowed.
 - Proxies and residential egress are not included.
+- A configured Runloop policy id is not proof the dataplane has applied it. Vendor updates are eventually consistent. The live deny/allow script is `scripts/verify-runloop-network-policy.ts` and is not run by CI.
+- Hostname allowlists do not prove IP, DNS, or redirect bypasses are blocked. Those probes stay unresolved until an authorized live run observes them.
+- The effective blueprint policy was not read from Runloop in this change. Launch now sets `network_policy_id` explicitly and fails if the devbox does not echo it.
 - Production scale is not proven.
 - No guaranteed bot-detection bypass.
 - Background jobs run via exec/files; browser computer use is the first lane.

@@ -86,6 +86,28 @@ export const ComputerSpecSchema = z.object({
   baseImageVersion: z.string().optional(),
 });
 
+export const NetworkPolicyProfileSchema = z.enum(["governed-github", "public-browser"]);
+
+export const PackagePresetSchema = z.enum(["npm", "pypi", "crates", "apt"]);
+
+export const NetworkPolicyAttachmentSchema = z
+  .object({
+    profile: NetworkPolicyProfileSchema,
+    policyId: z.string().min(1).max(128),
+    revisionMs: z.number().int().nonnegative(),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    effectivePolicyId: z.string().min(1).max(128),
+    allowAll: z.literal(false),
+    allowDevboxToDevbox: z.literal(false),
+    allowAgentGateway: z.literal(false),
+    allowMcpGateway: z.literal(false),
+    allowRunloopMirrors: z.boolean(),
+    packagePreset: PackagePresetSchema.nullable(),
+    enforcement: z.literal("eventually-consistent"),
+    observedAt: z.string().datetime(),
+  })
+  .strict();
+
 export const ComputerSchema = z.object({
   id: z.string().min(1),
   birdId: z.string().min(1),
@@ -106,6 +128,7 @@ export const ComputerSchema = z.object({
   latestCheckpoint: ComputerLatestCheckpointSchema.nullable().default(null),
   recoveryNote: z.string().max(512).nullable().default(null),
   rebuildConfirmRequired: z.boolean().optional(),
+  networkAttachment: NetworkPolicyAttachmentSchema.nullable().optional(),
 });
 
 export const ProviderCapabilitiesSchema = z.object({

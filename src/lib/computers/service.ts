@@ -28,6 +28,7 @@ import type {
   CapabilityScope,
   Computer,
   ComputerCapability,
+  NetworkPolicyAttachment,
   ComputerLatestCheckpoint,
   ComputerOperationAuth,
   ComputerPairCode,
@@ -44,9 +45,11 @@ import type {
   Observation,
   ObserveRequest,
   PairResult,
+  ProviderComputer,
   SharedAccountAuth,
 } from "./types.js";
 import { isRestartableState } from "./types.js";
+import { isSafeNetworkAttachment } from "./network-policy.js";
 import {
   BetaInviteRequired,
   BetaStoreRequired,
@@ -69,6 +72,7 @@ import {
   ObserveRetryable,
   RestoreUnsupported,
   IllegalStateTransition,
+  NetworkPolicyRejected,
   PairCodeInvalid,
   PathEscape,
   ProviderNeedsReplacement,
@@ -526,7 +530,19 @@ export class ComputerService {
     await this.persist();
 
     // Call provider
-    const provisioned = await this.provider.provision(spec);
+    let provisioned;
+    let networkAttachment: NetworkPolicyAttachment | null = null;
+    try {
+      provisioned = await this.provider.provision(spec);
+      networkAttachment = await this.attachmentForPaidMachine(provisioned);
+    } catch (err) {
+      if (err instanceof NetworkPolicyRejected) {
+        this.computers.delete(id);
+        this.byBird.delete(spec.birdId);
+        await this.persist();
+      }
+      throw err;
+    }
 
     // provisioning → ready
     computer = {
@@ -535,6 +551,7 @@ export class ComputerService {
       state: "ready",
       updatedAt: new Date(this.now()),
       lastActiveAt: new Date(this.now()),
+      ...(networkAttachment ? { networkAttachment } : {}),
     };
     this.computers.set(id, computer);
     await this.persist();
@@ -567,7 +584,7 @@ export class ComputerService {
       if (to === "running" || to === "ready") {
         // wake if coming from paused/stopped
         if (current.state === "paused" || current.state === "stopped") {
-          await this.provider.wake(current.providerRef);
+          await this.wakeProvider(current.id, current.providerRef);
         }
       } else if (to === "paused") {
         await this.provider.pause(current.providerRef);
@@ -603,7 +620,14 @@ export class ComputerService {
   private async patchComputer(
     computerId: string,
     patch: Partial<
-      Pick<Computer, "latestCheckpoint" | "recoveryNote" | "providerRef" | "rebuildConfirmRequired">
+      Pick<
+        Computer,
+        | "latestCheckpoint"
+        | "recoveryNote"
+        | "providerRef"
+        | "rebuildConfirmRequired"
+        | "networkAttachment"
+      >
     >,
   ): Promise<Computer> {
     const current = await this.get(computerId);
@@ -808,7 +832,8 @@ export class ComputerService {
     computerId: string,
     request: ObserveRequest,
   ): Promise<OperatorObserveResult> {
-    const computer = await this.get(computerId);
+    let computer = await this.get(computerId);
+    if (this.paidNetworkRequired()) computer = await this.requireVerifiedAttachment(computer);
     this.assertObserveAvailable(computer);
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
@@ -1454,6 +1479,99 @@ export class ComputerService {
    * and wait until it is up. Running time stays billable. A refused seat is
    * left down.
    */
+  private paidNetworkRequired(): boolean {
+    return this.provider.requiresPaidNetworkPolicy?.() === true;
+  }
+
+  /**
+   * Paid create/restore must come back with a restrictive attachment.
+   * A missing attachment destroys the new machine and fails closed.
+   */
+  private async attachmentForPaidMachine(
+    machine: ProviderComputer,
+  ): Promise<NetworkPolicyAttachment | null> {
+    if (!this.paidNetworkRequired()) return null;
+    if (!isSafeNetworkAttachment(machine.networkAttachment)) {
+      await this.provider.destroy(machine.providerRef).catch(() => undefined);
+      throw new NetworkPolicyRejected(
+        "NETWORK_POLICY_UNATTACHED",
+        "paid create/restore finished without a validated restrictive network attachment",
+      );
+    }
+    return machine.networkAttachment;
+  }
+
+  private async wakeProvider(computerId: string, ref: string): Promise<void> {
+    let woke: void | NetworkPolicyAttachment;
+    try {
+      woke = await this.provider.wake(ref);
+    } catch (err) {
+      if (err instanceof NetworkPolicyRejected) await this.notePolicyBlock(computerId, err);
+      throw err;
+    }
+    if (!this.paidNetworkRequired()) return;
+    if (!isSafeNetworkAttachment(woke)) {
+      await this.provider.pause(ref).catch(() => undefined);
+      const missing = new NetworkPolicyRejected(
+        "NETWORK_POLICY_UNATTACHED",
+        "paid wake returned no validated restrictive network attachment",
+      );
+      await this.notePolicyBlock(computerId, missing);
+      throw missing;
+    }
+    await this.patchComputer(computerId, { networkAttachment: woke });
+  }
+
+  private async requireVerifiedAttachment(computer: Computer): Promise<Computer> {
+    if (!this.paidNetworkRequired()) return computer;
+    const ref = computer.providerRef;
+    if (!ref) {
+      throw new NetworkPolicyRejected(
+        "NETWORK_POLICY_REQUIRED",
+        "paid computer has no provider ref to verify",
+      );
+    }
+    if (!this.provider.verifyNetworkAttachment) {
+      throw new NetworkPolicyRejected(
+        "NETWORK_POLICY_REQUIRED",
+        "paid provider does not expose network attachment verification",
+      );
+    }
+    try {
+      const attachment = await this.provider.verifyNetworkAttachment(ref);
+      if (!isSafeNetworkAttachment(attachment)) {
+        throw new NetworkPolicyRejected(
+          "NETWORK_POLICY_UNSAFE",
+          "paid computer attachment is missing or unrestricted",
+        );
+      }
+      return this.patchComputer(computer.id, { networkAttachment: attachment });
+    } catch (err) {
+      if (err instanceof NetworkPolicyRejected) await this.notePolicyBlock(computer.id, err);
+      throw err;
+    }
+  }
+
+  /** Park a computer whose policy is missing or unsafe. Does not reprovision. */
+  private async notePolicyBlock(computerId: string, err: NetworkPolicyRejected): Promise<void> {
+    const current = await this.get(computerId).catch(() => null);
+    if (!current) return;
+    if (current.state !== "stopped" && canTransition(current.state, "stopped")) {
+      this.applyTransition(current, "stopped");
+    }
+    await this.patchComputer(computerId, {
+      recoveryNote: "network policy missing or unsafe; unrestricted egress was refused",
+    }).catch(() => undefined);
+    this.recordOperatorEvent({
+      computerId,
+      birdId: current.birdId,
+      kind: "lifecycle",
+      operation: "network-policy",
+      success: false,
+      errorCode: err.code,
+    });
+  }
+
   private async ensureAwake(computer: Computer): Promise<Computer> {
     if (this.keyRenewed) {
       this.keyRenewed = false;
@@ -1464,6 +1582,10 @@ export class ComputerService {
     }
     // Gate is side-effect-free. Decide before taking the per-computer lock.
     await this.requireWakeAdmission(computer.id);
+    if (!computer.providerRef) return computer;
+    if (this.paidNetworkRequired()) {
+      computer = await this.requireVerifiedAttachment(computer);
+    }
     if (!computer.providerRef) return computer;
     if ((await this.classifyProvider(computer.providerRef)) === "up") {
       return this.healToUp(computer);
@@ -1522,7 +1644,7 @@ export class ComputerService {
     let liveRef = computer.providerRef ?? ref;
     if (kind === "asleep") {
       try {
-        await this.withinDeadline(this.provider.wake(liveRef), deadline);
+        await this.withinDeadline(this.wakeProvider(computer.id, liveRef), deadline);
       } catch (err) {
         if (err instanceof ComputerStarting || !this.shouldReplaceDevbox(err)) throw err;
         const latest = await this.get(computer.id);
@@ -1678,6 +1800,7 @@ export class ComputerService {
       ...(current.diskGb !== null ? { diskGb: current.diskGb } : {}),
       ...(current.baseImageVersion ? { baseImageVersion: current.baseImageVersion } : {}),
     });
+    const networkAttachment = await this.attachmentForPaidMachine(created);
     try {
       await this.reloadIfRevisionChanged();
       const latest = await this.get(current.id);
@@ -1690,6 +1813,7 @@ export class ComputerService {
         providerRef: created.providerRef,
         rebuildConfirmRequired: false,
         updatedAt: new Date(this.now()),
+        ...(networkAttachment ? { networkAttachment } : {}),
       };
       this.computers.set(current.id, updated);
       await this.persistExact();
@@ -1990,7 +2114,8 @@ export class ComputerService {
   }
 
   async refreshKeepAlive(computerId: string): Promise<void> {
-    const computer = await this.get(computerId);
+    let computer = await this.get(computerId);
+    if (this.paidNetworkRequired()) computer = await this.requireVerifiedAttachment(computer);
     if (!computer.providerRef) return;
     if (this.provider.keepAlive) {
       await this.provider.keepAlive(computer.providerRef);
@@ -2031,8 +2156,9 @@ export class ComputerService {
     await this.persist();
     const ref = this.requireProviderRef(computer);
     try {
-      await this.provider.wake(ref);
+      await this.wakeProvider(computer.id, ref);
     } catch (err) {
+      if (err instanceof NetworkPolicyRejected) throw err;
       if (this.shouldReplaceDevbox(err)) {
         await this.refuseRebuildWithoutConfirm(computer, "wake");
       }
@@ -2053,6 +2179,10 @@ export class ComputerService {
     try {
       await this.provider.healthProbe(ref);
     } catch (err) {
+      if (err instanceof NetworkPolicyRejected) {
+        await this.notePolicyBlock(computerId, err);
+        throw err;
+      }
       if (this.shouldReplaceDevbox(err)) {
         await this.refuseRebuildWithoutConfirm(await this.get(computerId), "wake");
       }
@@ -2118,9 +2248,10 @@ export class ComputerService {
     }
     const ref = this.requireProviderRef(computer);
     try {
-      await this.provider.wake(ref);
+      await this.wakeProvider(computer.id, ref);
       await this.provider.healthProbe(ref);
     } catch (err) {
+      if (err instanceof NetworkPolicyRejected) throw err;
       if (this.shouldReplaceDevbox(err)) {
         if (opts?.confirmRebuild !== true) {
           await this.refuseRebuildWithoutConfirm(computer, "restart");
@@ -2176,6 +2307,7 @@ export class ComputerService {
       throw new RestoreUnsupported(this.provider.name);
     }
     const from = current.state;
+    if (this.paidNetworkRequired()) await this.requireVerifiedAttachment(current);
     const ref = this.requireProviderRef(current);
     let computer = this.applyTransition(current, "checkpointing");
     const pending: ComputerLatestCheckpoint = {
@@ -2298,8 +2430,12 @@ export class ComputerService {
         birdId: current.birdId,
         flockId: current.flockId,
       });
+      const networkAttachment = await this.attachmentForPaidMachine(restored);
       restoredRef = restored.providerRef;
-      await this.patchComputer(computerId, { providerRef: restoredRef });
+      await this.patchComputer(computerId, {
+        providerRef: restoredRef,
+        ...(networkAttachment ? { networkAttachment } : {}),
+      });
     } catch (err) {
       await this.abortRecovery(
         computerId,
@@ -2308,9 +2444,13 @@ export class ComputerService {
         priorStatus,
         "restore_failed",
         "restore failed",
-        err instanceof RestoreUnsupported ? "RESTORE_UNSUPPORTED" : "RESTORE_FAILED",
+        err instanceof NetworkPolicyRejected
+          ? err.code
+          : err instanceof RestoreUnsupported
+            ? "RESTORE_UNSUPPORTED"
+            : "RESTORE_FAILED",
       );
-      if (err instanceof RestoreUnsupported) throw err;
+      if (err instanceof NetworkPolicyRejected || err instanceof RestoreUnsupported) throw err;
       throw new ComputerError("RESTORE_FAILED", "restore failed");
     }
 
@@ -2670,6 +2810,7 @@ export class ComputerService {
     if (computer.state !== "ready" && computer.state !== "running") {
       throw new ObserveRetryable(computer.state);
     }
+    if (this.paidNetworkRequired()) await this.requireVerifiedAttachment(computer);
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
     const timeoutMs = opts?.timeoutMs ?? OWNER_DESKTOP_WATCH_TIMEOUT_MS;
@@ -2707,6 +2848,7 @@ export class ComputerService {
         );
       }
     }
+    if (this.paidNetworkRequired()) await this.requireVerifiedAttachment(computer);
     const ref = this.requireProviderRef(computer);
     await this.touch(computer);
     const result = await this.provider.act(ref, request);

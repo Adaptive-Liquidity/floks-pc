@@ -89,7 +89,8 @@ interface ProviderCapabilities {
 - CDP is loopback-only. Never bind `0.0.0.0`. No `--no-sandbox`.
 - L1 Agent Computers require blueprint `flok-runloop-interactive` (or equivalent owner-validated interactive stack). Generic `runloop/universal-ubuntu-24.04-x86_64-dnd` is compute-only and must **fail before** the computer is accepted. Missing Xvfb / `flok-ui` is not success. `fromEnv()` uses `resolveAgentComputerBlueprint()` and fails closed on missing/generic DnD unless `FLOK_RUNLOOP_ALLOW_COMPUTE_ONLY=1` (C3A live compute tests only). Missing `flok-ui` / Xvfb / Chrome fails before ready. This is shipped L1 behavior, not an open gap.
 - MCP has no stop/destroy tool. Paid cleanup is `POST /v1/devboxes/{id}/shutdown` (see `docs/computers/agent-computer-cloud.md`). Process exit is not destroy.
-- Auth: `RUNLOOP_API_KEY`. Never place the key inside a Devbox, exec env, log, or MCP response.
+- Auth: `RUNLOOP_API_KEY`. Never place the key inside a Devbox, exec env, log, snapshot, or MCP response.
+- Paid network: `fromEnv()` requires a validated restrictive policy and sends `launch_parameters.network_policy_id`. Create and restore read that id back. Wake/resume verify the id already on the devbox; `resume` is called with no policy argument. Missing or unsafe policies fail closed. `ComputerService` records the revision, content hash, and effective policy id and will not mark a paid computer ready without that attachment. Enforcement is eventually consistent. Details: `docs/computers/NETWORK_POLICY.md`.
 - Do **not** use `runloopai/deploy-agent`. C3 tests Devboxes, not Runloop Agents.
 - Live lifetime: `keep_alive_time_seconds=900`. Do not combine with `lifecycle.after_idle`.
 - Chromium sandbox is preserved (no `--no-sandbox`) unless a verified Runloop incompatibility is documented.

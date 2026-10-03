@@ -4,8 +4,10 @@ import {
   FakeProvider,
   MemoryActivityStore,
   MemoryControlPlaneStore,
+  PAID_NETWORK_POLICY_ENV,
   controlPlaneStoreFromEnv,
   hashPairCode,
+  isPaidNetworkPolicyConfigured,
 } from "../../../src/lib/computers/index";
 import { PostgresActivityStore } from "../store/activity-pg";
 import type { Computer, ComputerPairCode, ComputerProvider } from "../../../src/lib/computers/index";
@@ -18,7 +20,7 @@ import type { DeskRecord } from "../types";
 import { admitComputerWake } from "./wake-admission";
 
 export function paidProviderForbiddenMessage(): string {
-  return "Paid Staxions computers require FLOK_WEB_PROVIDER=runloop, RUNLOOP_API_KEY, and FLOK_RUNLOOP_BLUEPRINT. The demo provider cannot be served to a paying customer in production.";
+  return `Paid Staxions computers require FLOK_WEB_PROVIDER=runloop, RUNLOOP_API_KEY, FLOK_RUNLOOP_BLUEPRINT, and a validated restrictive network policy (${PAID_NETWORK_POLICY_ENV.join(", ")}). The demo provider cannot be served to a paying customer in production.`;
 }
 
 const globalDesk = globalThis as typeof globalThis & {
@@ -51,7 +53,11 @@ function getRevealStore(): PairRevealStore {
 export function useRunloop(env: NodeJS.ProcessEnv = process.env): boolean {
   if (env.FLOK_WEB_PROVIDER !== "runloop") return false;
   if (env.CI === "true" || env.NODE_ENV === "test") return false;
-  return Boolean(env.RUNLOOP_API_KEY?.trim() && env.FLOK_RUNLOOP_BLUEPRINT?.trim());
+  return Boolean(
+    env.RUNLOOP_API_KEY?.trim() &&
+      env.FLOK_RUNLOOP_BLUEPRINT?.trim() &&
+      isPaidNetworkPolicyConfigured(env),
+  );
 }
 
 export function isProductionRuntime(env: NodeJS.ProcessEnv = process.env): boolean {

@@ -322,6 +322,31 @@ export class ControlPlaneBusy extends ComputerError {
   }
 }
 
+export const NETWORK_POLICY_ERROR_CODES = [
+  "NETWORK_POLICY_REQUIRED",
+  "NETWORK_POLICY_UNSAFE",
+  "NETWORK_POLICY_LEGACY",
+  "NETWORK_POLICY_UNATTACHED",
+  "NETWORK_POLICY_DRIFT",
+] as const;
+
+export type NetworkPolicyErrorCode = (typeof NETWORK_POLICY_ERROR_CODES)[number];
+
+/**
+ * Paid network policy failed closed.
+ * Messages stay free of provider secrets and raw policy documents.
+ * Vendor dataplane updates are eventually consistent; this error is not an instant revoke.
+ */
+export class NetworkPolicyRejected extends ComputerError {
+  override readonly code: NetworkPolicyErrorCode;
+
+  constructor(code: NetworkPolicyErrorCode, message: string) {
+    super(code, message);
+    this.code = code;
+    this.name = "NetworkPolicyRejected";
+  }
+}
+
 /** Restart is only legal from stopped, waking, recovery_failed, ready, running, or paused. */
 export class RestartNotAvailable extends ComputerError {
   constructor(state: string) {

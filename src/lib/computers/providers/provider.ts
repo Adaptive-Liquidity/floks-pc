@@ -21,6 +21,7 @@ import type {
   Observation,
   ObserveRequest,
   ProviderCapabilities,
+  NetworkPolicyAttachment,
   ProviderCheckpoint,
   ProviderComputer,
   RestoreRequest,
@@ -34,14 +35,29 @@ export interface ComputerProvider {
   /** Static capability advertisement */
   capabilities(): ProviderCapabilities;
 
+  /**
+   * Paid Runloop computers return true. ComputerService then requires a
+   * validated attachment on create, restore, and wake, and before execution.
+   */
+  requiresPaidNetworkPolicy?(): boolean;
+
+  /**
+   * Read the policy already attached to a computer. Must not resume and must
+   * not replace a missing policy with unrestricted egress.
+   */
+  verifyNetworkAttachment?(ref: string): Promise<NetworkPolicyAttachment>;
+
   /** Create a new computer (VM / container) for a Node */
   provision(spec: ComputerSpec): Promise<ProviderComputer>;
 
   /** Current status of an existing computer */
   status(ref: string): Promise<ComputerStatus>;
 
-  /** Bring a paused / stopped computer back to running */
-  wake(ref: string): Promise<void>;
+  /**
+   * Bring a paused / stopped computer back to running.
+   * Paid providers return the verified attachment. Resume itself cannot set a policy.
+   */
+  wake(ref: string): Promise<void | NetworkPolicyAttachment>;
 
   /** Pause (preferably memory-preserving) */
   pause(ref: string): Promise<void>;

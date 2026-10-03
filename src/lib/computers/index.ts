@@ -35,9 +35,12 @@ export type {
   IssuedPairCode,
   IssuePairCodeOptions,
   NodeIdentity,
+  NetworkPolicyAttachment,
+  NetworkPolicyProfile,
   Observation,
   ObserveRequest,
   OsType,
+  PackagePreset,
   PairResult,
   ProviderCapabilities,
   ProviderCheckpoint,
@@ -90,6 +93,7 @@ export {
   DuplicateComputer,
   IdempotencyConflict,
   IllegalStateTransition,
+  NetworkPolicyRejected,
   InsufficientScope,
   InvalidScope,
   PairCodeInvalid,
@@ -175,6 +179,22 @@ export type {
 } from "./capabilities.js";
 
 export { digestEquals, sha256Hex } from "./digest.js";
+
+export {
+  GITHUB_BYPASS_HOSTS,
+  NETWORK_PATH_INVENTORY,
+  PACKAGE_PRESET_HOSTS,
+  PAID_NETWORK_POLICY_ENV,
+  RUNLOOP_CONTROL_PLANE_ORIGIN,
+  assertRunloopControlPlaneUrl,
+  createRunloopControlPlaneFetch,
+  evaluateVendorNetworkPolicy,
+  isPaidNetworkPolicyConfigured,
+  isSafeNetworkAttachment,
+  liveProbePlan,
+  parsePaidNetworkPolicyConfig,
+} from "./network-policy.js";
+export type { LiveProbe, PaidNetworkPolicyConfig } from "./network-policy.js";
 
 export { ComputerService, PAIR_IDENTITY_FAILURE_LIMIT } from "./service.js";
 export {

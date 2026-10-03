@@ -14,6 +14,7 @@ import type {
   ExecResult,
   FsRequest,
   FsResult,
+  NetworkPolicyAttachment,
   Observation,
   ObserveRequest,
   ProviderCapabilities,
@@ -176,7 +177,7 @@ export class FakeProvider implements ComputerProvider {
     };
   }
 
-  async wake(ref: string): Promise<void> {
+  async wake(ref: string): Promise<void | NetworkPolicyAttachment> {
     this.maybeFail("wake");
     const m = this.getMachine(ref);
     if (m.state === "paused" || m.state === "stopped") {

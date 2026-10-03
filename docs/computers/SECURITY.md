@@ -54,13 +54,15 @@ Every filesystem operation:
 - Rejects `../`, symlink escape, device files, `/proc`, `/sys`, provider control paths.
 - Default allowed root: `/home/flok` (or equivalent workspace).
 
-## Network policy (defaults)
+## Network policy (paid Runloop)
 
-- Inbound deny
-- Public ports deny
-- Metadata endpoints deny
-- Cross-Node deny
-- Later self-host: outbound default deny + explicit allowlist
+Paid create, restore, and wake require `FLOK_RUNLOOP_NETWORK_POLICY_ID` and a profile (`governed-github` or `public-browser`). `allow_all` stays false. Cross-devbox connectivity stays off. Agent and MCP gateways stay off (they are generic credential proxies). Package registries and Runloop mirrors are opt-in, not defaults. See `docs/computers/NETWORK_POLICY.md`.
+
+`governed-github` rejects GitHub API, browser, git, asset, package, and enterprise hostnames, not only `api.github.com`. `public-browser` is a separate weaker profile and may allow those hostnames.
+
+Wake and resume only verify a policy the devbox already has. The installed SDK `resume` call does not accept a policy field. A legacy devbox with no policy is not resumed and is not repaired by omitting a policy. Vendor policy changes are eventually consistent; accepting a revision is not an instant revoke.
+
+The control-plane client is pinned to `https://api.runloop.ai` and refuses redirects.
 
 ## Credentials
 

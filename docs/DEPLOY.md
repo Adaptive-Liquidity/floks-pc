@@ -119,6 +119,13 @@ A config mismatch now renders a clear HTML error on `/callback` and `/setup?erro
 | `RUNLOOP_API_KEY` | with Runloop | Never expose to the browser |
 | `FLOK_RUNLOOP_BLUEPRINT` | with Runloop | Interactive stack, not generic DnD |
 | `FLOK_RUNLOOP_KEEP_ALIVE_SECONDS` | optional | 60–86400; default follows idle, max 1h, cron refreshes |
+| `FLOK_RUNLOOP_NETWORK_POLICY_ID` | with Runloop | Restrictive policy id. Paid create/restore/wake fail without it |
+| `FLOK_RUNLOOP_NETWORK_PROFILE` | with Runloop | `governed-github` or `public-browser` |
+| `FLOK_RUNLOOP_ALLOW_AGENT_GATEWAY` | with Runloop | Explicit `false`. `true` is rejected |
+| `FLOK_RUNLOOP_ALLOW_MCP_GATEWAY` | with Runloop | Explicit `false`. `true` is rejected |
+| `FLOK_RUNLOOP_ALLOW_RUNLOOP_MIRRORS` | with Runloop | Explicit `true` or `false`. `true` also needs a package preset |
+| `FLOK_RUNLOOP_PACKAGE_PRESET` | optional | `npm`, `pypi`, `crates`, or `apt`. Not a default |
+| `FLOK_RUNLOOP_CONTROL_PLANE_HOSTS` | optional | Comma-separated exact hostnames. No GitHub hosts on `governed-github` |
 
 ### Production (Stripe live + WorkOS Production)
 

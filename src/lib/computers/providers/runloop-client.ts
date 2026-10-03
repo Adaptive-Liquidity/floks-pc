@@ -21,8 +21,21 @@ export const MAX_KEEP_ALIVE_SECONDS = 60 * 60;
 
 export const CONTROL_PLANE_SECRET_ENV_KEYS = [
   "RUNLOOP_API_KEY",
+  "RUNLOOP_BEARER_TOKEN",
   "DAYTONA_API_KEY",
   "DAYTONA_JWT_TOKEN",
+  "FLOK_MCP_AUTH_TOKEN",
+  "DATABASE_URL",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "WORKOS_API_KEY",
+  "WORKOS_COOKIE_PASSWORD",
+  "CRON_SECRET",
+  "STAXIONS_BIND_SECRET",
+  "GITHUB_TOKEN",
+  "GH_TOKEN",
+  "GITHUB_PAT",
+  "GH_PAT",
 ] as const;
 
 export type RunloopDevboxState =
@@ -69,17 +82,17 @@ export interface RunloopCreateParams {
   labels: Record<string, string>;
   /** Guest environment. Must not contain control-plane secrets. */
   envVars: Record<string, string>;
+  /** Configured restrictive policy. Required for paid create/restore. */
+  networkPolicyId?: string;
 }
 
-export type RunloopLaunchParameters =
-  | {
-      architecture: "x86_64" | "arm64";
-      keep_alive_time_seconds: number;
-    }
-  | {
-      architecture: "x86_64" | "arm64";
-      lifecycle: { after_idle: { idle_time_seconds: number; on_idle: "suspend" } };
-    };
+export type RunloopLaunchParameters = {
+  architecture: "x86_64" | "arm64";
+  network_policy_id: string;
+} & (
+  | { keep_alive_time_seconds: number }
+  | { lifecycle: { after_idle: { idle_time_seconds: number; on_idle: "suspend" } } }
+);
 
 const RunloopOnIdleSchema = z.enum(["suspend"]).optional();
 
@@ -97,12 +110,18 @@ export function parseRunloopOnIdle(env: NodeJS.ProcessEnv = process.env): "suspe
 export function runloopLaunchParameters(
   params: RunloopCreateParams,
   fallbackKeepAlive: number,
-  onIdle?: "suspend",
+  onIdle: "suspend" | undefined,
+  networkPolicyId: string,
 ): RunloopLaunchParameters {
+  const policyId = networkPolicyId.trim();
+  if (!policyId) {
+    throw new Error("network_policy_id is required for paid Runloop create/restore");
+  }
   const architecture = params.architecture || DEFAULT_RUNLOOP_ARCH;
   if (onIdle === "suspend") {
     return {
       architecture,
+      network_policy_id: policyId,
       lifecycle: {
         after_idle: {
           idle_time_seconds: params.idleTimeSeconds ?? (params.keepAliveSeconds || fallbackKeepAlive),
@@ -113,16 +132,32 @@ export function runloopLaunchParameters(
   }
   return {
     architecture,
+    network_policy_id: policyId,
     keep_alive_time_seconds: params.keepAliveSeconds || fallbackKeepAlive,
   };
 }
 
-/** Launch mode only. No ids, keys, or env values. */
+/**
+ * Launch mode only. No policy ids, keys, env values, or hostnames.
+ * `enforcement` records that vendor acceptance is not an instant revoke.
+ */
 export function logRunloopLaunch(op: "create" | "restore", launch: RunloopLaunchParameters): void {
   const line =
     "lifecycle" in launch
-      ? { op, mode: "suspend" as const, idle_s: launch.lifecycle.after_idle.idle_time_seconds }
-      : { op, mode: "keep_alive" as const, keep_alive_s: launch.keep_alive_time_seconds };
+      ? {
+          op,
+          mode: "suspend" as const,
+          idle_s: launch.lifecycle.after_idle.idle_time_seconds,
+          policy_attached: true,
+          enforcement: "eventually-consistent" as const,
+        }
+      : {
+          op,
+          mode: "keep_alive" as const,
+          keep_alive_s: launch.keep_alive_time_seconds,
+          policy_attached: true,
+          enforcement: "eventually-consistent" as const,
+        };
   process.stderr.write(`runloop.launch ${JSON.stringify(line)}\n`);
 }
 
@@ -154,8 +189,17 @@ export interface RunloopDevboxSession {
   interactiveGuest: boolean;
 
   state(): Promise<RunloopDevboxState>;
+  /**
+   * Policy id echoed on launch parameters. Null means a legacy devbox with no
+   * attached policy. Callers must not treat null as unrestricted success.
+   */
+  readLaunchPolicyId(): Promise<string | null>;
   /** disk-preserving suspend; RAM is discarded */
   suspend(): Promise<void>;
+  /**
+   * Installed SDK resume accepts polling options only, not a network policy.
+   * Callers must verify the existing attachment before invoking this.
+   */
   resume(): Promise<void>;
   /** Idempotent shutdown. */
   shutdown(): Promise<void>;
@@ -199,6 +243,8 @@ export interface RunloopControlPlane {
   create(params: RunloopCreateParams): Promise<RunloopDevboxSession>;
   get(id: string): Promise<RunloopDevboxSession>;
   restore(snapshotRef: string, params: RunloopCreateParams): Promise<RunloopDevboxSession>;
+  /** Read a vendor policy. Implementations must not create an unrestricted policy. */
+  retrieveNetworkPolicy(id: string): Promise<unknown>;
 }
 
 export function assertNoControlPlaneSecrets(env: Record<string, string> | undefined): void {
@@ -212,9 +258,55 @@ export function assertNoControlPlaneSecrets(env: Record<string, string> | undefi
     if (/api[_-]?key/i.test(k) || (/runloop/i.test(k) && /key|token|secret/i.test(k))) {
       throw new Error(`refusing to place control-plane secret ${k} inside a Node VM`);
     }
-    if (typeof v === "string" && v.length > 8 && process.env.RUNLOOP_API_KEY === v) {
-      throw new Error("refusing to place RUNLOOP_API_KEY value inside a Node VM");
+    if (typeof v === "string" && containsControlPlaneSecret(v)) {
+      throw new Error("refusing to place a control-plane secret value inside a Node VM");
     }
+  }
+}
+
+function secretValues(env: NodeJS.ProcessEnv): string[] {
+  const values: string[] = [];
+  for (const key of CONTROL_PLANE_SECRET_ENV_KEYS) {
+    const value = env[key];
+    if (typeof value === "string" && value.length > 8) values.push(value);
+  }
+  return values;
+}
+
+/** Replace known control-plane secret values. Does not log the secret. */
+export function redactControlPlaneSecrets(text: string, env: NodeJS.ProcessEnv = process.env): string {
+  let redacted = text;
+  for (const secret of secretValues(env)) {
+    if (redacted.includes(secret)) redacted = redacted.split(secret).join("[redacted]");
+  }
+  return redacted;
+}
+
+export function containsControlPlaneSecret(text: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return secretValues(env).some((secret) => text.includes(secret));
+}
+
+export const FORBIDDEN_DEVBOX_CREDENTIAL_KEYS = [
+  "secrets",
+  "gateways",
+  "mcp",
+  "file_mounts",
+  "code_mounts",
+  "mounts",
+  "tunnel",
+  "entrypoint",
+] as const;
+
+/** Reject vendor create fields that inject credentials or open an alternate network path. */
+export function assertNoCredentialInjectionChannels(body: Record<string, unknown>): void {
+  for (const key of FORBIDDEN_DEVBOX_CREDENTIAL_KEYS) {
+    if (body[key] != null) {
+      throw new Error(`refusing devbox ${key}: credential or alternate network channel`);
+    }
+  }
+  const env = body.environment_variables;
+  if (env && typeof env === "object" && !Array.isArray(env)) {
+    assertNoControlPlaneSecrets(env as Record<string, string>);
   }
 }
 

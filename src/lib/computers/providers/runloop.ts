@@ -32,16 +32,26 @@ import type {
 import {
   ComputerError,
   ComputerUseNotAvailable,
+  NetworkPolicyRejected,
   PathEscape,
   ProviderNeedsReplacement,
   ProviderUnavailable,
 } from "../errors.js";
+import {
+  evaluateVendorNetworkPolicy,
+  isSafeNetworkAttachment,
+  parsePaidNetworkPolicyConfig,
+  type PaidNetworkPolicyConfig,
+} from "../network-policy.js";
+import type { NetworkPolicyAttachment } from "../types.js";
 export { ComputerUseNotAvailable };
 import { assertInsideRoot } from "../path.js";
 import { logCdpAxObserve, mapCdpAxDump, sanitizeCdpAxHint, validateAction } from "./runloop-interactive.js";
 import { runValidatedActions, screenIsBlank } from "./runloop-browser.js";
 import {
   assertNoControlPlaneSecrets,
+  containsControlPlaneSecret,
+  redactControlPlaneSecrets,
   DEFAULT_RUNLOOP_ARCH,
   DEFAULT_RUNLOOP_BLUEPRINT,
   LIVE_KEEP_ALIVE_SECONDS,
@@ -87,6 +97,8 @@ export class RunloopProvider implements ComputerProvider {
   private readonly workspaceId: string | null;
   private readonly keepAliveSeconds: number;
   private readonly idleTimeSeconds: number;
+  private readonly requirePaidNetworkPolicy: boolean;
+  private readonly networkConfig: PaidNetworkPolicyConfig | null;
   private readonly sessions = new Map<string, RunloopDevboxSession>();
 
   constructor(opts?: {
@@ -98,6 +110,8 @@ export class RunloopProvider implements ComputerProvider {
     requireInteractive?: boolean;
     ownerId?: string | null;
     workspaceId?: string | null;
+    requirePaidNetworkPolicy?: boolean;
+    network?: PaidNetworkPolicyConfig;
   }) {
     this.requireInteractive = opts?.requireInteractive ?? !allowComputeOnlyBlueprint();
     this.ownerId = opts?.ownerId ?? process.env.FLOK_OWNER_ID?.trim() ?? null;
@@ -106,6 +120,14 @@ export class RunloopProvider implements ComputerProvider {
       opts?.blueprint ?? process.env.FLOK_RUNLOOP_BLUEPRINT ?? DEFAULT_RUNLOOP_BLUEPRINT;
     this.keepAliveSeconds = opts?.keepAliveSeconds ?? LIVE_KEEP_ALIVE_SECONDS;
     this.idleTimeSeconds = opts?.idleTimeSeconds ?? this.keepAliveSeconds;
+    this.requirePaidNetworkPolicy = opts?.requirePaidNetworkPolicy ?? false;
+    this.networkConfig = opts?.network ?? null;
+    if (this.requirePaidNetworkPolicy && !this.networkConfig) {
+      throw new NetworkPolicyRejected(
+        "NETWORK_POLICY_REQUIRED",
+        "paid Runloop computers require a validated network policy configuration",
+      );
+    }
     if (opts?.client) {
       this.plane = opts.client;
       return;
@@ -143,12 +165,14 @@ export class RunloopProvider implements ComputerProvider {
       Number.isInteger(keepRaw) && keepRaw >= 60 && keepRaw <= 24 * 60 * 60
         ? Math.min(keepRaw, 24 * 60 * 60)
         : Math.min(Math.max(idleSeconds, LIVE_KEEP_ALIVE_SECONDS), MAX_KEEP_ALIVE_SECONDS);
+    const network = parsePaidNetworkPolicyConfig();
     const { createSdkRunloopPlane } = await import("./runloop-sdk.js");
     parseRunloopOnIdle();
     const client = await createSdkRunloopPlane({
       apiKey,
       blueprint,
       keepAliveSeconds,
+      network,
     });
     return new RunloopProvider({
       client,
@@ -157,7 +181,13 @@ export class RunloopProvider implements ComputerProvider {
       keepAliveSeconds,
       idleTimeSeconds: suspendIdleTimeSeconds(),
       requireInteractive,
+      requirePaidNetworkPolicy: true,
+      network,
     });
+  }
+
+  requiresPaidNetworkPolicy(): boolean {
+    return this.requirePaidNetworkPolicy;
   }
 
   capabilities(): ProviderCapabilities {
@@ -175,6 +205,11 @@ export class RunloopProvider implements ComputerProvider {
     };
   }
 
+  async verifyNetworkAttachment(ref: string): Promise<NetworkPolicyAttachment> {
+    const session = await this.requireSession(ref);
+    return this.readCompatibleAttachment(session);
+  }
+
   async provision(spec: ComputerSpec): Promise<ProviderComputer> {
     if (spec.osType === "windows") {
       throw new ProviderUnavailable("runloop", "linux only");
@@ -187,6 +222,15 @@ export class RunloopProvider implements ComputerProvider {
       ? await this.plane.get(existingId)
       : await this.plane.create(params);
     this.sessions.set(session.id, session);
+    let networkAttachment: NetworkPolicyAttachment | undefined;
+    if (this.requirePaidNetworkPolicy) {
+      try {
+        networkAttachment = await this.readCompatibleAttachment(session);
+      } catch (err) {
+        if (!existingId) await this.abandonSession(session.id);
+        throw err;
+      }
+    }
     try {
       await session.fsMkdir(RUNLOOP_WORKSPACE_ROOT).catch(() => undefined);
       await session.ensureInteractiveStack();
@@ -204,7 +248,9 @@ export class RunloopProvider implements ComputerProvider {
       }
       throw e;
     }
-    return { providerRef: session.id, status: "ready" };
+    const created: ProviderComputer = { providerRef: session.id, status: "ready" };
+    if (networkAttachment) created.networkAttachment = networkAttachment;
+    return created;
   }
 
   async status(ref: string): Promise<ComputerStatus> {
@@ -220,13 +266,15 @@ export class RunloopProvider implements ComputerProvider {
     return { state, providerDetail: `runloop:${s.birdId}` };
   }
 
-  async wake(ref: string): Promise<void> {
+  async wake(ref: string): Promise<void | NetworkPolicyAttachment> {
     const s = await this.requireSession(ref);
+    const attachment = this.requirePaidNetworkPolicy ? await this.readCompatibleAttachment(s) : undefined;
     const st = await s.state();
     if (st === "stopped") {
       try {
         await s.resume();
-      } catch {
+      } catch (err) {
+        if (err instanceof NetworkPolicyRejected) throw err;
         throw new ProviderNeedsReplacement("runloop");
       }
     } else if (st !== "running") {
@@ -243,6 +291,7 @@ export class RunloopProvider implements ComputerProvider {
       await s.suspend().catch(() => undefined);
       throw e;
     }
+    if (attachment) return attachment;
   }
 
   async pause(ref: string): Promise<void> {
@@ -251,7 +300,7 @@ export class RunloopProvider implements ComputerProvider {
   }
 
   async keepAlive(ref: string): Promise<void> {
-    const s = await this.requireSession(ref);
+    const s = await this.gateGuest(ref);
     if (s.keepAlive) await s.keepAlive();
   }
 
@@ -269,7 +318,7 @@ export class RunloopProvider implements ComputerProvider {
   }
 
   async exec(ref: string, request: ExecRequest): Promise<ExecResult> {
-    const s = await this.requireSession(ref);
+    const s = await this.gateGuest(ref);
     if (request.mode === "shell") {
       return {
         exitCode: 126,
@@ -337,20 +386,20 @@ export class RunloopProvider implements ComputerProvider {
       const result = await s.exec(execReq);
       return {
         exitCode: result.exitCode,
-        stdout: result.stdout.slice(0, MAX_OUTPUT),
-        stderr: result.stderr.slice(0, MAX_OUTPUT),
+        stdout: redactControlPlaneSecrets(result.stdout.slice(0, MAX_OUTPUT)),
+        stderr: redactControlPlaneSecrets(result.stderr.slice(0, MAX_OUTPUT)),
         timedOut: result.timedOut,
       };
     } catch (e) {
       throw new ProviderUnavailable(
         "runloop",
-        e instanceof Error ? e.message : "exec failed",
+        redactControlPlaneSecrets(e instanceof Error ? e.message : "exec failed"),
       );
     }
   }
 
   async filesystem(ref: string, request: FsRequest): Promise<FsResult> {
-    const s = await this.requireSession(ref);
+    const s = await this.gateGuest(ref);
     let canonical: string;
     try {
       canonical = assertInsideRoot(request.path, RUNLOOP_WORKSPACE_ROOT);
@@ -374,8 +423,11 @@ export class RunloopProvider implements ComputerProvider {
         const r = await s.fsRead(canonical);
         if (!r.ok) return { ok: false, errorCode: r.errorCode };
         const buf = r.data ?? Buffer.alloc(0);
-        const data =
-          request.encoding === "base64" ? buf.toString("base64") : buf.toString("utf8");
+        const utf8 = buf.toString("utf8");
+        if (containsControlPlaneSecret(utf8)) {
+          return { ok: false, errorCode: "SECRET_REJECTED" };
+        }
+        const data = request.encoding === "base64" ? buf.toString("base64") : utf8;
         return { ok: true, data };
       }
       case "write": {
@@ -386,6 +438,9 @@ export class RunloopProvider implements ComputerProvider {
           typeof request.content === "string"
             ? Buffer.from(request.content)
             : Buffer.from(request.content);
+        if (containsControlPlaneSecret(body.toString("utf8"))) {
+          return { ok: false, errorCode: "SECRET_REJECTED" };
+        }
         const r = await s.fsWrite(canonical, body);
         if (!r.ok) return { ok: false, errorCode: r.errorCode };
         return { ok: true };
@@ -427,7 +482,7 @@ export class RunloopProvider implements ComputerProvider {
   }
 
   async observe(ref: string, request: ObserveRequest): Promise<Observation> {
-    const s = await this.requireSession(ref);
+    const s = await this.gateGuest(ref);
     await s.ensureInteractiveStack();
     const shot = await s.screenshot();
     const obs: Observation = {
@@ -483,7 +538,7 @@ export class RunloopProvider implements ComputerProvider {
   }
 
   async act(ref: string, request: ActionBatch): Promise<ActionResult> {
-    const s = await this.requireSession(ref);
+    const s = await this.gateGuest(ref);
     await s.ensureInteractiveStack();
     return runValidatedActions(request.actions, validateAction, (action) => s.uiAction(action));
   }
@@ -493,7 +548,7 @@ export class RunloopProvider implements ComputerProvider {
   }
 
   async checkpoint(ref: string): Promise<ProviderCheckpoint> {
-    const s = await this.requireSession(ref);
+    const s = await this.gateGuest(ref);
     const name = `flok-${ref}-${Date.now()}`;
     const snap = await s.snapshotDisk(name);
     return { providerSnapshotRef: snap };
@@ -521,8 +576,18 @@ export class RunloopProvider implements ComputerProvider {
       ),
       envVars: {},
     };
+    if (this.networkConfig) params.networkPolicyId = this.networkConfig.policyId;
     const session = await this.plane.restore(request.providerSnapshotRef, params);
     this.sessions.set(session.id, session);
+    let networkAttachment: NetworkPolicyAttachment | undefined;
+    if (this.requirePaidNetworkPolicy) {
+      try {
+        networkAttachment = await this.readCompatibleAttachment(session);
+      } catch (err) {
+        await this.abandonSession(session.id);
+        throw err;
+      }
+    }
     try {
       await session.ensureInteractiveStack();
       if (this.requireInteractive && !session.interactiveGuest) {
@@ -534,11 +599,14 @@ export class RunloopProvider implements ComputerProvider {
       await this.abandonSession(session.id);
       throw e;
     }
-    return { providerRef: session.id, status: "ready" };
+    const restored: ProviderComputer = { providerRef: session.id, status: "ready" };
+    if (networkAttachment) restored.networkAttachment = networkAttachment;
+    return restored;
   }
 
   async healthProbe(ref: string): Promise<void> {
     const s = await this.requireSession(ref);
+    if (this.requirePaidNetworkPolicy) await this.readCompatibleAttachment(s);
     const st = await s.state();
     if (st === "deleted" || st === "paused" || st === "stopped" || st === "error") {
       throw new ProviderUnavailable("runloop", `health probe failed: ${st}`);
@@ -554,7 +622,7 @@ export class RunloopProvider implements ComputerProvider {
   private createParams(spec: ComputerSpec): RunloopCreateParams {
     const envVars: Record<string, string> = {};
     assertNoControlPlaneSecrets(envVars);
-    return {
+    const params: RunloopCreateParams = {
       birdId: spec.birdId,
       flockId: spec.flockId,
       blueprint: this.blueprint,
@@ -567,6 +635,74 @@ export class RunloopProvider implements ComputerProvider {
       }),
       envVars,
     };
+    if (this.networkConfig) params.networkPolicyId = this.networkConfig.policyId;
+    return params;
+  }
+
+  /**
+   * Read the policy already stored on the devbox. Does not call resume and
+   * does not attach an unrestricted policy. A running legacy devbox is suspended.
+   */
+  private async readCompatibleAttachment(session: RunloopDevboxSession): Promise<NetworkPolicyAttachment> {
+    const config = this.networkConfig;
+    if (!this.requirePaidNetworkPolicy || !config) {
+      throw new NetworkPolicyRejected(
+        "NETWORK_POLICY_REQUIRED",
+        "paid Runloop computers require a validated network policy configuration",
+      );
+    }
+    const attached = await session.readLaunchPolicyId().catch(() => null);
+    if (!attached) {
+      await this.containLegacy(session);
+      throw new NetworkPolicyRejected(
+        "NETWORK_POLICY_LEGACY",
+        "devbox has no network_policy_id; refusing to resume or fall back to unrestricted egress. Reprovision through a paid create that attaches a validated policy. This is not an in-place repair.",
+      );
+    }
+    if (attached !== config.policyId) {
+      await this.containLegacy(session);
+      throw new NetworkPolicyRejected(
+        "NETWORK_POLICY_DRIFT",
+        "devbox network policy does not match the configured policy; refusing to resume",
+      );
+    }
+    let vendor: unknown;
+    try {
+      vendor = await this.plane.retrieveNetworkPolicy(attached);
+    } catch {
+      await this.containLegacy(session);
+      throw new NetworkPolicyRejected(
+        "NETWORK_POLICY_LEGACY",
+        "attached network policy could not be read; refusing unrestricted resume",
+      );
+    }
+    const decision = evaluateVendorNetworkPolicy(config, vendor, new Date().toISOString(), true);
+    if (!decision.ok) {
+      await this.containLegacy(session);
+      throw new NetworkPolicyRejected(decision.code, decision.message);
+    }
+    if (!isSafeNetworkAttachment(decision.attachment)) {
+      await this.containLegacy(session);
+      throw new NetworkPolicyRejected(
+        "NETWORK_POLICY_UNSAFE",
+        "network attachment failed the restrictive-policy check",
+      );
+    }
+    return decision.attachment;
+  }
+
+  private async containLegacy(session: RunloopDevboxSession): Promise<void> {
+    const state = await session.state().catch(() => "error" as const);
+    if (state === "running" || state === "provisioning") {
+      await session.suspend().catch(() => undefined);
+    }
+  }
+
+  /** Guest and lifetime operations re-check the attached policy. Pause, stop, and destroy do not. */
+  private async gateGuest(ref: string): Promise<RunloopDevboxSession> {
+    const session = await this.requireSession(ref);
+    if (this.requirePaidNetworkPolicy) await this.readCompatibleAttachment(session);
+    return session;
   }
 
   private async requireSession(ref: string): Promise<RunloopDevboxSession> {

@@ -37,9 +37,30 @@ function newId(prefix: string): string {
 export class MemoryRunloopControlPlane implements RunloopControlPlane {
   private readonly sessions = new Map<string, MemoryRunloopDevbox>();
   private readonly snapshots = new Map<string, Map<string, MemFile>>();
+  private readonly policies = new Map<string, unknown>();
   /** Test hook: next create/restore session fails its first ensureInteractiveStack. */
   failNextEnsure = false;
   lastCreatedId: string | null = null;
+
+  setNetworkPolicy(id: string, view: unknown): void {
+    this.policies.set(id, view);
+  }
+
+  setAttachedPolicy(devboxId: string, policyId: string | null): void {
+    const session = this.sessions.get(devboxId);
+    if (!session) throw new Error(`runloop devbox ${devboxId} not found`);
+    session.attachedPolicyId = policyId;
+  }
+
+  resumeCount(devboxId: string): number {
+    return this.sessions.get(devboxId)?.resumeCalls ?? 0;
+  }
+
+  async retrieveNetworkPolicy(id: string): Promise<unknown> {
+    const view = this.policies.get(id);
+    if (view === undefined) throw new Error(`network policy ${id} not found`);
+    return view;
+  }
 
   async create(params: RunloopCreateParams): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
@@ -86,6 +107,8 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
   readonly bootId: string;
   interactiveGuest = true;
   destroyed = false;
+  attachedPolicyId: string | null;
+  resumeCalls = 0;
   /** How many times ensureInteractiveStack actually (re)started. */
   stackStarts = 0;
   failEnsureOnce = false;
@@ -108,6 +131,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     this.birdId = params.birdId;
     this.flockId = params.flockId;
     this.bootId = randomBytes(16).toString("hex");
+    this.attachedPolicyId = params.networkPolicyId ?? null;
     this.snapshots = snapshots;
     this.fs = new Map();
     this.fs.set(RUNLOOP_WORKSPACE_ROOT, { isDir: true, content: Buffer.alloc(0) });
@@ -121,6 +145,10 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     return this.current;
   }
 
+  async readLaunchPolicyId(): Promise<string | null> {
+    return this.attachedPolicyId;
+  }
+
   async suspend(): Promise<void> {
     this.assertAlive();
     this.suspendCalls += 1;
@@ -130,6 +158,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
 
   async resume(): Promise<void> {
     this.assertAlive();
+    this.resumeCalls += 1;
     if (this.current === "paused" || this.current === "stopped") {
       this.current = "running";
     }

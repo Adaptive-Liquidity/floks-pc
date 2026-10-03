@@ -19,6 +19,7 @@ import type {
   ExecResult,
   FsRequest,
   FsResult,
+  NetworkPolicyAttachment,
   Observation,
   ObserveRequest,
   ProviderCapabilities,
@@ -209,7 +210,7 @@ export class DockerDevProvider implements ComputerProvider {
     return { state, providerDetail: `docker-dev:${h.birdId}` };
   }
 
-  async wake(ref: string): Promise<void> {
+  async wake(ref: string): Promise<void | NetworkPolicyAttachment> {
     const h = await this.requireHandle(ref);
     const cur = await this.status(ref);
     if (cur.state === "paused") {
