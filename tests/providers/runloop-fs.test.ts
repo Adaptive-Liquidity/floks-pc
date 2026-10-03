@@ -1,6 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  GUEST_NOFOLLOW_COPY_PY,
+  GUEST_NOFOLLOW_DELETE_PY,
+  GUEST_NOFOLLOW_LIST_PY,
+  GUEST_NOFOLLOW_MKDIR_PY,
+  GUEST_NOFOLLOW_READ_B64_PY,
+  GUEST_NOFOLLOW_STAT_PY,
+  GUEST_NOFOLLOW_WRITE_B64_PY,
   bufferFromBase64Stdout,
   bufferFromDownload,
   bufferFromUtf8Read,
@@ -45,5 +52,22 @@ describe("L1 Runloop guest file helpers", () => {
     assert.equal(utf8RoundtripEquals(corrupted), false);
     assert.equal(Buffer.from(corrupted.toString("utf8"), "utf8").length, corrupted.length);
     assert.equal(utf8RoundtripEquals(Buffer.from("ascii-ok", "utf8")), true);
+  });
+
+  it("customer guest scripts open with O_NOFOLLOW and refuse symlinks", () => {
+    for (const src of [
+      GUEST_NOFOLLOW_STAT_PY,
+      GUEST_NOFOLLOW_LIST_PY,
+      GUEST_NOFOLLOW_READ_B64_PY,
+      GUEST_NOFOLLOW_WRITE_B64_PY,
+      GUEST_NOFOLLOW_MKDIR_PY,
+      GUEST_NOFOLLOW_DELETE_PY,
+      GUEST_NOFOLLOW_COPY_PY,
+    ]) {
+      assert.match(src, /O_NOFOLLOW|refuse_symlink|followlinks=False/);
+      assert.equal(src.includes("os.path.realpath"), false);
+      assert.equal(src.includes("Function.toString"), false);
+    }
+    assert.match(GUEST_NOFOLLOW_WRITE_B64_PY, /base64.b64decode\(sys.argv\[2\]\)/);
   });
 });

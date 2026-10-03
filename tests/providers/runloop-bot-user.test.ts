@@ -5,7 +5,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -15,6 +15,7 @@ import {
 } from "../../src/lib/computers/index.js";
 import { MCP_TOOL_NAMES } from "../../src/lib/mcp/tools.js";
 import {
+  BOT_BROWSER_DIR,
   BOT_DEFAULT_ENV,
   CONTROL_PLANE_CDP_AX_PATH,
   CONTROL_PLANE_CDP_RUNTIME_DIR,
@@ -35,8 +36,34 @@ import {
 } from "../../src/lib/computers/providers/runloop-bot-user.js";
 import {
   argvAsUiUser,
+  BROWSER_PROFILE_DIR,
   FLOK_UI_USER,
 } from "../../src/lib/computers/providers/runloop-interactive.js";
+import {
+  GUEST_NOFOLLOW_READ_B64_PY,
+  GUEST_NOFOLLOW_WRITE_B64_PY,
+  GUEST_NOFOLLOW_LIST_PY,
+  GUEST_NOFOLLOW_STAT_PY,
+} from "../../src/lib/computers/providers/runloop-fs.js";
+type MemorySession = {
+  plantControlPlaneHelpers: () => void;
+  plantLegacyHelpers: () => void;
+  plantBrowserCookies: () => void;
+  plantOwnedFile: (path: string, content: string, owner: "flok" | "flok-ui" | "root") => void;
+  plantSymlink: (path: string, target: string) => void;
+  armSymlinkRace: (path: string, target: string) => void;
+  peekRead: (path: string) => Buffer | null;
+  peekOwner: (path: string) => string | undefined;
+  peekIsSymlink: (path: string) => boolean;
+  peekExists: (path: string) => boolean;
+  peekList: (path: string) => string[];
+  chownLog: Array<{ path: string; user: string; noDeref: boolean; recursive: boolean }>;
+  raceFired: number;
+  botUserEnsureCount: number;
+  botUserReady: boolean;
+  ensureBotUser: () => Promise<void>;
+  fsStat: (path: string) => Promise<{ ok: boolean; errorCode?: string }>;
+};
 
 const here = dirname(fileURLToPath(import.meta.url));
 const distBotUser = join(here, "../../dist/lib/computers/providers/runloop-bot-user.js");
@@ -105,14 +132,17 @@ describe("reserved control-plane paths", () => {
     assert.equal(isReservedControlPlanePath(`${LEGACY_WORKSPACE_HELPER_DIR}/execvp.py`), true);
     assert.equal(isReservedControlPlanePath(`${RUNLOOP_WORKSPACE_ROOT}/.flok/../.flok/cdp-ax.mjs`), true);
     assert.equal(isReservedControlPlanePath(`${RUNLOOP_WORKSPACE_ROOT}/notes.txt`), false);
-    assert.equal(isReservedControlPlanePath(`${RUNLOOP_WORKSPACE_ROOT}/.browser/profile`), false);
+    assert.equal(isReservedControlPlanePath(BOT_BROWSER_DIR), true);
+    assert.equal(isReservedControlPlanePath(`${RUNLOOP_WORKSPACE_ROOT}/.browser/profile`), true);
+    assert.equal(isReservedControlPlanePath(`${BROWSER_PROFILE_DIR}/Cookies`), true);
     assert.deepEqual(
       filterBotVisibleListing(RUNLOOP_WORKSPACE_ROOT, ["notes.txt", ".flok", ".browser"]),
-      ["notes.txt", ".browser"],
+      ["notes.txt"],
     );
     assert.equal(argvTouchesReserved(["cat", CONTROL_PLANE_EXECVP_PATH]), true);
     assert.equal(argvTouchesReserved(["ls", "-a", `${CONTROL_PLANE_DIR}/*`]), true);
     assert.equal(argvTouchesReserved(["find", "/run/flok-cdp"]), true);
+    assert.equal(argvTouchesReserved(["cat", `${BROWSER_PROFILE_DIR}/Cookies`]), true);
     assert.equal(argvTouchesReserved(["cat", `${RUNLOOP_WORKSPACE_ROOT}/notes.txt`]), false);
   });
 });
@@ -131,6 +161,11 @@ describe("ensure-bot-user script contract", () => {
     assert.doesNotMatch(ENSURE_BOT_USER_SH, /usermod -aG sudo/);
     assert.equal(ENSURE_BOT_USER_SH.includes("Function.toString"), false);
     assert.equal(ENSURE_BOT_USER_SH.startsWith("#!/bin/bash"), true);
+    assert.match(ENSURE_BOT_USER_SH, /chown -h root:root "\$CTRL"/);
+    assert.match(ENSURE_BOT_USER_SH, /chown -hP -R "\$BOT_USER:\$BOT_USER"/);
+    assert.match(ENSURE_BOT_USER_SH, /chown -hP -R "\$UI_USER:\$UI_USER" "\$WS\/\.browser"/);
+    assert.match(ENSURE_BOT_USER_SH, /refusing symlink \$WS\/\.browser/);
+    assert.doesNotMatch(ENSURE_BOT_USER_SH, /chown [^-].*"\$WS"/);
   });
 });
 
@@ -181,9 +216,10 @@ describe("computer_exec as flok (memory — not live Runloop proof)", () => {
 
   it("cannot read, list, write, or delete helpers via exec (abs, glob, ls -a, find)", async () => {
     const { plane, p, ref } = await ready();
-    const session = await plane.get(ref);
-    (session as unknown as { plantControlPlaneHelpers: () => void }).plantControlPlaneHelpers();
-    (session as unknown as { plantLegacyHelpers: () => void }).plantLegacyHelpers();
+    const session = (await plane.get(ref)) as unknown as MemorySession;
+    session.plantControlPlaneHelpers();
+    session.plantLegacyHelpers();
+    session.plantBrowserCookies();
     const attacks: string[][] = [
       ["cat", CONTROL_PLANE_EXECVP_PATH],
       ["cat", CONTROL_PLANE_CDP_AX_PATH],
@@ -199,14 +235,22 @@ describe("computer_exec as flok (memory — not live Runloop proof)", () => {
       ["touch", `${CONTROL_PLANE_DIR}/pwned`],
       ["cat", `${LEGACY_WORKSPACE_HELPER_DIR}/execvp.py`],
       ["cat", `${RUNLOOP_WORKSPACE_ROOT}/.flok/../.flok/cdp-ax.mjs`],
+      ["cat", `${BROWSER_PROFILE_DIR}/Cookies`],
+      ["cat", `${BOT_BROWSER_DIR}/Local State`],
+      ["ls", "-a", BOT_BROWSER_DIR],
+      ["ls", BROWSER_PROFILE_DIR],
       ["bash", "-lc", `cat ${CONTROL_PLANE_EXECVP_PATH}`],
+      ["bash", "-lc", `cat ${BROWSER_PROFILE_DIR}/Cookies`],
       ["python3", "-c", `open('${CONTROL_PLANE_EXECVP_PATH}').read()`],
+      ["python3", "-c", `open('${BROWSER_PROFILE_DIR}/Cookies').read()`],
     ];
     for (const argv of attacks) {
       const r = await p.exec(ref, { argv });
       assert.notEqual(r.exitCode, 0, argv.join(" "));
       assert.doesNotMatch(r.stdout, /import os, sys, json/);
       assert.doesNotMatch(r.stdout, /execvp/);
+      assert.doesNotMatch(r.stdout, /chrome-cookie-secret/);
+      assert.doesNotMatch(r.stdout, /browser-local-state/);
     }
     const findHome = await p.exec(ref, {
       argv: ["find", RUNLOOP_WORKSPACE_ROOT, "-name", "execvp.py"],
@@ -217,8 +261,15 @@ describe("computer_exec as flok (memory — not live Runloop proof)", () => {
     assert.equal(findRoot.stdout.includes("execvp.py"), false);
     const lsWorkspace = await p.exec(ref, { argv: ["ls", "-a", RUNLOOP_WORKSPACE_ROOT] });
     assert.equal(lsWorkspace.stdout.split("\n").includes(".flok"), false);
+    assert.equal(lsWorkspace.stdout.split("\n").includes(".browser"), false);
     const lsVarLib = await p.exec(ref, { argv: ["ls", "-a", "/var/lib"] });
     assert.equal(lsVarLib.stdout.split("\n").includes("flok"), false);
+    const cwdCookies = await p.exec(ref, {
+      argv: ["cat", "Cookies"],
+      cwd: BROWSER_PROFILE_DIR,
+    });
+    assert.notEqual(cwdCookies.exitCode, 0);
+    assert.doesNotMatch(cwdCookies.stdout, /chrome-cookie-secret/);
   });
 });
 
@@ -235,6 +286,11 @@ describe("computer_fs cannot reach helpers (memory — not live Runloop proof)",
       `${CONTROL_PLANE_CDP_RUNTIME_DIR}/sock`,
       "/etc/passwd",
       "/root/flok/execvp.py",
+      BOT_BROWSER_DIR,
+      BROWSER_PROFILE_DIR,
+      `${BROWSER_PROFILE_DIR}/Cookies`,
+      `${BOT_BROWSER_DIR}/Local State`,
+      `${RUNLOOP_WORKSPACE_ROOT}/notes/../.browser/profile/Cookies`,
     ];
     for (const path of paths) {
       const read = await p.filesystem(ref, { operation: "read", path });
@@ -256,6 +312,7 @@ describe("computer_fs cannot reach helpers (memory — not live Runloop proof)",
     assert.equal(listed.ok, true);
     const names = listed.data as string[];
     assert.equal(names.includes(".flok"), false);
+    assert.equal(names.includes(".browser"), false);
     assert.equal(names.includes("execvp.py"), false);
     const ordinary = `${RUNLOOP_WORKSPACE_ROOT}/move-src.txt`;
     assert.equal(
@@ -300,8 +357,10 @@ describe("lazy ensure on existing computers (memory)", () => {
       ensureBotUser: () => Promise<void>;
     };
     planted.plantLegacyHelpers();
+    const mem = session as unknown as MemorySession;
+    assert.equal(mem.peekExists(LEGACY_WORKSPACE_HELPER_DIR), true);
     const beforeCleanup = await session.fsStat(LEGACY_WORKSPACE_HELPER_DIR);
-    assert.equal(beforeCleanup.ok, true);
+    assert.equal(beforeCleanup.ok, false);
     const hidden = await p.filesystem(a.providerRef, {
       operation: "list",
       path: RUNLOOP_WORKSPACE_ROOT,
@@ -317,6 +376,7 @@ describe("lazy ensure on existing computers (memory)", () => {
     await planted.ensureBotUser();
     await planted.ensureBotUser();
     assert.ok(planted.botUserEnsureCount >= before + 2);
+    assert.equal(mem.peekExists(LEGACY_WORKSPACE_HELPER_DIR), false);
     const gone = await session.fsStat(LEGACY_WORKSPACE_HELPER_DIR);
     assert.equal(gone.ok, false);
     const who = await p.exec(a.providerRef, { argv: ["whoami"] });
@@ -327,12 +387,15 @@ describe("lazy ensure on existing computers (memory)", () => {
     const { plane, p } = provider();
     const a = await p.provision({ birdId: "wake-legacy", flockId: "f" });
     const session = await plane.get(a.providerRef);
-    (session as unknown as { plantLegacyHelpers: () => void }).plantLegacyHelpers();
-    assert.equal((await session.fsStat(LEGACY_WORKSPACE_HELPER_DIR)).ok, true);
+    const mem = session as unknown as MemorySession;
+    mem.plantLegacyHelpers();
+    assert.equal(mem.peekExists(LEGACY_WORKSPACE_HELPER_DIR), true);
+    assert.equal((await session.fsStat(LEGACY_WORKSPACE_HELPER_DIR)).ok, false);
     await p.pause(a.providerRef);
     await p.wake(a.providerRef);
     const who = await p.exec(a.providerRef, { argv: ["whoami"] });
     assert.equal(who.stdout.trim(), FLOK_BOT_USER);
+    assert.equal(mem.peekExists(LEGACY_WORKSPACE_HELPER_DIR), false);
     assert.equal((await session.fsStat(LEGACY_WORKSPACE_HELPER_DIR)).ok, false);
     const leftover = await p.filesystem(a.providerRef, {
       operation: "list",
@@ -344,7 +407,7 @@ describe("lazy ensure on existing computers (memory)", () => {
 
 describe("browser / screenshot / click still work after the switch", () => {
   it("observe and bounded act still succeed on the memory plane", async () => {
-    const { p, ref } = await ready();
+    const { plane, p, ref } = await ready();
     const obs = await p.observe(ref, { includeScreenshot: true });
     assert.equal(obs.screenWidth, 1440);
     assert.equal(obs.screenHeight, 900);
@@ -357,12 +420,163 @@ describe("browser / screenshot / click still work after the switch", () => {
       ],
     });
     assert.equal(act.ok, true);
+    const session = (await plane.get(ref)) as unknown as MemorySession;
+    assert.equal(
+      session.peekRead(`${BROWSER_PROFILE_DIR}/last-url`)?.toString("utf8"),
+      "https://example.com/",
+    );
     const marker = await p.filesystem(ref, {
       operation: "read",
-      path: `${RUNLOOP_WORKSPACE_ROOT}/.browser/profile/last-url`,
+      path: `${BROWSER_PROFILE_DIR}/last-url`,
     });
-    assert.equal(marker.ok, true);
-    assert.equal(marker.data, "https://example.com/");
+    assert.equal(marker.ok, false);
+    assert.equal(marker.errorCode, "PERMISSION_DENIED");
+  });
+});
+
+describe("computer_fs cannot reach the browser profile (memory — not live)", () => {
+  it("denies bot fs read/write/list/delete of cookies, profile, and /var/lib/flok", async () => {
+    const { plane, p, ref } = await ready();
+    const session = (await plane.get(ref)) as unknown as MemorySession;
+    session.plantBrowserCookies();
+    session.plantControlPlaneHelpers();
+    const attacks = [
+      BOT_BROWSER_DIR,
+      BROWSER_PROFILE_DIR,
+      `${BROWSER_PROFILE_DIR}/Cookies`,
+      `${BOT_BROWSER_DIR}/Local State`,
+      CONTROL_PLANE_DIR,
+      CONTROL_PLANE_EXECVP_PATH,
+    ];
+    for (const path of attacks) {
+      for (const operation of ["read", "list", "stat", "delete"] as const) {
+        const r = await p.filesystem(ref, { operation, path });
+        assert.equal(r.ok, false, `${operation} ${path}`);
+        assert.ok(
+          r.errorCode === "PERMISSION_DENIED" || r.errorCode === "PATH_ESCAPE",
+          `${operation} ${path} ${r.errorCode}`,
+        );
+        if (operation === "read") {
+          assert.notEqual(r.data, "chrome-cookie-secret");
+        }
+      }
+      const write = await p.filesystem(ref, {
+        operation: "write",
+        path,
+        content: "pwned",
+      });
+      assert.equal(write.ok, false, `write ${path}`);
+    }
+    assert.equal(session.peekRead(`${BROWSER_PROFILE_DIR}/Cookies`)?.toString("utf8"), "chrome-cookie-secret");
+    const listed = await p.filesystem(ref, {
+      operation: "list",
+      path: RUNLOOP_WORKSPACE_ROOT,
+    });
+    assert.equal(listed.ok, true);
+    assert.equal((listed.data as string[]).includes(".browser"), false);
+  });
+});
+
+describe("TOCTOU: never resolve-then-act as another user (memory)", () => {
+  it("refuses a symlink swapped in after the jail check", async () => {
+    const { plane, p, ref } = await ready();
+    const session = (await plane.get(ref)) as unknown as MemorySession;
+    session.plantBrowserCookies();
+    session.plantOwnedFile("/etc/passwd", "root:x:0:0:root:/root:/bin/bash", "root");
+    session.plantOwnedFile(`${CONTROL_PLANE_DIR}/secret`, "helper-secret", "root");
+    const victim = `${RUNLOOP_WORKSPACE_ROOT}/race-victim.txt`;
+    assert.equal(
+      (await p.filesystem(ref, { operation: "write", path: victim, content: "benign" })).ok,
+      true,
+    );
+    const chownsAfterWrite = session.chownLog.length;
+
+    for (const target of ["/etc/passwd", `${CONTROL_PLANE_DIR}/secret`, `${BROWSER_PROFILE_DIR}/Cookies`]) {
+      session.armSymlinkRace(victim, target);
+      const read = await p.filesystem(ref, { operation: "read", path: victim });
+      assert.equal(read.ok, false, `race read ${target}`);
+      assert.equal(read.errorCode, "PERMISSION_DENIED", `race read ${target}`);
+      assert.notEqual(read.data, "root:x:0:0:root:/root:/bin/bash");
+      assert.notEqual(read.data, "helper-secret");
+      assert.notEqual(read.data, "chrome-cookie-secret");
+      session.armSymlinkRace(victim, target);
+      const write = await p.filesystem(ref, {
+        operation: "write",
+        path: victim,
+        content: "pwned-via-race",
+      });
+      assert.equal(write.ok, false, `race write ${target}`);
+    }
+    assert.ok(session.raceFired >= 6);
+    assert.equal(session.peekRead("/etc/passwd")?.toString("utf8"), "root:x:0:0:root:/root:/bin/bash");
+    assert.equal(session.peekRead(`${CONTROL_PLANE_DIR}/secret`)?.toString("utf8"), "helper-secret");
+    assert.equal(session.chownLog.length, chownsAfterWrite);
+  });
+});
+
+describe("ensure chown never follows planted symlinks (memory)", () => {
+  it("does not chown /etc or /var/lib/flok through workspace symlinks", async () => {
+    const { plane, p } = provider();
+    const a = await p.provision({ birdId: "chown-race", flockId: "f" });
+    const session = (await plane.get(a.providerRef)) as unknown as MemorySession;
+    session.plantOwnedFile("/etc/passwd", "root:x:0:0:root:/root:/bin/bash", "root");
+    session.plantControlPlaneHelpers();
+    session.plantSymlink(`${RUNLOOP_WORKSPACE_ROOT}/to-etc`, "/etc");
+    session.plantSymlink(`${RUNLOOP_WORKSPACE_ROOT}/to-helpers`, CONTROL_PLANE_DIR);
+    session.plantSymlink(`${RUNLOOP_WORKSPACE_ROOT}/to-passwd`, "/etc/passwd");
+    session.botUserReady = false;
+    const before = session.chownLog.length;
+    await session.ensureBotUser();
+    await session.ensureBotUser();
+    assert.equal(session.peekOwner("/etc/passwd"), "root");
+    assert.equal(session.peekOwner(CONTROL_PLANE_DIR), "root");
+    assert.equal(session.peekOwner(CONTROL_PLANE_EXECVP_PATH), "root");
+    assert.equal(session.peekRead("/etc/passwd")?.toString("utf8"), "root:x:0:0:root:/root:/bin/bash");
+    assert.equal(session.peekIsSymlink(`${RUNLOOP_WORKSPACE_ROOT}/to-etc`), true);
+    assert.equal(session.peekIsSymlink(`${RUNLOOP_WORKSPACE_ROOT}/to-helpers`), true);
+    for (const call of session.chownLog.slice(before)) {
+      assert.equal(call.noDeref, true);
+      assert.equal(call.path === "/etc" || call.path.startsWith("/etc/"), false);
+      assert.equal(call.path === CONTROL_PLANE_DIR || call.path.startsWith(`${CONTROL_PLANE_DIR}/`), false);
+    }
+    const readEtc = await p.filesystem(a.providerRef, {
+      operation: "read",
+      path: `${RUNLOOP_WORKSPACE_ROOT}/to-passwd`,
+    });
+    assert.equal(readEtc.ok, false);
+    assert.equal(readEtc.errorCode, "PERMISSION_DENIED");
+  });
+});
+
+describe("customer fs guest scripts are nofollow and not root file API", () => {
+  it("opens with O_NOFOLLOW and never Function.toString()", () => {
+    for (const src of [
+      GUEST_NOFOLLOW_STAT_PY,
+      GUEST_NOFOLLOW_LIST_PY,
+      GUEST_NOFOLLOW_READ_B64_PY,
+      GUEST_NOFOLLOW_WRITE_B64_PY,
+    ]) {
+      assert.match(src, /O_NOFOLLOW/);
+      assert.match(src, /refuse_symlink/);
+      assert.equal(src.includes("Function.toString"), false);
+    }
+    const sdk = readFileSync(join(here, "../../src/lib/computers/providers/runloop-sdk.ts"), "utf8");
+    assert.match(sdk, /GUEST_NOFOLLOW_READ_B64_PY/);
+    assert.match(sdk, /GUEST_NOFOLLOW_WRITE_B64_PY/);
+    assert.match(sdk, /argvAsBotUser\(guestArgv\)/);
+    assert.equal(sdk.includes("ownForBot"), false);
+    assert.equal(sdk.includes("enforceResolved"), false);
+    assert.equal(sdk.includes("privilegedGuestFs"), false);
+    const fsRead = sdk.slice(sdk.indexOf("async fsRead("), sdk.indexOf("async fsWrite("));
+    const fsWrite = sdk.slice(sdk.indexOf("async fsWrite("), sdk.indexOf("async fsMkdir("));
+    const fsList = sdk.slice(sdk.indexOf("async fsList("), sdk.indexOf("async fsRead("));
+    const fsDelete = sdk.slice(sdk.indexOf("async fsDelete("), sdk.indexOf("async fsMove("));
+    for (const body of [fsRead, fsWrite, fsList, fsDelete]) {
+      assert.equal(body.includes("this.box.file"), false);
+      assert.equal(body.includes("box.file.read"), false);
+      assert.equal(body.includes("box.file.write"), false);
+      assert.equal(body.includes("box.file.download"), false);
+    }
   });
 });
 

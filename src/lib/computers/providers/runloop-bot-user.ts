@@ -35,6 +35,9 @@ export const CONTROL_PLANE_CDP_RUNTIME_DIR = "/run/flok-cdp";
 /** Leftover workspace helper dir from computers created before this change. */
 export const LEGACY_WORKSPACE_HELPER_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.flok`;
 
+/** flok-ui Chrome profile and screenshot dir. Not a customer file view. */
+export const BOT_BROWSER_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser`;
+
 export const BOT_FORCED_ENV_KEYS = [
   "HOME",
   "USER",
@@ -109,14 +112,18 @@ export function isReservedControlPlanePath(path: string): boolean {
   ) {
     return true;
   }
-  return normalized.split("/").includes(".flok");
+  if (normalized === BOT_BROWSER_DIR || normalized.startsWith(`${BOT_BROWSER_DIR}/`)) {
+    return true;
+  }
+  const parts = normalized.split("/");
+  return parts.includes(".flok") || parts.includes(".browser");
 }
 
-/** Hide leftover `.flok` from a workspace listing. */
+/** Hide leftover `.flok` and the flok-ui browser profile from a workspace listing. */
 export function filterBotVisibleListing(dir: string, names: string[]): string[] {
   const normalized = pathPosix.normalize(dir);
   if (normalized === RUNLOOP_WORKSPACE_ROOT) {
-    return names.filter((name) => name !== ".flok");
+    return names.filter((name) => name !== ".flok" && name !== ".browser");
   }
   return names.filter((name) => !isReservedControlPlanePath(pathPosix.join(normalized, name)));
 }
@@ -159,6 +166,9 @@ export function argvTouchesReserved(argv: string[]): boolean {
       return true;
     }
     if (arg.includes("/.flok") || arg.endsWith(".flok") || arg.includes(".flok/")) {
+      return true;
+    }
+    if (arg.includes("/.browser") || arg.endsWith(".browser") || arg.includes(".browser/")) {
       return true;
     }
     if (arg.startsWith("/") && isReservedControlPlanePath(arg.replace(/[*?[\]]/g, ""))) {
@@ -220,16 +230,19 @@ if [ -e /etc/sudoers.d/flok ] || [ -e /etc/sudoers.d/"$BOT_USER" ]; then
 fi
 
 mkdir -p "$CTRL"
-chown root:root "$CTRL"
+chown -h root:root "$CTRL"
 chmod 0700 "$CTRL"
 
-if [ -d "$WS" ]; then
-  chown "$BOT_USER:$BOT_USER" "$WS" || true
+if [ -d "$WS" ] && [ ! -L "$WS" ]; then
+  chown -h "$BOT_USER:$BOT_USER" "$WS" || true
   chmod 775 "$WS" || true
-  find "$WS" -mindepth 1 -maxdepth 1 ! -name .browser ! -name .flok -exec chown -R "$BOT_USER:$BOT_USER" {} + || true
+  # -hP: never dereference; -P with -R does not walk through symlinks.
+  find "$WS" -mindepth 1 -maxdepth 1 ! -name .browser ! -name .flok -exec chown -hP -R "$BOT_USER:$BOT_USER" {} + || true
 fi
-if [ -d "$WS/.browser" ]; then
-  chown -R "$UI_USER:$UI_USER" "$WS/.browser" || true
+if [ -L "$WS/.browser" ]; then
+  echo "refusing symlink $WS/.browser" >&2
+elif [ -d "$WS/.browser" ]; then
+  chown -hP -R "$UI_USER:$UI_USER" "$WS/.browser" || true
   chmod 700 "$WS/.browser" || true
 fi
 

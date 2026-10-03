@@ -191,7 +191,9 @@ describe("C3B Dockerfile and ensure contract", () => {
       assert.match(src, /CTRL="\$\{FLOK_CONTROL_PLANE_DIR:-\/var\/lib\/flok\}"/);
       assert.match(src, /chmod 0700 "\$CTRL"/);
       assert.match(src, /rm -rf \/home\/user\/flok\/\.flok/);
-      assert.match(src, /chown -R "\$UI_USER:\$UI_USER" \/home\/user\/flok\/\.browser/);
+      assert.match(src, /chown -hP -R "\$UI_USER:\$UI_USER" \/home\/user\/flok\/\.browser/);
+      assert.match(src, /refusing symlink \/home\/user\/flok\/\.browser/);
+      assert.match(src, /chown -h root:root "\$CTRL"/);
       assert.doesNotMatch(src, /chown -R .* \/home\/user\/flok\/\.browser \/home\/user\/flok\/\.flok/);
       assert.doesNotMatch(src, /--no-sandbox/);
       assert.doesNotMatch(src, /chmod 777/);
@@ -374,27 +376,40 @@ describe("C3B RunloopProvider (memory)", () => {
     assert.equal(a.includes("/.flok/"), false);
   });
 
-  it("browser profile lives under the workspace jail", async () => {
-    const p = provider();
+  it("browser profile is under the workspace but reserved from computer_fs", async () => {
+    const plane = new MemoryRunloopControlPlane();
+    const p = new RunloopProvider({ client: plane, blueprint: "memory" });
     const a = await p.provision({ birdId: "prof", flockId: "f" });
     await p.act(a.providerRef, {
       actions: [{ type: "open_url", url: "https://example.com/" }],
     });
+    const session = (await plane.get(a.providerRef)) as unknown as {
+      peekRead: (path: string) => Buffer | null;
+    };
+    assert.equal(
+      session.peekRead(`${BROWSER_PROFILE_DIR}/last-url`)?.toString("utf8"),
+      "https://example.com/",
+    );
     const marker = await p.filesystem(a.providerRef, {
       operation: "read",
       path: `${BROWSER_PROFILE_DIR}/last-url`,
     });
-    assert.equal(marker.ok, true);
-    assert.equal(marker.data, "https://example.com/");
+    assert.equal(marker.ok, false);
+    assert.equal(marker.errorCode, "PERMISSION_DENIED");
   });
 
   it("two Devboxes do not share browser profiles", async () => {
-    const p = provider();
+    const plane = new MemoryRunloopControlPlane();
+    const p = new RunloopProvider({ client: plane, blueprint: "memory" });
     const a = await p.provision({ birdId: "pa", flockId: "f" });
     const b = await p.provision({ birdId: "pb", flockId: "f" });
     await p.act(a.providerRef, {
       actions: [{ type: "open_url", url: "https://a.example/" }],
     });
+    const sessionB = (await plane.get(b.providerRef)) as unknown as {
+      peekRead: (path: string) => Buffer | null;
+    };
+    assert.equal(sessionB.peekRead(`${BROWSER_PROFILE_DIR}/last-url`), null);
     const fromB = await p.filesystem(b.providerRef, {
       operation: "read",
       path: `${BROWSER_PROFILE_DIR}/last-url`,
@@ -403,19 +418,27 @@ describe("C3B RunloopProvider (memory)", () => {
   });
 
   it("profile survives suspend/resume (disk, not process)", async () => {
-    const p = provider();
+    const plane = new MemoryRunloopControlPlane();
+    const p = new RunloopProvider({ client: plane, blueprint: "memory" });
     const a = await p.provision({ birdId: "persist", flockId: "f" });
     await p.act(a.providerRef, {
       actions: [{ type: "open_url", url: "https://keep.example/" }],
     });
     await p.pause(a.providerRef);
     await p.wake(a.providerRef);
+    const session = (await plane.get(a.providerRef)) as unknown as {
+      peekRead: (path: string) => Buffer | null;
+    };
+    assert.equal(
+      session.peekRead(`${BROWSER_PROFILE_DIR}/last-url`)?.toString("utf8"),
+      "https://keep.example/",
+    );
     const kept = await p.filesystem(a.providerRef, {
       operation: "read",
       path: `${BROWSER_PROFILE_DIR}/last-url`,
     });
-    assert.equal(kept.ok, true);
-    assert.equal(kept.data, "https://keep.example/");
+    assert.equal(kept.ok, false);
+    assert.equal(kept.errorCode, "PERMISSION_DENIED");
   });
 
   it("takeover remains fail-closed; vnc capability false", async () => {
@@ -426,7 +449,8 @@ describe("C3B RunloopProvider (memory)", () => {
   });
 
   it("memory-plane last-url/launched markers are not a real Chrome profile", async () => {
-    const p = provider();
+    const plane = new MemoryRunloopControlPlane();
+    const p = new RunloopProvider({ client: plane, blueprint: "memory" });
     const a = await p.provision({ birdId: "fake-profile", flockId: "f" });
     await p.act(a.providerRef, {
       actions: [
@@ -438,10 +462,13 @@ describe("C3B RunloopProvider (memory)", () => {
       operation: "list",
       path: BROWSER_PROFILE_DIR,
     });
-    assert.equal(listed.ok, true);
-    assert.ok(Array.isArray(listed.data));
+    assert.equal(listed.ok, false);
+    const session = (await plane.get(a.providerRef)) as unknown as {
+      peekList: (path: string) => string[];
+    };
+    const entries = session.peekList(BROWSER_PROFILE_DIR);
     assert.equal(
-      chromeProfileHasBrowserState(listed.data as string[]),
+      chromeProfileHasBrowserState(entries),
       false,
       "memory-plane last-url/launched must not count as Chrome browser state",
     );

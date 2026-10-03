@@ -23,7 +23,6 @@ import {
   DISPLAY_WIDTH,
   chromeHasNoSandbox,
   chromeHasUserDataDir,
-  chromeProfileHasBrowserState,
   chromeSandboxDisabled,
   pngDimensions,
 } from "../../src/lib/computers/providers/runloop-interactive.js";
@@ -79,8 +78,8 @@ async function mustExec(
 
 /**
  * Chrome readiness as the bot user. computer_exec is unprivileged `flok`, so the
- * root-only CHROME_READY_PROBE_PY is not used here. pgrep sees flok-ui Chrome;
- * computer_fs lists the profile via the control-plane file API.
+ * root-only CHROME_READY_PROBE_PY is not used here. pgrep sees flok-ui Chrome
+ * with --user-data-dir. computer_fs must not list or read the profile.
  */
 async function awaitChromeReady(p: RunloopProvider, ref: string, stage: string): Promise<void> {
   const deadline = Date.now() + CHROME_READY_TIMEOUT_MS;
@@ -94,23 +93,16 @@ async function awaitChromeReady(p: RunloopProvider, ref: string, stage: string):
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.length > 0 && !line.includes("pgrep"));
-    const listed = await p.filesystem(ref, {
-      operation: "list",
-      path: BROWSER_PROFILE_DIR,
-    });
-    const entries = listed.ok && Array.isArray(listed.data) ? (listed.data as string[]) : [];
-    last = `exit=${proc.exitCode} cmdlines=${cmdlines.join(" | ") || "(none)"} profile=${JSON.stringify(entries)}`;
+    last = `exit=${proc.exitCode} cmdlines=${cmdlines.join(" | ") || "(none)"}`;
     const ours = cmdlines.filter((c) => /google-chrome/.test(c) || chromeHasUserDataDir(c));
     if (ours.some(chromeSandboxDisabled) || ours.some(chromeHasNoSandbox)) {
       assert.fail(`${stage}: Chrome sandbox disabled\n${last}`);
     }
-    if (ours.some(chromeHasUserDataDir) && chromeProfileHasBrowserState(entries)) {
+    if (ours.some(chromeHasUserDataDir)) {
       return;
     }
     if (Date.now() >= deadline) {
-      assert.fail(
-        `${stage}: Chrome not ready via flok-visible pgrep + computer_fs profile\n${last}`,
-      );
+      assert.fail(`${stage}: Chrome not ready via flok-visible pgrep --user-data-dir\n${last}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -230,11 +222,31 @@ describe("Runloop C3B live interactive Devbox", { skip: !LIVE }, () => {
         false,
         "customer workspace must not list leftover control-plane .flok",
       );
+      assert.equal(
+        Array.isArray(workspaceList.data) && workspaceList.data.includes(".browser"),
+        false,
+        "customer workspace must not list the flok-ui browser profile",
+      );
       const hiddenHelpers = await p.filesystem(a.providerRef, {
         operation: "list",
         path: "/home/user/flok/.flok",
       });
       assert.equal(hiddenHelpers.ok, false, "workspace .flok must not be readable via computer_fs");
+      const hiddenProfile = await p.filesystem(a.providerRef, {
+        operation: "list",
+        path: BROWSER_PROFILE_DIR,
+      });
+      assert.equal(hiddenProfile.ok, false, "browser profile must not be listable via computer_fs");
+      const cookies = await p.filesystem(a.providerRef, {
+        operation: "read",
+        path: `${BROWSER_PROFILE_DIR}/Cookies`,
+      });
+      assert.equal(cookies.ok, false, "bot must not read Chrome cookies via computer_fs");
+      const cookieExec = await p.exec(a.providerRef, {
+        argv: ["cat", `${BROWSER_PROFILE_DIR}/Cookies`],
+        timeoutMs: 10_000,
+      });
+      assert.notEqual(cookieExec.exitCode, 0, "bot must not cat Chrome cookies");
 
       const wroteFixture = await p.filesystem(a.providerRef, {
         operation: "write",
@@ -251,15 +263,11 @@ describe("Runloop C3B live interactive Devbox", { skip: !LIVE }, () => {
 
       await awaitChromeReady(p, a.providerRef, "chrome ready after open_url");
 
-      const profileList = await p.filesystem(a.providerRef, {
+      const profileDenied = await p.filesystem(a.providerRef, {
         operation: "list",
         path: BROWSER_PROFILE_DIR,
       });
-      assert.equal(profileList.ok, true, "profile initialized (filesystem.list): list failed");
-      assert.ok(
-        Array.isArray(profileList.data) && profileList.data.length > 0,
-        `profile initialized (filesystem.list): empty array after readiness probe data=${JSON.stringify(profileList.data)}`,
-      );
+      assert.equal(profileDenied.ok, false, "bot computer_fs must not list the Chrome profile");
 
       const obs = await p.observe(a.providerRef, { includeScreenshot: true });
       assert.equal(obs.screenWidth, DISPLAY_WIDTH, "screenshot: width");
@@ -285,10 +293,16 @@ describe("Runloop C3B live interactive Devbox", { skip: !LIVE }, () => {
 
       const marker = await p.filesystem(a.providerRef, {
         operation: "write",
-        path: `${BROWSER_PROFILE_DIR}/c3b-marker`,
-        content: "profile-disk",
+        path: "/home/user/flok/c3b-marker",
+        content: "workspace-disk",
       });
       assert.equal(marker.ok, true, "persistence marker write: failed");
+      const profileWrite = await p.filesystem(a.providerRef, {
+        operation: "write",
+        path: `${BROWSER_PROFILE_DIR}/c3b-marker`,
+        content: "pwned",
+      });
+      assert.equal(profileWrite.ok, false, "bot must not write into the Chrome profile");
 
       const novnc = await mustExec(
         p,
@@ -319,10 +333,10 @@ describe("Runloop C3B live interactive Devbox", { skip: !LIVE }, () => {
 
       const kept = await p.filesystem(a.providerRef, {
         operation: "read",
-        path: `${BROWSER_PROFILE_DIR}/c3b-marker`,
+        path: "/home/user/flok/c3b-marker",
       });
       assert.equal(kept.ok, true, "suspend/resume marker survived: read failed");
-      assert.equal(kept.data, "profile-disk", "suspend/resume marker survived: content mismatch");
+      assert.equal(kept.data, "workspace-disk", "suspend/resume marker survived: content mismatch");
 
       const xvfb2 = await mustExec(
         p,

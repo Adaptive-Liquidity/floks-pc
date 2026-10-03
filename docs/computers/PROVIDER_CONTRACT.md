@@ -80,7 +80,7 @@ interface ProviderCapabilities {
 - Workspace jail: `/home/user/flok`.
 - `pause` is `suspend` — **disk** is preserved, in-memory process state is not (`pauseMemory: false`). Graphical daemons and Chromium must be restarted after provision, restore, and resume via `ensureInteractiveStack()`.
 - `checkpoint` is `snapshotDisk`; restore creates a **new** Devbox from that snapshot (forks supported).
-- argv exec: serialize `{argv,cwd,env}` JSON → base64 → Python `os.execvp`. `mode: "shell"` rejected.
+- argv exec: serialize `{argv,cwd,env}` JSON → base64 → Python `os.execvp`. `mode: "shell"` rejected. Bot exec/fs drop to `flok` via `runuser -u` argv (no shell concatenation). Customer `computer_fs` runs as `flok` with `O_NOFOLLOW`; it does not use the Runloop SDK file API as root. `.browser` and `/var/lib/flok` are reserved from every bot tool.
 - C3B `observe()` screenshots the private display (PNG, temp file deleted).
 - L0 / C7 (PR #17): when `include_accessibility` is set, Runloop dumps guest Chrome CDP AX from loopback `127.0.0.1:9222` (helper `/var/lib/flok/cdp-ax.mjs`, root `0700`, not in the customer workspace). Live proof: `accessibility_summary.source === "cdp"` with real nodes. FakeProvider is not proof. **`capabilities().accessibility` stays `false`** until an explicit later lift. Empty dumps fail closed.
 - C3B `act()` supports `click_coordinates`, `type`, `key`, `scroll`, `open_url`, `wait`, and allowlisted `launch_application` (browser). `click_element` is rewritten at `ComputerService` from last CDP/AX bounds (L5). Leftover `elementId` at the provider still fail-closes. Never guessed clicks.

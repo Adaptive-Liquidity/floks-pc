@@ -677,23 +677,31 @@ if ! command -v runuser >/dev/null 2>&1; then
 fi
 
 mkdir -p "$XDG_RUNTIME_DIR" /tmp/.X11-unix
-chown "$UI_USER:$UI_USER" "$XDG_RUNTIME_DIR"
+chown -h "$UI_USER:$UI_USER" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 chmod 1777 /tmp/.X11-unix || true
-chown "$UI_USER:$UI_USER" "$RUNDIR" || true
+chown -h "$UI_USER:$UI_USER" "$RUNDIR" || true
 # Control-plane helpers live in /var/lib/flok (root 0700), never the customer workspace.
 CTRL="\${FLOK_CONTROL_PLANE_DIR:-/var/lib/flok}"
 mkdir -p "$CTRL"
-chown root:root "$CTRL"
+if [ -L "$CTRL" ]; then
+  echo "refusing symlink $CTRL" >&2
+  exit 1
+fi
+chown -h root:root "$CTRL"
 chmod 0700 "$CTRL"
 for helper in execvp.py ensure-interactive.sh ensure-bot-user.sh cdp-ax.mjs cdp-nav.mjs; do
-  if [ -f "$CTRL/$helper" ]; then
-    chown root:root "$CTRL/$helper"
+  if [ -f "$CTRL/$helper" ] && [ ! -L "$CTRL/$helper" ]; then
+    chown -h root:root "$CTRL/$helper"
     chmod 0700 "$CTRL/$helper"
   fi
 done
 rm -rf /home/user/flok/.flok
-chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser
+if [ -L /home/user/flok/.browser ]; then
+  echo "refusing symlink /home/user/flok/.browser" >&2
+  exit 1
+fi
+chown -hP -R "$UI_USER:$UI_USER" /home/user/flok/.browser
 chmod 700 /home/user/flok/.browser
 chmod 700 "$PROFILE" || true
 chmod 775 /home/user/flok || true
@@ -776,7 +784,7 @@ if [ -L /run/flok-cdp ]; then
   exit 1
 fi
 mkdir -p /run/flok-cdp
-chown root:root /run/flok-cdp
+chown -h root:root /run/flok-cdp
 chmod 0700 /run/flok-cdp
 echo "ok display=$DISPLAY profile=$PROFILE ui=$UI_USER"
 `;

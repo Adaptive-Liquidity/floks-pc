@@ -40,7 +40,10 @@ assert.doesNotMatch(bot.ENSURE_BOT_USER_SH, /NOPASSWD/);
 assert.equal(bot.isReservedControlPlanePath("/var/lib/flok/execvp.py"), true);
 assert.equal(bot.isReservedControlPlanePath("/home/user/flok/.flok/cdp-ax.mjs"), true);
 assert.equal(bot.isReservedControlPlanePath("/run/flok-cdp/ws"), true);
+assert.equal(bot.isReservedControlPlanePath("/home/user/flok/.browser/profile/Cookies"), true);
 assert.equal(bot.isReservedControlPlanePath("/home/user/flok/notes.txt"), false);
+assert.match(bot.ENSURE_BOT_USER_SH, /chown -hP -R/);
+assert.match(bot.ENSURE_BOT_USER_SH, /chown -h /);
 
 const computers = await import(pathToFileURL(distIndex).href);
 const plane = new computers.MemoryRunloopControlPlane();
@@ -58,6 +61,16 @@ const leftover = await p.filesystem(a.providerRef, {
   path: "/home/user/flok/.flok",
 });
 assert.equal(leftover.ok, false);
+const cookies = await p.filesystem(a.providerRef, {
+  operation: "read",
+  path: "/home/user/flok/.browser/profile/Cookies",
+});
+assert.equal(cookies.ok, false);
+const profileList = await p.filesystem(a.providerRef, {
+  operation: "list",
+  path: "/home/user/flok/.browser",
+});
+assert.equal(profileList.ok, false);
 const obs = await p.observe(a.providerRef, { includeScreenshot: true });
 assert.equal(obs.screenWidth, 1440);
 assert.ok(obs.screenshotBase64 && obs.screenshotBase64.length > 10);
@@ -74,6 +87,14 @@ assert.deepEqual([...mcp.MCP_TOOL_NAMES], [
   "handoff_send",
   "handoff_receive",
 ]);
+
+const distFs = join(root, "dist/lib/computers/providers/runloop-fs.js");
+if (existsSync(distFs)) {
+  const fsSrc = readFileSync(distFs, "utf8");
+  assert.match(fsSrc, /O_NOFOLLOW/);
+  assert.match(fsSrc, /refuse_symlink/);
+  assert.doesNotMatch(fsSrc, /GUEST_NOFOLLOW_\w+\s*=\s*[^;]*\.toString\s*\(/);
+}
 
 const nextChunkDir = join(root, "web/.next/server/chunks");
 if (existsSync(nextChunkDir)) {
@@ -93,7 +114,13 @@ if (existsSync(nextChunkDir)) {
     assert.doesNotMatch(body, /ENSURE_BOT_USER_SH\s*=\s*[^;]*\.toString\s*\(/);
     assert.match(body, /\["runuser","-u",/);
     assert.match(body, /="flok"/);
+    assert.match(body, /chown -hP -R/);
   }
+  const nofollowHits = chunks.filter((name) => {
+    const body = readFileSync(join(nextChunkDir, name), "utf8");
+    return body.includes("O_NOFOLLOW") && body.includes("refuse_symlink");
+  });
+  assert.ok(nofollowHits.length >= 1, "next production server chunk must keep O_NOFOLLOW guest fs scripts");
 }
 
 console.log("exercise-bot-user-prod: ok (memory plane + next chunk literals, not live Runloop)");

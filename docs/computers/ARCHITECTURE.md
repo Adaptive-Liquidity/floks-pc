@@ -35,7 +35,7 @@ This runtime owns **Agent Computers**. After Gate G0 it can be imported by Flok 
 ## Control plane vs compute plane
 
 - **Control plane** (this package): pairing, capabilities, jobs, policies, audit, MCP endpoint.
-- **Compute plane**: one VM (or later microVM) per Node — the Agent Computer. Filesystem, processes, browser, and the private display live only there. C3B extends `runloop/universal-ubuntu-24.04-x86_64-dnd` so Docker/Node/Python/Git stay available; Chrome and the X stack run as `flok-ui`, not root. Bot `computer_exec` / `computer_fs` run as unprivileged `flok` (no sudo). Control-plane helpers live in `/var/lib/flok` (root `0700`). Grok remains the intelligence; Runloop is the computer backend, not the agent runtime. Do not call this “containerized” in customer copy: v1 isolation is VM-backed.
+- **Compute plane**: one VM (or later microVM) per Node — the Agent Computer. Filesystem, processes, browser, and the private display live only there. C3B extends `runloop/universal-ubuntu-24.04-x86_64-dnd` so Docker/Node/Python/Git stay available; Chrome and the X stack run as `flok-ui`, not root. Bot `computer_exec` / `computer_fs` run as unprivileged `flok` (no sudo). Control-plane helpers live in `/var/lib/flok` (root `0700`). The flok-ui browser profile is reserved from every bot tool. Grok remains the intelligence; Runloop is the computer backend, not the agent runtime. Do not call this “containerized” in customer copy: v1 isolation is VM-backed.
 
 No route or MCP tool may call a concrete provider. Everything goes through `ComputerService` → `ComputerProvider`. The C5 public surface is `POST /mcp` (`docs/computers/MCP.md`).
 

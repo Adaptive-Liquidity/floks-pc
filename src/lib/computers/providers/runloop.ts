@@ -194,6 +194,7 @@ export class RunloopProvider implements ComputerProvider {
       : await this.plane.create(params);
     this.sessions.set(session.id, session);
     try {
+      await session.ensureBotUser();
       await session.fsMkdir(RUNLOOP_WORKSPACE_ROOT).catch(() => undefined);
       await session.ensureInteractiveStack();
       if (this.requireInteractive && !session.interactiveGuest) {
@@ -328,6 +329,28 @@ export class RunloopProvider implements ComputerProvider {
     }
 
     const timeoutMs = Math.min(request.timeoutMs ?? 30_000, 600_000);
+    if (isReservedControlPlanePath(cwd)) {
+      return {
+        exitCode: 126,
+        stdout: "",
+        stderr: "PERMISSION_DENIED: cwd is reserved",
+        timedOut: false,
+      };
+    }
+    for (const arg of request.argv) {
+      if (typeof arg !== "string" || arg.length === 0 || arg.startsWith("-")) continue;
+      const resolved = arg.startsWith("/")
+        ? pathPosix.normalize(arg)
+        : pathPosix.normalize(pathPosix.join(cwd, arg));
+      if (isReservedControlPlanePath(resolved)) {
+        return {
+          exitCode: 126,
+          stdout: "",
+          stderr: "PERMISSION_DENIED: path is reserved",
+          timedOut: false,
+        };
+      }
+    }
     await s.ensureBotUser();
     const execReq = applyBotUserToExec({
       argv: request.argv,

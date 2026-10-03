@@ -14,7 +14,6 @@ import {
   ENSURE_SCRIPT_PATH,
   FLOK_DISPLAY,
   FLOK_UI_USER,
-  OBS_SHOT_DIR,
   argvAsUiUser,
   chromeLaunchArgv,
   pngDimensions,
@@ -58,12 +57,19 @@ import {
   type RunloopFsResult,
 } from "./runloop-client.js";
 import {
-  GUEST_READ_B64_PY,
-  GUEST_WRITE_B64_PY,
+  GUEST_FS_MAX_BYTES,
+  GUEST_NOFOLLOW_COPY_PY,
+  GUEST_NOFOLLOW_DELETE_PY,
+  GUEST_NOFOLLOW_LIST_PY,
+  GUEST_NOFOLLOW_MKDIR_PY,
+  GUEST_NOFOLLOW_MOVE_PY,
+  GUEST_NOFOLLOW_READ_B64_PY,
+  GUEST_NOFOLLOW_STAT_PY,
+  GUEST_NOFOLLOW_WRITE_B64_PY,
+  GUEST_PRIV_DELETE_PY,
+  GUEST_PRIV_MKDIR_PY,
+  GUEST_PRIV_READ_B64_PY,
   bufferFromBase64Stdout,
-  bufferFromDownload,
-  bufferFromUtf8Read,
-  utf8RoundtripEquals,
 } from "./runloop-fs.js";
 import {
   CONTROL_PLANE_BOT_USER_PATH,
@@ -309,148 +315,72 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   async fsStat(
     path: string,
   ): Promise<RunloopFsResult<{ path: string; isDir: boolean; size: number }>> {
-    const jailed = await this.enforceResolved(path);
+    const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    const r = await this.execPython(
-      `import os,json,sys; p=sys.argv[1]; st=os.stat(p); print(json.dumps({"isDir":os.path.isdir(p),"size":st.st_size}))`,
-      [path],
-      { privileged: this.privilegedGuestFs(path) },
-    );
+    const r = await this.execPython(GUEST_NOFOLLOW_STAT_PY, [path]);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     const data = JSON.parse(r.stdout) as { isDir: boolean; size: number };
     return { ok: true, data: { path, isDir: data.isDir, size: data.size } };
   }
 
   async fsList(path: string): Promise<RunloopFsResult<string[]>> {
-    const jailed = await this.enforceResolved(path);
+    const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    const r = await this.execPython(
-      `import os,json,sys; p=sys.argv[1]; print(json.dumps(sorted(os.listdir(p))))`,
-      [path],
-      { privileged: this.privilegedGuestFs(path) },
-    );
+    const r = await this.execPython(GUEST_NOFOLLOW_LIST_PY, [path]);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true, data: JSON.parse(r.stdout) as string[] };
   }
 
   async fsRead(path: string): Promise<RunloopFsResult<Buffer>> {
-    const jailed = await this.enforceResolved(path);
+    const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    const st = await this.fsStat(path);
-    if (!st.ok || !st.data) {
-      return { ok: false, errorCode: st.ok ? "NOT_FOUND" : st.errorCode };
-    }
-    const expected = st.data.size;
-    try {
-      const resp = await this.box.file.download({ path });
-      let buf = bufferFromDownload(await resp.arrayBuffer(), expected);
-      if (!buf) {
-        try {
-          const text = await this.box.file.read({ file_path: path });
-          buf = bufferFromUtf8Read(text, expected);
-        } catch {
-          buf = null;
-        }
-      }
-      if (!buf && expected > 0) {
-        const r = await this.execPython(GUEST_READ_B64_PY, [path], {
-          privileged: this.privilegedGuestFs(path),
-        });
-        if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
-        buf = bufferFromBase64Stdout(r.stdout);
-      }
-      if (!buf) {
-        return expected === 0 ? { ok: true, data: Buffer.alloc(0) } : { ok: false, errorCode: "IO_ERROR" };
-      }
-      if (expected > 0 && buf.length !== expected) {
-        return { ok: false, errorCode: "IO_ERROR" };
-      }
-      return { ok: true, data: buf };
-    } catch (e) {
-      return { ok: false, errorCode: classifyFs(e) };
-    }
+    const r = await this.execPython(GUEST_NOFOLLOW_READ_B64_PY, [path]);
+    if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+    return { ok: true, data: bufferFromBase64Stdout(r.stdout) };
   }
 
   async fsWrite(path: string, body: Buffer): Promise<RunloopFsResult> {
-    const jailed = await this.enforceResolved(path);
+    const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    try {
-      const parent = pathPosix.dirname(path);
-      await this.fsMkdir(parent);
-      let st: RunloopFsResult<{ path: string; isDir: boolean; size: number }> | undefined;
-      if (utf8RoundtripEquals(body)) {
-        await this.box.file.write({ file_path: path, contents: body.toString("utf8") });
-        st = await this.fsStat(path);
-      }
-      if (!st?.ok || !st.data || st.data.size !== body.length) {
-        if (body.length > 200_000) return { ok: false, errorCode: "IO_ERROR" };
-        const r = await this.execPython(GUEST_WRITE_B64_PY, [path, body.toString("base64")], {
-          privileged: this.privilegedGuestFs(path),
-        });
-        if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
-        st = await this.fsStat(path);
-      }
-      if (!st.ok || !st.data || st.data.size !== body.length) {
-        return { ok: false, errorCode: "IO_ERROR" };
-      }
-      await this.ownForBot(path);
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, errorCode: classifyFs(e) };
-    }
+    if (body.length > GUEST_FS_MAX_BYTES) return { ok: false, errorCode: "IO_ERROR" };
+    const r = await this.execPython(GUEST_NOFOLLOW_WRITE_B64_PY, [path, body.toString("base64")]);
+    if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+    return { ok: true };
   }
 
   async fsMkdir(path: string): Promise<RunloopFsResult> {
-    const jailed = await this.enforceResolved(path);
+    const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    const r = await this.execPython(`import os,sys; os.makedirs(sys.argv[1], exist_ok=True)`, [
-      path,
-    ], { privileged: this.privilegedGuestFs(path) });
+    const r = await this.execPython(GUEST_NOFOLLOW_MKDIR_PY, [path]);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
-    await this.ownForBot(path);
     return { ok: true };
   }
 
   async fsDelete(path: string): Promise<RunloopFsResult> {
     if (path === RUNLOOP_WORKSPACE_ROOT) return { ok: false, errorCode: "PATH_ESCAPE" };
-    const jailed = await this.enforceResolved(path);
+    const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    const r = await this.execPython(
-      `import os,shutil,sys,pathlib; p=sys.argv[1];\n` +
-        `p_=pathlib.Path(p);\n` +
-        `shutil.rmtree(p) if p_.is_dir() else os.remove(p)`,
-      [path],
-      { privileged: this.privilegedGuestFs(path) },
-    );
+    const r = await this.execPython(GUEST_NOFOLLOW_DELETE_PY, [path]);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true };
   }
 
   async fsMove(from: string, to: string): Promise<RunloopFsResult> {
-    const a = await this.enforceResolved(from);
+    const a = this.customerJail(from);
     if (!a.ok) return a;
-    const b = await this.enforceResolved(to);
+    const b = this.customerJail(to);
     if (!b.ok) return b;
-    const r = await this.execPython(`import os,sys; os.rename(sys.argv[1], sys.argv[2])`, [
-      from,
-      to,
-    ], { privileged: this.privilegedGuestFs(from) || this.privilegedGuestFs(to) });
-    if (r.exitCode === 0) await this.ownForBot(to);
+    const r = await this.execPython(GUEST_NOFOLLOW_MOVE_PY, [from, to]);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true };
   }
 
   async fsCopy(from: string, to: string): Promise<RunloopFsResult> {
-    const a = await this.enforceResolved(from);
+    const a = this.customerJail(from);
     if (!a.ok) return a;
-    const b = await this.enforceResolved(to);
+    const b = this.customerJail(to);
     if (!b.ok) return b;
-    const r = await this.execPython(
-      `import shutil,sys; shutil.copy2(sys.argv[1], sys.argv[2])`,
-      [from, to],
-      { privileged: this.privilegedGuestFs(from) || this.privilegedGuestFs(to) },
-    );
-    if (r.exitCode === 0) await this.ownForBot(to);
+    const r = await this.execPython(GUEST_NOFOLLOW_COPY_PY, [from, to]);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true };
   }
@@ -472,7 +402,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     await this.ensureBotUser();
     await this.writeControlPlaneHelpers();
     await this.lockRootExecutedAssets();
-    this.requireFs(await this.fsMkdir(BROWSER_PROFILE_DIR), "ensureInteractiveStack mkdir profile");
+    this.requireFs(await this.controlPlaneMkdir(BROWSER_PROFILE_DIR), "ensureInteractiveStack mkdir profile");
     const r = await this.exec({
       argv: ["bash", ENSURE_SCRIPT_PATH],
       cwd: RUNLOOP_WORKSPACE_ROOT,
@@ -523,7 +453,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     activeWindow?: string;
   }> {
     const shotPath = uniqueObsShotPath();
-    this.requireFs(await this.fsMkdir(pathPosix.dirname(shotPath)), "screenshot dir");
+    this.requireFs(await this.controlPlaneMkdir(pathPosix.dirname(shotPath)), "screenshot dir");
     const shot = await this.exec({
       argv: argvAsUiUser(["import", "-display", FLOK_DISPLAY, "-window", "root", `PNG24:${shotPath}`]),
       cwd: RUNLOOP_WORKSPACE_ROOT,
@@ -531,11 +461,11 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       timeoutMs: 15_000,
     });
     if (shot.exitCode !== 0) {
-      await this.fsDelete(shotPath).catch(() => undefined);
+      await this.controlPlaneDelete(shotPath).catch(() => undefined);
       throw new ProviderUnavailable("runloop", `screenshot failed: ${shot.stderr}`);
     }
     try {
-      const file = await this.fsRead(shotPath);
+      const file = await this.controlPlaneRead(shotPath);
       if (!file.ok || !file.data) {
         throw new ProviderUnavailable("runloop", "screenshot read failed");
       }
@@ -559,7 +489,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       if (activeWindow) out.activeWindow = activeWindow;
       return out;
     } finally {
-      await this.fsDelete(shotPath).catch(() => undefined);
+      await this.controlPlaneDelete(shotPath).catch(() => undefined);
     }
   }
 
@@ -820,8 +750,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const script = shellSingle(CONTROL_PLANE_BOT_USER_PATH);
     const result = await this.box.cmd.exec(
       [
-        `chown root:root ${script}`,
-        `chmod 0700 ${script}`,
+        `if [ -f ${script} ] && [ ! -L ${script} ]; then chown -h root:root ${script} && chmod 0700 ${script}; fi`,
         `bash ${script}`,
       ].join(" && "),
     );
@@ -840,7 +769,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   private async ensureControlPlaneDir(): Promise<void> {
     const dir = shellSingle(CONTROL_PLANE_DIR);
     const mkdir = await this.box.cmd.exec(
-      `mkdir -p ${dir} && chown root:root ${dir} && chmod 0700 ${dir}`,
+      `mkdir -p ${dir} && if [ -L ${dir} ]; then echo refusing symlink ${dir} >&2; exit 1; fi && chown -h root:root ${dir} && chmod 0700 ${dir}`,
     );
     if ((mkdir.exitCode ?? 1) !== 0) {
       throw new ProviderUnavailable(
@@ -885,13 +814,14 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     const lock = await this.box.cmd.exec(
       [
         `mkdir -p ${dir}`,
-        `chown root:root ${dir}`,
+        `if [ -L ${dir} ]; then echo refusing symlink ${dir} >&2; exit 1; fi`,
+        `chown -h root:root ${dir}`,
         `chmod 0700 ${dir}`,
-        `if [ -f ${execvp} ]; then chown root:root ${execvp} && chmod 0700 ${execvp}; fi`,
-        `if [ -f ${script} ]; then chown root:root ${script} && chmod 0700 ${script}; fi`,
-        `if [ -f ${botUser} ]; then chown root:root ${botUser} && chmod 0700 ${botUser}; fi`,
-        `if [ -f ${cdpHelper} ]; then chown root:root ${cdpHelper} && chmod 0700 ${cdpHelper}; fi`,
-        `if [ -f ${cdpNav} ]; then chown root:root ${cdpNav} && chmod 0700 ${cdpNav}; fi`,
+        `if [ -f ${execvp} ] && [ ! -L ${execvp} ]; then chown -h root:root ${execvp} && chmod 0700 ${execvp}; fi`,
+        `if [ -f ${script} ] && [ ! -L ${script} ]; then chown -h root:root ${script} && chmod 0700 ${script}; fi`,
+        `if [ -f ${botUser} ] && [ ! -L ${botUser} ]; then chown -h root:root ${botUser} && chmod 0700 ${botUser}; fi`,
+        `if [ -f ${cdpHelper} ] && [ ! -L ${cdpHelper} ]; then chown -h root:root ${cdpHelper} && chmod 0700 ${cdpHelper}; fi`,
+        `if [ -f ${cdpNav} ] && [ ! -L ${cdpNav} ]; then chown -h root:root ${cdpNav} && chmod 0700 ${cdpNav}; fi`,
         `rm -rf ${leftover}`,
       ].join(" && "),
     );
@@ -903,41 +833,40 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     }
   }
 
-  private async enforceResolved(path: string): Promise<RunloopFsResult> {
+  /**
+   * Lexical jail only. Customer fs never realpath-then-act as another user.
+   * Guest Python opens with O_NOFOLLOW as `flok`.
+   */
+  private customerJail(path: string): RunloopFsResult {
     try {
       assertInsideRoot(path, RUNLOOP_WORKSPACE_ROOT);
     } catch {
       return { ok: false, errorCode: "PATH_ESCAPE" };
     }
-    const r = await this.execPython(
-      `import os,sys; print(os.path.realpath(sys.argv[1]))`,
-      [path],
-    );
-    if (r.exitCode !== 0) {
-      // path may not exist yet (mkdir/write); lexical jail already applied
-      return { ok: true };
-    }
-    const resolved = r.stdout.trim();
-    try {
-      assertInsideRoot(resolved, RUNLOOP_WORKSPACE_ROOT);
-    } catch {
-      return { ok: false, errorCode: "PATH_ESCAPE" };
-    }
-    if (isReservedControlPlanePath(resolved)) {
+    if (isReservedControlPlanePath(path)) {
       return { ok: false, errorCode: "PERMISSION_DENIED" };
     }
     return { ok: true };
   }
 
-  private privilegedGuestFs(path: string): boolean {
-    if (isReservedControlPlanePath(path)) return true;
-    return path === OBS_SHOT_DIR || path.startsWith(`${OBS_SHOT_DIR}/`);
+  /** Platform-only mkdir (Chrome profile / screenshot dir). Not computer_fs. */
+  private async controlPlaneMkdir(path: string): Promise<RunloopFsResult> {
+    const r = await this.execPython(GUEST_PRIV_MKDIR_PY, [path], { privileged: true });
+    if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+    return { ok: true };
   }
 
-  private async ownForBot(path: string): Promise<void> {
-    if (this.privilegedGuestFs(path)) return;
-    const quoted = shellSingle(path);
-    await this.box.cmd.exec(`chown ${FLOK_BOT_USER}:${FLOK_BOT_USER} ${quoted} || true`);
+  /** Platform-only read of a file the graphical stack just wrote. Not computer_fs. */
+  private async controlPlaneRead(path: string): Promise<RunloopFsResult<Buffer>> {
+    const r = await this.execPython(GUEST_PRIV_READ_B64_PY, [path], { privileged: true });
+    if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+    return { ok: true, data: bufferFromBase64Stdout(r.stdout) };
+  }
+
+  private async controlPlaneDelete(path: string): Promise<RunloopFsResult> {
+    const r = await this.execPython(GUEST_PRIV_DELETE_PY, [path], { privileged: true });
+    if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+    return { ok: true };
   }
 
   private async execPython(
