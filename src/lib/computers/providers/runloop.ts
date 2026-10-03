@@ -66,6 +66,7 @@ import {
   isReservedControlPlanePath,
   reservedFilesystemError,
 } from "./runloop-bot-user.js";
+import { GUEST_FS_MAX_BYTES } from "./runloop-fs.js";
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_OUTPUT = 1_000_000;
@@ -411,10 +412,16 @@ export class RunloopProvider implements ComputerProvider {
         if (request.content === undefined) {
           return { ok: false, errorCode: "MISSING_CONTENT" };
         }
+        const raw = request.content;
         const body =
-          typeof request.content === "string"
-            ? Buffer.from(request.content)
-            : Buffer.from(request.content);
+          typeof raw === "string"
+            ? request.encoding === "base64"
+              ? Buffer.from(raw, "base64")
+              : Buffer.from(raw, "utf8")
+            : Buffer.from(raw);
+        if (body.length > GUEST_FS_MAX_BYTES) {
+          return { ok: false, errorCode: "FILE_TOO_LARGE" };
+        }
         const r = await s.fsWrite(canonical, body);
         if (!r.ok) return { ok: false, errorCode: r.errorCode };
         return { ok: true };

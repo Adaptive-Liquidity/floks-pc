@@ -53,7 +53,7 @@ RUN set -euo pipefail \
        fi \
     && mkdir -p /home/user/flok/.browser/profile /var/lib/flok /run/user/1500 \
     && chown flok:flok /home/user/flok \
-    && chmod 775 /home/user/flok \
+    && chmod 1775 /home/user/flok \
     && chown -R flok-ui:flok-ui /home/flok-ui /home/user/flok/.browser /run/user/1500 \
     && chown root:root /var/lib/flok \
     && chmod 0700 /var/lib/flok \

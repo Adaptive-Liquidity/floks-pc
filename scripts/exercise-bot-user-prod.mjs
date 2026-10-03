@@ -44,6 +44,8 @@ assert.equal(bot.isReservedControlPlanePath("/home/user/flok/.browser/profile/Co
 assert.equal(bot.isReservedControlPlanePath("/home/user/flok/notes.txt"), false);
 assert.match(bot.ENSURE_BOT_USER_SH, /chown -hP -R/);
 assert.match(bot.ENSURE_BOT_USER_SH, /chown -h /);
+assert.match(bot.ENSURE_BOT_USER_SH, /chmod 1775/);
+assert.match(bot.ENSURE_BOT_USER_SH, /replacing symlink/);
 
 const computers = await import(pathToFileURL(distIndex).href);
 const plane = new computers.MemoryRunloopControlPlane();
@@ -92,7 +94,9 @@ const distFs = join(root, "dist/lib/computers/providers/runloop-fs.js");
 if (existsSync(distFs)) {
   const fsSrc = readFileSync(distFs, "utf8");
   assert.match(fsSrc, /O_NOFOLLOW/);
-  assert.match(fsSrc, /refuse_symlink/);
+  assert.match(fsSrc, /dir_fd=/);
+  assert.match(fsSrc, /sys\.stdin\.buffer/);
+  assert.match(fsSrc, /file too large/);
   assert.doesNotMatch(fsSrc, /GUEST_NOFOLLOW_\w+\s*=\s*[^;]*\.toString\s*\(/);
 }
 
@@ -118,7 +122,7 @@ if (existsSync(nextChunkDir)) {
   }
   const nofollowHits = chunks.filter((name) => {
     const body = readFileSync(join(nextChunkDir, name), "utf8");
-    return body.includes("O_NOFOLLOW") && body.includes("refuse_symlink");
+    return body.includes("O_NOFOLLOW") && body.includes("dir_fd=");
   });
   assert.ok(nofollowHits.length >= 1, "next production server chunk must keep O_NOFOLLOW guest fs scripts");
 }

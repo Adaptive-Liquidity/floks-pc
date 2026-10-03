@@ -162,6 +162,7 @@ describe("C3B Dockerfile and ensure contract", () => {
     assert.match(dockerfile, /command -v python3/);
     assert.match(dockerfile, /command -v node/);
     assert.match(dockerfile, /chmod 4755/);
+    assert.match(dockerfile, /chmod 1775 \/home\/user\/flok/);
     assert.match(
       dockerfile,
       /chmod 700 \/home\/user\/flok\/\.browser \/home\/user\/flok\/\.browser\/profile/,
@@ -192,7 +193,8 @@ describe("C3B Dockerfile and ensure contract", () => {
       assert.match(src, /chmod 0700 "\$CTRL"/);
       assert.match(src, /rm -rf \/home\/user\/flok\/\.flok/);
       assert.match(src, /chown -hP -R "\$UI_USER:\$UI_USER" \/home\/user\/flok\/\.browser/);
-      assert.match(src, /refusing symlink \/home\/user\/flok\/\.browser/);
+      assert.match(src, /replacing symlink \/home\/user\/flok\/\.browser/);
+      assert.match(src, /chmod 1775 \/home\/user\/flok/);
       assert.match(src, /chown -h root:root "\$CTRL"/);
       assert.doesNotMatch(src, /chown -R .* \/home\/user\/flok\/\.browser \/home\/user\/flok\/\.flok/);
       assert.doesNotMatch(src, /--no-sandbox/);

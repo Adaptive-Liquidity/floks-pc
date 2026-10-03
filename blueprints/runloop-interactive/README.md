@@ -20,7 +20,7 @@ Runloop's DnD profile is **root**. The graphical stack does **not** run as root.
 | `flok-ui` (uid 1500, home `/home/flok-ui`) | Xvfb, Openbox, Chrome, x11vnc, websockify |
 | `flok` (uid 1501, home `/home/user/flok`) | `computer_exec` / `computer_fs` default. **No sudo.** |
 
-Workspace stays `/home/user/flok` (`flok:flok`, mode 775). Browser profile
+Workspace stays `/home/user/flok` (`flok:flok`, sticky mode 1775). Browser profile
 `/home/user/flok/.browser/profile` is `flok-ui:flok-ui` mode 700. Helpers live
 in `/var/lib/flok` (root:root, mode `0700`) and are not in the customer file
 view.

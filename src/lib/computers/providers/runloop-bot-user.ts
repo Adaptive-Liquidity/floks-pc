@@ -30,6 +30,7 @@ export const CONTROL_PLANE_ENSURE_PATH = `${CONTROL_PLANE_DIR}/ensure-interactiv
 export const CONTROL_PLANE_BOT_USER_PATH = `${CONTROL_PLANE_DIR}/ensure-bot-user.sh`;
 export const CONTROL_PLANE_CDP_AX_PATH = `${CONTROL_PLANE_DIR}/cdp-ax.mjs`;
 export const CONTROL_PLANE_CDP_NAV_PATH = `${CONTROL_PLANE_DIR}/cdp-nav.mjs`;
+export const CONTROL_PLANE_FS_SPEC_PATH = `${CONTROL_PLANE_DIR}/fs-spec.json`;
 export const CONTROL_PLANE_CDP_RUNTIME_DIR = "/run/flok-cdp";
 
 /** Leftover workspace helper dir from computers created before this change. */
@@ -235,16 +236,20 @@ chmod 0700 "$CTRL"
 
 if [ -d "$WS" ] && [ ! -L "$WS" ]; then
   chown -h "$BOT_USER:$BOT_USER" "$WS" || true
-  chmod 775 "$WS" || true
+  # Sticky: flok cannot rename/replace root/flok-ui owned .browser.
+  chmod 1775 "$WS" || true
   # -hP: never dereference; -P with -R does not walk through symlinks.
   find "$WS" -mindepth 1 -maxdepth 1 ! -name .browser ! -name .flok -exec chown -hP -R "$BOT_USER:$BOT_USER" {} + || true
 fi
 if [ -L "$WS/.browser" ]; then
-  echo "refusing symlink $WS/.browser" >&2
-elif [ -d "$WS/.browser" ]; then
-  chown -hP -R "$UI_USER:$UI_USER" "$WS/.browser" || true
-  chmod 700 "$WS/.browser" || true
+  echo "replacing symlink $WS/.browser with a directory" >&2
+  rm -f "$WS/.browser"
 fi
+if [ ! -d "$WS/.browser" ]; then
+  mkdir -p "$WS/.browser"
+fi
+chown -hP -R "$UI_USER:$UI_USER" "$WS/.browser" || true
+chmod 700 "$WS/.browser" || true
 
 # Helpers must not appear in the customer workspace file view.
 rm -rf "$WS/.flok"

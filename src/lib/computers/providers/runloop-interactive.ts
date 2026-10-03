@@ -660,7 +660,12 @@ UI_HOME="\${FLOK_UI_HOME:-${FLOK_UI_HOME}}"
 UI_UID="\${FLOK_UI_UID:-${FLOK_UI_UID}}"
 XDG_RUNTIME_DIR="/run/user/\${UI_UID}"
 
-mkdir -p "$RUNDIR" "$PROFILE" /home/user/flok/.browser
+mkdir -p "$RUNDIR"
+if [ -L /home/user/flok/.browser ]; then
+  echo "replacing symlink /home/user/flok/.browser with a directory" >&2
+  rm -f /home/user/flok/.browser
+fi
+mkdir -p /home/user/flok/.browser
 
 if ! command -v Xvfb >/dev/null 2>&1; then
   echo "ok missing-xvfb profile=$PROFILE"
@@ -698,13 +703,14 @@ for helper in execvp.py ensure-interactive.sh ensure-bot-user.sh cdp-ax.mjs cdp-
 done
 rm -rf /home/user/flok/.flok
 if [ -L /home/user/flok/.browser ]; then
-  echo "refusing symlink /home/user/flok/.browser" >&2
-  exit 1
+  echo "replacing symlink /home/user/flok/.browser with a directory" >&2
+  rm -f /home/user/flok/.browser
 fi
+mkdir -p /home/user/flok/.browser "$PROFILE"
 chown -hP -R "$UI_USER:$UI_USER" /home/user/flok/.browser
 chmod 700 /home/user/flok/.browser
 chmod 700 "$PROFILE" || true
-chmod 775 /home/user/flok || true
+chmod 1775 /home/user/flok || true
 if [ -L /tmp/flok-chrome.log ] || { [ -e /tmp/flok-chrome.log ] && [ ! -f /tmp/flok-chrome.log ]; }; then
   echo "refusing to use /tmp/flok-chrome.log: not a regular file" >&2
   ls -ld /tmp/flok-chrome.log >&2

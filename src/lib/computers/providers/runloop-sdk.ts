@@ -65,7 +65,7 @@ import {
   GUEST_NOFOLLOW_MOVE_PY,
   GUEST_NOFOLLOW_READ_B64_PY,
   GUEST_NOFOLLOW_STAT_PY,
-  GUEST_NOFOLLOW_WRITE_B64_PY,
+  GUEST_NOFOLLOW_WRITE_STDIN_PY,
   GUEST_PRIV_DELETE_PY,
   GUEST_PRIV_MKDIR_PY,
   GUEST_PRIV_READ_B64_PY,
@@ -75,6 +75,7 @@ import {
   CONTROL_PLANE_BOT_USER_PATH,
   CONTROL_PLANE_DIR,
   CONTROL_PLANE_EXECVP_PATH,
+  CONTROL_PLANE_FS_SPEC_PATH,
   ENSURE_BOT_USER_SH,
   FLOK_BOT_USER,
   argvAsBotUser,
@@ -83,14 +84,60 @@ import {
 
 const EXECVP_PY = [
   "import os, sys, json, base64",
-  "spec = json.loads(base64.b64decode(sys.argv[1]))",
+  "SPEC='/var/lib/flok/fs-spec.json'",
+  "def load_spec():",
+  "    if len(sys.argv) >= 3 and sys.argv[1] == '--spec-file':",
+  "        path = sys.argv[2]",
+  "        if path != SPEC:",
+  "            sys.stderr.write('permission denied'); sys.exit(1)",
+  "        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NOCTTY",
+  "        fd = os.open(path, flags)",
+  "        try:",
+  "            chunks = []",
+  "            while True:",
+  "                b = os.read(fd, 65536)",
+  "                if not b: break",
+  "                chunks.append(b)",
+  "                if sum(len(x) for x in chunks) > 8000000:",
+  "                    sys.stderr.write('file too large'); sys.exit(1)",
+  "            return json.loads(b''.join(chunks))",
+  "        finally:",
+  "            os.close(fd)",
+  "    return json.loads(base64.b64decode(sys.argv[1]))",
+  "def write_all(fd, data):",
+  "    off = 0",
+  "    while off < len(data):",
+  "        try:",
+  "            n = os.write(fd, data[off:])",
+  "        except BrokenPipeError:",
+  "            return",
+  "        if n <= 0: return",
+  "        off += n",
+  "spec = load_spec()",
   "cwd = spec.get('cwd') or '/home/user/flok'",
   "os.chdir(cwd)",
   "env = os.environ.copy()",
   "for k, v in (spec.get('env') or {}).items():",
   "    env[str(k)] = str(v)",
   "argv = spec['argv']",
-  "os.execvpe(argv[0], argv, env)",
+  "stdin_b64 = spec.get('stdin_b64')",
+  "if stdin_b64 is None:",
+  "    os.execvpe(argv[0], argv, env)",
+  "r, w = os.pipe()",
+  "pid = os.fork()",
+  "if pid == 0:",
+  "    os.close(w)",
+  "    os.dup2(r, 0)",
+  "    os.close(r)",
+  "    os.execvpe(argv[0], argv, env)",
+  "    os._exit(127)",
+  "os.close(r)",
+  "write_all(w, base64.b64decode(stdin_b64))",
+  "os.close(w)",
+  "_, status = os.waitpid(pid, 0)",
+  "if os.WIFEXITED(status): sys.exit(os.WEXITSTATUS(status))",
+  "if os.WIFSIGNALED(status): sys.exit(128 + os.WTERMSIG(status))",
+  "sys.exit(1)",
   "",
 ].join("\n");
 
@@ -342,8 +389,8 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   async fsWrite(path: string, body: Buffer): Promise<RunloopFsResult> {
     const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    if (body.length > GUEST_FS_MAX_BYTES) return { ok: false, errorCode: "IO_ERROR" };
-    const r = await this.execPython(GUEST_NOFOLLOW_WRITE_B64_PY, [path, body.toString("base64")]);
+    if (body.length > GUEST_FS_MAX_BYTES) return { ok: false, errorCode: "FILE_TOO_LARGE" };
+    const r = await this.execPython(GUEST_NOFOLLOW_WRITE_STDIN_PY, [path], { stdin: body });
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true };
   }
@@ -872,14 +919,26 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   private async execPython(
     code: string,
     argv: string[],
-    opts?: { privileged?: boolean },
+    opts?: { privileged?: boolean; stdin?: Buffer },
   ): Promise<RunloopExecResult> {
     const guestArgv = ["python3", "-c", code, ...argv];
-    const payload = {
+    const payload: { argv: string[]; cwd: string; stdin_b64?: string } = {
       argv: opts?.privileged === true ? guestArgv : argvAsBotUser(guestArgv),
       cwd: RUNLOOP_WORKSPACE_ROOT,
     };
+    if (opts?.stdin !== undefined) {
+      payload.stdin_b64 = opts.stdin.toString("base64");
+      return this.execViaSpecFile(payload);
+    }
     const b64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
+    return this.execViaArgvSpec(b64);
+  }
+
+  /**
+   * Small specs stay on argv. Write bodies never do — Linux MAX_ARG_STRLEN
+   * is 128 KiB and a double-base64 body hits E2BIG near 72 KB.
+   */
+  private async execViaArgvSpec(b64: string): Promise<RunloopExecResult> {
     const command = `python3 ${shellSingle(EXECVP_PATH)} ${b64}`;
     try {
       const result = await this.box.cmd.exec(command, { optimistic_timeout: 15 });
@@ -898,6 +957,51 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       };
     }
   }
+
+  /** Control-plane staging only. Customer computer_fs paths never use box.file. */
+  private async execViaSpecFile(payload: {
+    argv: string[];
+    cwd: string;
+    stdin_b64?: string;
+  }): Promise<RunloopExecResult> {
+    await this.box.file.write({
+      file_path: CONTROL_PLANE_FS_SPEC_PATH,
+      contents: JSON.stringify(payload),
+    });
+    const spec = shellSingle(CONTROL_PLANE_FS_SPEC_PATH);
+    const execvp = shellSingle(EXECVP_PATH);
+    try {
+      const guard = await this.box.cmd.exec(
+        `if [ -L ${spec} ]; then echo refusing symlink ${spec} >&2; exit 1; fi; chmod 0600 ${spec}`,
+      );
+      if ((guard.exitCode ?? 1) !== 0) {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: await guard.stderr(),
+          timedOut: false,
+        };
+      }
+      const result = await this.box.cmd.exec(`python3 ${execvp} --spec-file ${spec}`, {
+        optimistic_timeout: 15,
+      });
+      return {
+        exitCode: result.exitCode ?? 1,
+        stdout: await result.stdout(),
+        stderr: await result.stderr(),
+        timedOut: false,
+      };
+    } catch (e) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: e instanceof Error ? e.message : String(e),
+        timedOut: false,
+      };
+    } finally {
+      await this.box.cmd.exec(`rm -f ${spec}`);
+    }
+  }
 }
 
 function mapStatus(status: string): RunloopDevboxState {
@@ -906,6 +1010,9 @@ function mapStatus(status: string): RunloopDevboxState {
 
 function classifyFs(err: unknown): string {
   const s = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  if (s.includes("file too large")) {
+    return "FILE_TOO_LARGE";
+  }
   if (s.includes("permission") || s.includes("denied") || s.includes("read-only")) {
     return "PERMISSION_DENIED";
   }

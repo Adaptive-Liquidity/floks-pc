@@ -1,13 +1,25 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  GUEST_FS_MAX_BYTES,
   GUEST_NOFOLLOW_COPY_PY,
   GUEST_NOFOLLOW_DELETE_PY,
   GUEST_NOFOLLOW_LIST_PY,
   GUEST_NOFOLLOW_MKDIR_PY,
   GUEST_NOFOLLOW_READ_B64_PY,
   GUEST_NOFOLLOW_STAT_PY,
-  GUEST_NOFOLLOW_WRITE_B64_PY,
+  GUEST_NOFOLLOW_WRITE_STDIN_PY,
   bufferFromBase64Stdout,
   bufferFromDownload,
   bufferFromUtf8Read,
@@ -54,20 +66,126 @@ describe("L1 Runloop guest file helpers", () => {
     assert.equal(utf8RoundtripEquals(Buffer.from("ascii-ok", "utf8")), true);
   });
 
-  it("customer guest scripts open with O_NOFOLLOW and refuse symlinks", () => {
+  it("customer guest scripts openat-walk with O_NOFOLLOW and never take the body from argv", () => {
     for (const src of [
       GUEST_NOFOLLOW_STAT_PY,
       GUEST_NOFOLLOW_LIST_PY,
       GUEST_NOFOLLOW_READ_B64_PY,
-      GUEST_NOFOLLOW_WRITE_B64_PY,
+      GUEST_NOFOLLOW_WRITE_STDIN_PY,
       GUEST_NOFOLLOW_MKDIR_PY,
       GUEST_NOFOLLOW_DELETE_PY,
       GUEST_NOFOLLOW_COPY_PY,
     ]) {
-      assert.match(src, /O_NOFOLLOW|refuse_symlink|followlinks=False/);
+      assert.match(src, /O_NOFOLLOW/);
+      assert.match(src, /dir_fd=/);
+      assert.match(src, /O_DIRECTORY/);
       assert.equal(src.includes("os.path.realpath"), false);
       assert.equal(src.includes("Function.toString"), false);
     }
-    assert.match(GUEST_NOFOLLOW_WRITE_B64_PY, /base64.b64decode\(sys.argv\[2\]\)/);
+    assert.match(GUEST_NOFOLLOW_WRITE_STDIN_PY, /sys\.stdin\.buffer\.read/);
+    assert.match(GUEST_NOFOLLOW_WRITE_STDIN_PY, /file too large/);
+    assert.equal(GUEST_NOFOLLOW_WRITE_STDIN_PY.includes("sys.argv[2]"), false);
+    assert.equal(GUEST_NOFOLLOW_WRITE_STDIN_PY.includes("b64decode"), false);
+    assert.equal(GUEST_FS_MAX_BYTES, 1_000_000);
+  });
+});
+
+describe("guest write stdin + openat (local python3)", () => {
+  function patchRoot(code: string, root: string): string {
+    return code.replace("ROOT='/home/user/flok'", `ROOT=${JSON.stringify(root)}`);
+  }
+
+  function runGuest(
+    code: string,
+    root: string,
+    args: string[],
+    stdin?: Buffer,
+  ): { status: number | null; stdout: Buffer; stderr: string } {
+    const r = spawnSync("python3", ["-c", patchRoot(code, root), ...args], {
+      input: stdin,
+      encoding: undefined,
+      maxBuffer: 4_000_000,
+    });
+    return {
+      status: r.status,
+      stdout: r.stdout ?? Buffer.alloc(0),
+      stderr: (r.stderr ?? Buffer.alloc(0)).toString("utf8"),
+    };
+  }
+
+  it("round-trips 0 B, 71 KiB, 72 KiB, 200 KiB, max, and rejects max+1", () => {
+    const root = mkdtempSync(join(tmpdir(), "flok-fs-"));
+    try {
+      const sizes = [0, 71 * 1024, 72 * 1024, 200 * 1024, GUEST_FS_MAX_BYTES];
+      for (const size of sizes) {
+        const path = join(root, `n-${size}.bin`);
+        const body = Buffer.alloc(size, size === 0 ? 0 : (size % 251) + 1);
+        if (size >= 4) {
+          body[0] = 0x00;
+          body[1] = 0xff;
+          body[2] = 0xfe;
+          body[size - 1] = 0x7f;
+        }
+        const w = runGuest(GUEST_NOFOLLOW_WRITE_STDIN_PY, root, [path], body);
+        assert.equal(w.status, 0, `write ${size}: ${w.stderr}`);
+        const onDisk = readFileSync(path);
+        assert.equal(onDisk.equals(body), true, `disk ${size}`);
+        const r = runGuest(GUEST_NOFOLLOW_READ_B64_PY, root, [path]);
+        assert.equal(r.status, 0, `read ${size}: ${r.stderr}`);
+        assert.equal(bufferFromBase64Stdout(r.stdout.toString("utf8")).equals(body), true);
+      }
+      const tooBig = join(root, "too-big.bin");
+      const over = Buffer.alloc(GUEST_FS_MAX_BYTES + 1, 9);
+      const fail = runGuest(GUEST_NOFOLLOW_WRITE_STDIN_PY, root, [tooBig], over);
+      assert.notEqual(fail.status, 0);
+      assert.match(fail.stderr, /file too large/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("argv-sized bodies hit E2BIG; the same bytes succeed on stdin", () => {
+    const huge = Buffer.alloc(200 * 1024, 0x61);
+    const argvTry = spawnSync(
+      "python3",
+      ["-c", "import sys; print(len(sys.argv[1]))", huge.toString("base64")],
+      { encoding: "utf8" },
+    );
+    const argvFailed =
+      argvTry.error?.code === "E2BIG" ||
+      argvTry.status !== 0 ||
+      /E2BIG|Argument list too long/i.test(argvTry.stderr ?? "") ||
+      /E2BIG|Argument list too long/i.test(String(argvTry.error ?? ""));
+    assert.equal(argvFailed, true, "200 KiB on argv must fail closed");
+
+    const root = mkdtempSync(join(tmpdir(), "flok-stdin-"));
+    try {
+      const path = join(root, "via-stdin.bin");
+      const w = runGuest(GUEST_NOFOLLOW_WRITE_STDIN_PY, root, [path], huge);
+      assert.equal(w.status, 0, w.stderr);
+      assert.equal(readFileSync(path).equals(huge), true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a parent-directory symlink during the openat walk", () => {
+    const root = mkdtempSync(join(tmpdir(), "flok-openat-"));
+    try {
+      const notes = join(root, "notes");
+      const evil = join(root, "evil");
+      mkdirSync(notes);
+      mkdirSync(evil);
+      writeFileSync(join(notes, "secret.txt"), "benign");
+      writeFileSync(join(evil, "secret.txt"), "pwned-evil");
+      rmSync(notes, { recursive: true, force: true });
+      symlinkSync(evil, notes);
+      const r = runGuest(GUEST_NOFOLLOW_READ_B64_PY, root, [join(root, "notes/secret.txt")]);
+      assert.notEqual(r.status, 0);
+      assert.match(r.stderr, /permission denied/);
+      assert.equal(readFileSync(join(evil, "secret.txt"), "utf8"), "pwned-evil");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

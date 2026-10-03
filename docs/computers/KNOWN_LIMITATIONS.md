@@ -13,7 +13,7 @@ This is fail-closed launch security, not production-ready multi-tenant security.
 - Default is one bot, one isolated Agent Computer. Shared Team Computers are not built (`TEAM_COMPUTERS.md`).
 - L4 checkpoints / recovery are optional insurance, not required to join beta. L3 caps are not L7 billing. FakeProvider is not product proof.
 - Runloop `healthProbe` does not yet do a bounded CDP liveness check (dead Chrome + live Xvfb can pass). Deferred follow-up after L4; not a private-beta blocker.
-- `computer_exec` / `computer_fs` run as unprivileged user `flok` (uid 1501). There is no passwordless sudo. Control-plane helpers live in `/var/lib/flok` (root `0700`) and are hidden from the customer file view. The flok-ui browser profile (`/home/user/flok/.browser`) is reserved from every bot tool. Customer `computer_fs` opens as `flok` with `O_NOFOLLOW`. FakeProvider / memory-plane tests are not live Runloop proof. Existing computers pick this up lazily on wake/ensure; a blueprint rebuild is not required.
+- `computer_exec` / `computer_fs` run as unprivileged user `flok` (uid 1501). There is no passwordless sudo. Control-plane helpers live in `/var/lib/flok` (root `0700`) and are hidden from the customer file view. The flok-ui browser profile (`/home/user/flok/.browser`) is reserved from every bot tool, owned by `flok-ui` (`0700`), and protected by a sticky `1775` workspace so `flok` cannot rename it. Customer `computer_fs` opens as `flok` with an `openat` walk and writes via stdin (1MB cap, `FILE_TOO_LARGE` above). FakeProvider / memory-plane tests are not live Runloop proof. Existing computers pick this up lazily on wake/ensure; a blueprint rebuild is not required.
 
 ## Cost
 

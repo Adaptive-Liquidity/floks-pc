@@ -3,9 +3,10 @@
  * Zero network. Two sessions have independent filesystems, boot IDs,
  * and lifecycle. Suspend preserves disk, not RAM.
  *
- * Customer computer_fs is modeled as `flok` + O_NOFOLLOW: reserved paths,
- * foreign owners, and symlinks fail closed. Control-plane writes (profile
- * markers, helpers) use a separate path the bot cannot reach.
+ * Customer computer_fs is modeled as `flok` + an openat walk (O_NOFOLLOW
+ * per component from the workspace root). Reserved paths, foreign owners,
+ * and parent-dir swaps fail closed. Control-plane writes (profile markers,
+ * helpers) use a separate path the bot cannot reach.
  */
 
 import { randomBytes } from "node:crypto";
@@ -44,6 +45,7 @@ import {
   type RunloopExecResult,
   type RunloopFsResult,
 } from "./runloop-client.js";
+import { GUEST_FS_MAX_BYTES } from "./runloop-fs.js";
 
 export type MemoryOwner = "flok" | "flok-ui" | "root";
 
@@ -151,6 +153,11 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
   chownLog: MemoryChownCall[] = [];
   /** How many times a jailed path was swapped to a symlink before the act. */
   raceFired = 0;
+  /**
+   * Successful customer fs ops that resolved through a swapped parent dir.
+   * openat walk must keep this at 0.
+   */
+  raceWins = 0;
   refusedBrowserSymlink = false;
   private pendingRace: { path: string; target: string } | null = null;
   private stackUp = false;
@@ -169,7 +176,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     this.bootId = randomBytes(16).toString("hex");
     this.snapshots = snapshots;
     this.fs = new Map();
-    this.fs.set(RUNLOOP_WORKSPACE_ROOT, memDir(FLOK_BOT_USER));
+    this.fs.set(RUNLOOP_WORKSPACE_ROOT, memDir(FLOK_BOT_USER, 0o1775));
   }
 
   replaceFs(fs: Map<string, MemFile>): void {
@@ -315,7 +322,15 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     if (cmd === "find") {
       return this.simFind(argv, cwd, asBot);
     }
-    if (cmd === "rm" || cmd === "chmod" || cmd === "chown" || cmd === "touch" || cmd === "mkdir") {
+    if (
+      cmd === "rm" ||
+      cmd === "chmod" ||
+      cmd === "chown" ||
+      cmd === "touch" ||
+      cmd === "mkdir" ||
+      cmd === "mv" ||
+      cmd === "ln"
+    ) {
       if (asBot && argvTouchesReserved(argv)) return denied("Permission denied");
       const target = argv.find((a) => a.startsWith("/") || (!a.startsWith("-") && a !== cmd));
       if (target && asBot && this.botBlockedPath(resolveArgPath(target, cwd))) {
@@ -345,8 +360,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     this.assertRunning();
     const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    this.fireRace(path);
-    const file = this.botOpen(path);
+    const file = this.openatFile(path);
     if (!file.ok) return file;
     return { ok: true, data: { path, isDir: file.file.isDir, size: file.file.content.length } };
   }
@@ -355,11 +369,9 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     this.assertRunning();
     const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    this.fireRace(path);
-    const dir = this.botOpen(path);
+    const dir = this.openatDir(path);
     if (!dir.ok) return dir;
-    if (!dir.file.isDir) return { ok: false, errorCode: "NOT_FOUND" };
-    const prefix = path.endsWith("/") ? path : `${path}/`;
+    const prefix = `${dir.dirKey}/`;
     const children = new Set<string>();
     for (const key of this.fs.keys()) {
       if (!key.startsWith(prefix)) continue;
@@ -374,10 +386,10 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     this.assertRunning();
     const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    this.fireRace(path);
-    const file = this.botOpen(path);
+    const file = this.openatFile(path);
     if (!file.ok) return file;
     if (file.file.isDir) return { ok: false, errorCode: "NOT_FOUND" };
+    this.noteRaceWin(file.fileKey, file.file.content);
     return { ok: true, data: Buffer.from(file.file.content) };
   }
 
@@ -385,15 +397,17 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     this.assertRunning();
     const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    this.fireRace(path);
-    const parents = this.ensureBotParents(path);
-    if (!parents.ok) return parents;
-    const existing = this.fs.get(path);
+    if (body.length > GUEST_FS_MAX_BYTES) return { ok: false, errorCode: "FILE_TOO_LARGE" };
+    const walked = this.openatParents(path, { createDirs: true });
+    if (!walked.ok) return walked;
+    this.fireRace(walked.fileKey);
+    const existing = this.fs.get(walked.fileKey);
     if (existing?.symlinkTo) return { ok: false, errorCode: "PERMISSION_DENIED" };
     if (existing && existing.owner !== FLOK_BOT_USER) {
       return { ok: false, errorCode: "PERMISSION_DENIED" };
     }
-    this.fs.set(path, memFile(body, FLOK_BOT_USER));
+    this.fs.set(walked.fileKey, memFile(body, FLOK_BOT_USER));
+    this.noteRaceWin(walked.fileKey, body);
     return { ok: true };
   }
 
@@ -401,8 +415,9 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     this.assertRunning();
     const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    this.fireRace(path);
-    return this.mkdirAsBot(path);
+    const dir = this.openatDir(path, { create: true });
+    if (!dir.ok) return dir;
+    return { ok: true };
   }
 
   async fsDelete(path: string): Promise<RunloopFsResult> {
@@ -410,17 +425,10 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     if (path === RUNLOOP_WORKSPACE_ROOT) return { ok: false, errorCode: "PATH_ESCAPE" };
     const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    this.fireRace(path);
-    const existing = this.fs.get(path);
-    if (!existing) return { ok: false, errorCode: "NOT_FOUND" };
-    if (existing.symlinkTo) {
-      this.fs.delete(path);
-      return { ok: true };
-    }
-    const opened = this.botOpen(path);
+    const opened = this.openatFile(path, { allowSymlinkUnlink: true });
     if (!opened.ok) return opened;
     for (const key of [...this.fs.keys()]) {
-      if (key === path || key.startsWith(`${path}/`)) {
+      if (key === opened.fileKey || key.startsWith(`${opened.fileKey}/`)) {
         const child = this.fs.get(key);
         if (child?.symlinkTo) {
           this.fs.delete(key);
@@ -441,21 +449,20 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     if (!a.ok) return a;
     const b = this.customerJail(to);
     if (!b.ok) return b;
-    this.fireRace(from);
-    this.fireRace(to);
-    const src = this.botOpen(from);
+    const src = this.openatFile(from);
     if (!src.ok) return src;
-    const destExisting = this.fs.get(to);
+    const dest = this.openatParents(to, { createDirs: true });
+    if (!dest.ok) return dest;
+    this.fireRace(dest.fileKey);
+    const destExisting = this.fs.get(dest.fileKey);
     if (destExisting?.symlinkTo) return { ok: false, errorCode: "PERMISSION_DENIED" };
-    const parents = this.ensureBotParents(to);
-    if (!parents.ok) return parents;
-    this.fs.set(to, {
+    this.fs.set(dest.fileKey, {
       isDir: src.file.isDir,
       content: Buffer.from(src.file.content),
       owner: FLOK_BOT_USER,
       mode: src.file.mode,
     });
-    this.fs.delete(from);
+    this.fs.delete(src.fileKey);
     return { ok: true };
   }
 
@@ -465,16 +472,18 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     if (!a.ok) return a;
     const b = this.customerJail(to);
     if (!b.ok) return b;
-    this.fireRace(from);
-    this.fireRace(to);
-    const src = this.botOpen(from);
+    const src = this.openatFile(from);
     if (!src.ok) return src;
     if (src.file.isDir) return { ok: false, errorCode: "IO_ERROR" };
-    const destExisting = this.fs.get(to);
+    if (src.file.content.length > GUEST_FS_MAX_BYTES) {
+      return { ok: false, errorCode: "FILE_TOO_LARGE" };
+    }
+    const dest = this.openatParents(to, { createDirs: true });
+    if (!dest.ok) return dest;
+    this.fireRace(dest.fileKey);
+    const destExisting = this.fs.get(dest.fileKey);
     if (destExisting?.symlinkTo) return { ok: false, errorCode: "PERMISSION_DENIED" };
-    const parents = this.ensureBotParents(to);
-    if (!parents.ok) return parents;
-    this.fs.set(to, memFile(src.file.content, FLOK_BOT_USER));
+    this.fs.set(dest.fileKey, memFile(src.file.content, FLOK_BOT_USER));
     return { ok: true };
   }
 
@@ -644,6 +653,14 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     );
   }
 
+  plantOwnedDir(path: string, owner: MemoryOwner = FLOK_BOT_USER, mode = 0o775): void {
+    const parent = pathPosix.dirname(path);
+    if (parent !== path && !this.fs.get(parent)) {
+      this.controlPlaneMkdir(parent, owner);
+    }
+    this.fs.set(path, memDir(owner, mode));
+  }
+
   plantSymlink(path: string, target: string, owner: MemoryOwner = FLOK_BOT_USER): void {
     this.controlPlaneMkdir(pathPosix.dirname(path), owner);
     this.fs.set(path, memSymlink(target, owner));
@@ -686,6 +703,10 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     return this.fs.has(path);
   }
 
+  peekMode(path: string): number | undefined {
+    return this.fs.get(path)?.mode;
+  }
+
   private customerJail(path: string): RunloopFsResult {
     try {
       assertInsideRoot(path, RUNLOOP_WORKSPACE_ROOT);
@@ -705,13 +726,129 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     this.raceFired += 1;
   }
 
-  private botOpen(path: string): { ok: true; file: MemFile } | { ok: false; errorCode: string } {
-    if (this.parentHasSymlink(path)) return { ok: false, errorCode: "PERMISSION_DENIED" };
-    const file = this.fs.get(path);
+  private relParts(
+    path: string,
+  ): { ok: true; parts: string[] } | { ok: false; errorCode: string } {
+    const normalized = pathPosix.normalize(path);
+    if (normalized === RUNLOOP_WORKSPACE_ROOT) return { ok: true, parts: [] };
+    if (!normalized.startsWith(`${RUNLOOP_WORKSPACE_ROOT}/`)) {
+      return { ok: false, errorCode: "PATH_ESCAPE" };
+    }
+    const parts = normalized
+      .slice(RUNLOOP_WORKSPACE_ROOT.length + 1)
+      .split("/")
+      .filter(Boolean);
+    if (parts.some((c) => c === ".." || c.includes("\0"))) {
+      return { ok: false, errorCode: "PATH_ESCAPE" };
+    }
+    return { ok: true, parts };
+  }
+
+  /**
+   * openat-style walk from the workspace root. Each component is opened
+   * (snapshot) before a pending swap can retarget that name. Later
+   * child lookups use the snapshot key, not a followed path.
+   */
+  private walkOpenat(
+    parts: string[],
+    opts?: { create?: boolean },
+  ): { ok: true; dirKey: string } | { ok: false; errorCode: string } {
+    this.fireRace(RUNLOOP_WORKSPACE_ROOT);
+    const root = this.fs.get(RUNLOOP_WORKSPACE_ROOT);
+    if (!root || root.symlinkTo || !root.isDir) {
+      return { ok: false, errorCode: "PERMISSION_DENIED" };
+    }
+    let dirKey = RUNLOOP_WORKSPACE_ROOT;
+    for (const name of parts) {
+      const childKey = `${dirKey}/${name}`;
+      let st = this.fs.get(childKey);
+      if (!st) {
+        if (!opts?.create) return { ok: false, errorCode: "NOT_FOUND" };
+        this.fs.set(childKey, memDir(FLOK_BOT_USER));
+        st = this.fs.get(childKey);
+        if (!st) return { ok: false, errorCode: "IO_ERROR" };
+      }
+      if (st.symlinkTo) return { ok: false, errorCode: "PERMISSION_DENIED" };
+      if (!st.isDir) return { ok: false, errorCode: "IO_ERROR" };
+      if (st.owner !== FLOK_BOT_USER && !this.ancestorOfWorkspace(childKey)) {
+        return { ok: false, errorCode: "PERMISSION_DENIED" };
+      }
+      this.fireRace(childKey);
+      dirKey = childKey;
+    }
+    return { ok: true, dirKey };
+  }
+
+  private ancestorOfWorkspace(path: string): boolean {
+    return path === RUNLOOP_WORKSPACE_ROOT || RUNLOOP_WORKSPACE_ROOT.startsWith(`${path}/`);
+  }
+
+  private openatParents(
+    path: string,
+    opts?: { createDirs?: boolean },
+  ):
+    | { ok: true; dirKey: string; name: string; fileKey: string }
+    | { ok: false; errorCode: string } {
+    const rel = this.relParts(path);
+    if (!rel.ok) return rel;
+    if (rel.parts.length === 0) return { ok: false, errorCode: "PERMISSION_DENIED" };
+    const dir = this.walkOpenat(rel.parts.slice(0, -1), { create: opts?.createDirs === true });
+    if (!dir.ok) return dir;
+    const name = rel.parts[rel.parts.length - 1];
+    if (!name) return { ok: false, errorCode: "PERMISSION_DENIED" };
+    return { ok: true, dirKey: dir.dirKey, name, fileKey: `${dir.dirKey}/${name}` };
+  }
+
+  private openatDir(
+    path: string,
+    opts?: { create?: boolean },
+  ): { ok: true; dirKey: string } | { ok: false; errorCode: string } {
+    const rel = this.relParts(path);
+    if (!rel.ok) return rel;
+    return this.walkOpenat(rel.parts, { create: opts?.create === true });
+  }
+
+  private openatFile(
+    path: string,
+    opts?: { allowSymlinkUnlink?: boolean },
+  ): { ok: true; file: MemFile; fileKey: string } | { ok: false; errorCode: string } {
+    if (path === RUNLOOP_WORKSPACE_ROOT) {
+      this.fireRace(path);
+      const root = this.fs.get(path);
+      if (!root || root.symlinkTo) return { ok: false, errorCode: "PERMISSION_DENIED" };
+      return { ok: true, file: root, fileKey: path };
+    }
+    const walked = this.openatParents(path);
+    if (!walked.ok) return walked;
+    this.fireRace(walked.fileKey);
+    const file = this.fs.get(walked.fileKey);
     if (!file) return { ok: false, errorCode: "NOT_FOUND" };
-    if (file.symlinkTo) return { ok: false, errorCode: "PERMISSION_DENIED" };
+    if (file.symlinkTo) {
+      if (opts?.allowSymlinkUnlink) return { ok: true, file, fileKey: walked.fileKey };
+      return { ok: false, errorCode: "PERMISSION_DENIED" };
+    }
     if (file.owner !== FLOK_BOT_USER) return { ok: false, errorCode: "PERMISSION_DENIED" };
-    return { ok: true, file };
+    return { ok: true, file, fileKey: walked.fileKey };
+  }
+
+  private followResolve(path: string): string {
+    const parts = path.split("/").filter(Boolean);
+    let acc = "";
+    for (const part of parts) {
+      acc += `/${part}`;
+      const st = this.fs.get(acc);
+      if (st?.symlinkTo) acc = pathPosix.normalize(st.symlinkTo);
+    }
+    return acc;
+  }
+
+  private noteRaceWin(fileKey: string, data: Buffer): void {
+    const followed = this.followResolve(fileKey);
+    if (followed === fileKey) return;
+    const other = this.fs.get(followed);
+    if (other && !other.isDir && !other.symlinkTo && other.content.equals(data)) {
+      this.raceWins += 1;
+    }
   }
 
   private parentHasSymlink(path: string): boolean {
@@ -734,30 +871,6 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     if (file?.symlinkTo) return true;
     if (file && file.owner !== FLOK_BOT_USER) return true;
     return this.parentHasSymlink(path);
-  }
-
-  private ensureBotParents(path: string): RunloopFsResult {
-    const parent = pathPosix.dirname(path);
-    if (parent === path) return { ok: true };
-    return this.mkdirAsBot(parent);
-  }
-
-  private mkdirAsBot(path: string): RunloopFsResult {
-    const parts = path.split("/").filter(Boolean);
-    let acc = "";
-    for (const part of parts) {
-      acc += `/${part}`;
-      const existing = this.fs.get(acc);
-      if (existing?.symlinkTo) return { ok: false, errorCode: "PERMISSION_DENIED" };
-      if (existing && !existing.isDir) return { ok: false, errorCode: "IO_ERROR" };
-      const ancestorOfWorkspace =
-        acc === RUNLOOP_WORKSPACE_ROOT || RUNLOOP_WORKSPACE_ROOT.startsWith(`${acc}/`);
-      if (existing && existing.owner !== FLOK_BOT_USER && !ancestorOfWorkspace) {
-        return { ok: false, errorCode: "PERMISSION_DENIED" };
-      }
-      if (!existing) this.fs.set(acc, memDir(FLOK_BOT_USER));
-    }
-    return { ok: true };
   }
 
   private controlPlaneMkdir(path: string, owner: MemoryOwner, mode = 0o775): void {
@@ -800,6 +913,7 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     if (ws?.symlinkTo) return;
     if (ws) {
       ws.owner = FLOK_BOT_USER;
+      ws.mode = 0o1775;
       this.recordChown(RUNLOOP_WORKSPACE_ROOT, FLOK_BOT_USER, false);
     }
     const prefix = `${RUNLOOP_WORKSPACE_ROOT}/`;
@@ -814,11 +928,19 @@ class MemoryRunloopDevbox implements RunloopDevboxSession {
     const browser = this.fs.get(BOT_BROWSER_DIR);
     if (browser?.symlinkTo) {
       this.refusedBrowserSymlink = true;
-      return;
+      this.fs.delete(BOT_BROWSER_DIR);
+      for (const key of [...this.fs.keys()]) {
+        if (key.startsWith(`${BOT_BROWSER_DIR}/`)) this.fs.delete(key);
+      }
     }
-    if (browser) {
+    if (!this.fs.get(BOT_BROWSER_DIR)) {
+      this.fs.set(BOT_BROWSER_DIR, memDir("flok-ui", 0o700));
+    }
+    const locked = this.fs.get(BOT_BROWSER_DIR);
+    if (locked && !locked.symlinkTo) {
       this.recordChown(BOT_BROWSER_DIR, "flok-ui", true);
-      browser.owner = "flok-ui";
+      locked.owner = "flok-ui";
+      locked.mode = 0o700;
       for (const [key, file] of this.fs) {
         if (key === BOT_BROWSER_DIR || !key.startsWith(`${BOT_BROWSER_DIR}/`)) continue;
         this.recordChown(key, "flok-ui", true);

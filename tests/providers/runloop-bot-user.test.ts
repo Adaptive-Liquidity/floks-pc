@@ -40,8 +40,9 @@ import {
   FLOK_UI_USER,
 } from "../../src/lib/computers/providers/runloop-interactive.js";
 import {
+  GUEST_FS_MAX_BYTES,
   GUEST_NOFOLLOW_READ_B64_PY,
-  GUEST_NOFOLLOW_WRITE_B64_PY,
+  GUEST_NOFOLLOW_WRITE_STDIN_PY,
   GUEST_NOFOLLOW_LIST_PY,
   GUEST_NOFOLLOW_STAT_PY,
 } from "../../src/lib/computers/providers/runloop-fs.js";
@@ -50,6 +51,7 @@ type MemorySession = {
   plantLegacyHelpers: () => void;
   plantBrowserCookies: () => void;
   plantOwnedFile: (path: string, content: string, owner: "flok" | "flok-ui" | "root") => void;
+  plantOwnedDir: (path: string, owner?: "flok" | "flok-ui" | "root") => void;
   plantSymlink: (path: string, target: string) => void;
   armSymlinkRace: (path: string, target: string) => void;
   peekRead: (path: string) => Buffer | null;
@@ -57,8 +59,10 @@ type MemorySession = {
   peekIsSymlink: (path: string) => boolean;
   peekExists: (path: string) => boolean;
   peekList: (path: string) => string[];
+  peekMode: (path: string) => number | undefined;
   chownLog: Array<{ path: string; user: string; noDeref: boolean; recursive: boolean }>;
   raceFired: number;
+  raceWins: number;
   botUserEnsureCount: number;
   botUserReady: boolean;
   ensureBotUser: () => Promise<void>;
@@ -164,7 +168,8 @@ describe("ensure-bot-user script contract", () => {
     assert.match(ENSURE_BOT_USER_SH, /chown -h root:root "\$CTRL"/);
     assert.match(ENSURE_BOT_USER_SH, /chown -hP -R "\$BOT_USER:\$BOT_USER"/);
     assert.match(ENSURE_BOT_USER_SH, /chown -hP -R "\$UI_USER:\$UI_USER" "\$WS\/\.browser"/);
-    assert.match(ENSURE_BOT_USER_SH, /refusing symlink \$WS\/\.browser/);
+    assert.match(ENSURE_BOT_USER_SH, /replacing symlink \$WS\/\.browser/);
+    assert.match(ENSURE_BOT_USER_SH, /chmod 1775 "\$WS"/);
     assert.doesNotMatch(ENSURE_BOT_USER_SH, /chown [^-].*"\$WS"/);
   });
 });
@@ -512,6 +517,139 @@ describe("TOCTOU: never resolve-then-act as another user (memory)", () => {
     assert.equal(session.peekRead(`${CONTROL_PLANE_DIR}/secret`)?.toString("utf8"), "helper-secret");
     assert.equal(session.chownLog.length, chownsAfterWrite);
   });
+
+  it("parent-directory swap after the openat walk wins 0 of 2000 reads/writes", async () => {
+    const { plane, p, ref } = await ready();
+    const session = (await plane.get(ref)) as unknown as MemorySession;
+    const notes = `${RUNLOOP_WORKSPACE_ROOT}/notes`;
+    const victim = `${notes}/secret.txt`;
+    const evil = `${RUNLOOP_WORKSPACE_ROOT}/evil-swap`;
+    const evilFile = `${evil}/secret.txt`;
+    assert.equal((await p.filesystem(ref, { operation: "mkdir", path: notes })).ok, true);
+    assert.equal((await p.filesystem(ref, { operation: "mkdir", path: evil })).ok, true);
+    assert.equal(
+      (await p.filesystem(ref, { operation: "write", path: victim, content: "benign" })).ok,
+      true,
+    );
+    assert.equal(
+      (await p.filesystem(ref, { operation: "write", path: evilFile, content: "pwned-evil" })).ok,
+      true,
+    );
+
+    let wins = 0;
+    for (let i = 0; i < 2000; i += 1) {
+      session.plantOwnedDir(notes, FLOK_BOT_USER);
+      session.armSymlinkRace(notes, evil);
+      const read = await p.filesystem(ref, { operation: "read", path: victim });
+      if (read.ok && read.data === "pwned-evil") wins += 1;
+      session.plantOwnedDir(notes, FLOK_BOT_USER);
+      session.armSymlinkRace(notes, evil);
+      const write = await p.filesystem(ref, {
+        operation: "write",
+        path: victim,
+        content: `from-write-${i}`,
+      });
+      if (write.ok && session.peekRead(evilFile)?.toString("utf8") === `from-write-${i}`) {
+        wins += 1;
+      }
+    }
+    assert.equal(wins, 0);
+    assert.equal(session.raceWins, 0);
+    assert.ok(session.raceFired >= 4000);
+    assert.equal(session.peekRead(evilFile)?.toString("utf8"), "pwned-evil");
+    assert.notEqual(session.peekRead(victim)?.toString("utf8"), "pwned-evil");
+  });
+});
+
+describe("computer_fs size cap and byte-exact round-trip (memory)", () => {
+  it("round-trips 0 B, 71 KiB, 72 KiB, 200 KiB, max; FILE_TOO_LARGE above max; binary exact", async () => {
+    const { plane, p, ref } = await ready();
+    const session = await plane.get(ref);
+    const cases: Array<{ name: string; body: Buffer }> = [
+      { name: "empty.bin", body: Buffer.alloc(0) },
+      { name: "71kib.bin", body: Buffer.alloc(71 * 1024, 0x41) },
+      { name: "72kib.bin", body: Buffer.alloc(72 * 1024, 0x42) },
+      { name: "200kib.bin", body: Buffer.alloc(200 * 1024, 0x43) },
+      { name: "max.bin", body: Buffer.alloc(GUEST_FS_MAX_BYTES, 0x44) },
+    ];
+    for (const { name, body } of cases) {
+      if (body.length >= 8) {
+        body[0] = 0x00;
+        body[1] = 0xff;
+        body[2] = 0xfe;
+        body.writeUInt32BE(0xdeadbeef, 3);
+      }
+      const path = `${RUNLOOP_WORKSPACE_ROOT}/${name}`;
+      const write = await session.fsWrite(path, body);
+      assert.equal(write.ok, true, `write ${name}`);
+      const read = await session.fsRead(path);
+      assert.equal(read.ok, true, `read ${name}`);
+      assert.ok(read.data);
+      assert.equal(read.data.equals(body), true, `round-trip ${name} ${body.length}`);
+      const viaProvider = await p.filesystem(ref, {
+        operation: "read",
+        path,
+        encoding: "base64",
+      });
+      assert.equal(viaProvider.ok, true, `provider read ${name}`);
+      assert.equal(
+        Buffer.from(String(viaProvider.data), "base64").equals(body),
+        true,
+        `provider ${name}`,
+      );
+    }
+    const over = Buffer.alloc(GUEST_FS_MAX_BYTES + 1, 0x45);
+    const tooBig = await session.fsWrite(`${RUNLOOP_WORKSPACE_ROOT}/over.bin`, over);
+    assert.equal(tooBig.ok, false);
+    assert.equal(tooBig.errorCode, "FILE_TOO_LARGE");
+    const viaProvider = await p.filesystem(ref, {
+      operation: "write",
+      path: `${RUNLOOP_WORKSPACE_ROOT}/over2.bin`,
+      content: "x".repeat(GUEST_FS_MAX_BYTES + 1),
+    });
+    assert.equal(viaProvider.ok, false);
+    assert.equal(viaProvider.errorCode, "FILE_TOO_LARGE");
+  });
+});
+
+describe(".browser ownership and sticky workspace (memory)", () => {
+  it("owns .browser as flok-ui, sticky workspace, and replaces a planted symlink on wake", async () => {
+    const { plane, p } = provider();
+    const a = await p.provision({ birdId: "browser-sticky", flockId: "f" });
+    const session = (await plane.get(a.providerRef)) as unknown as MemorySession;
+    assert.equal(session.peekMode(RUNLOOP_WORKSPACE_ROOT), 0o1775);
+    assert.equal(session.peekOwner(BOT_BROWSER_DIR), FLOK_UI_USER);
+    assert.equal(session.peekMode(BOT_BROWSER_DIR), 0o700);
+    assert.equal(session.peekIsSymlink(BOT_BROWSER_DIR), false);
+
+    session.plantSymlink(BOT_BROWSER_DIR, "/tmp/evil-browser");
+    assert.equal(session.peekIsSymlink(BOT_BROWSER_DIR), true);
+    session.botUserReady = false;
+    await session.ensureBotUser();
+    assert.equal(session.peekIsSymlink(BOT_BROWSER_DIR), false);
+    assert.equal(session.peekOwner(BOT_BROWSER_DIR), FLOK_UI_USER);
+    assert.equal(session.peekMode(BOT_BROWSER_DIR), 0o700);
+    assert.equal(session.peekMode(RUNLOOP_WORKSPACE_ROOT), 0o1775);
+
+    session.plantSymlink(BOT_BROWSER_DIR, "/tmp/evil-browser-2");
+    await p.pause(a.providerRef);
+    await p.wake(a.providerRef);
+    const afterWake = (await plane.get(a.providerRef)) as unknown as MemorySession;
+    assert.equal(afterWake.peekIsSymlink(BOT_BROWSER_DIR), false);
+    assert.equal(afterWake.peekOwner(BOT_BROWSER_DIR), FLOK_UI_USER);
+
+    const mv = await p.exec(a.providerRef, {
+      argv: ["mv", BOT_BROWSER_DIR, `${RUNLOOP_WORKSPACE_ROOT}/stolen-browser`],
+    });
+    assert.notEqual(mv.exitCode, 0);
+    assert.equal(afterWake.peekExists(BOT_BROWSER_DIR), true);
+    assert.equal(afterWake.peekOwner(BOT_BROWSER_DIR), FLOK_UI_USER);
+    const ln = await p.exec(a.providerRef, {
+      argv: ["ln", "-s", "/tmp/evil", BOT_BROWSER_DIR],
+    });
+    assert.notEqual(ln.exitCode, 0);
+    assert.equal(afterWake.peekIsSymlink(BOT_BROWSER_DIR), false);
+  });
 });
 
 describe("ensure chown never follows planted symlinks (memory)", () => {
@@ -549,21 +687,25 @@ describe("ensure chown never follows planted symlinks (memory)", () => {
 });
 
 describe("customer fs guest scripts are nofollow and not root file API", () => {
-  it("opens with O_NOFOLLOW and never Function.toString()", () => {
+  it("opens with openat + O_NOFOLLOW and never Function.toString()", () => {
     for (const src of [
       GUEST_NOFOLLOW_STAT_PY,
       GUEST_NOFOLLOW_LIST_PY,
       GUEST_NOFOLLOW_READ_B64_PY,
-      GUEST_NOFOLLOW_WRITE_B64_PY,
+      GUEST_NOFOLLOW_WRITE_STDIN_PY,
     ]) {
       assert.match(src, /O_NOFOLLOW/);
-      assert.match(src, /refuse_symlink/);
+      assert.match(src, /dir_fd=/);
       assert.equal(src.includes("Function.toString"), false);
     }
     const sdk = readFileSync(join(here, "../../src/lib/computers/providers/runloop-sdk.ts"), "utf8");
     assert.match(sdk, /GUEST_NOFOLLOW_READ_B64_PY/);
-    assert.match(sdk, /GUEST_NOFOLLOW_WRITE_B64_PY/);
+    assert.match(sdk, /GUEST_NOFOLLOW_WRITE_STDIN_PY/);
+    assert.match(sdk, /--spec-file/);
+    assert.match(sdk, /stdin_b64/);
+    assert.match(sdk, /FILE_TOO_LARGE/);
     assert.match(sdk, /argvAsBotUser\(guestArgv\)/);
+    assert.equal(sdk.includes("GUEST_NOFOLLOW_WRITE_B64_PY"), false);
     assert.equal(sdk.includes("ownForBot"), false);
     assert.equal(sdk.includes("enforceResolved"), false);
     assert.equal(sdk.includes("privilegedGuestFs"), false);
@@ -577,6 +719,10 @@ describe("customer fs guest scripts are nofollow and not root file API", () => {
       assert.equal(body.includes("box.file.write"), false);
       assert.equal(body.includes("box.file.download"), false);
     }
+    const specWrite = sdk.slice(sdk.indexOf("private async execViaSpecFile("));
+    assert.match(specWrite, /CONTROL_PLANE_FS_SPEC_PATH/);
+    assert.match(specWrite, /--spec-file/);
+    assert.equal(specWrite.includes("/home/user/flok/"), false);
   });
 });
 
