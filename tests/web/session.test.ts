@@ -30,6 +30,12 @@ describe("setup gates + session parse", () => {
     assert.equal(session.plan, "team");
     assert.equal(session.desk?.state, "pairing");
     assert.equal(session.desk?.userCode, "ABCD-EFGH");
+    assert.equal(session.reconnectBot, false);
+    const reconnect = parseSeatSession({
+      billingEmail: "Owner@Example.com",
+      reconnectBot: true,
+    });
+    assert.equal(reconnect?.reconnectBot, true);
   });
 
   it("refuses to invent a sealed cookie from session_id or a user blob", () => {

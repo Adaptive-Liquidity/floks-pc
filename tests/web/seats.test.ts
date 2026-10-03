@@ -14,6 +14,9 @@ import type Stripe from "stripe";
 describe("seat ledger", () => {
   beforeEach(() => {
     resetSeatStoreForTests();
+    process.env.STRIPE_PRICE_PERSONAL = "price_personal_test";
+    process.env.STRIPE_PRICE_PRO = "price_pro_test";
+    process.env.STRIPE_PRICE_TEAM = "price_team_test";
   });
 
   it("does not invent a seat for a signed-in email", async () => {
@@ -24,6 +27,7 @@ describe("seat ledger", () => {
     assert.equal(session.seats, 0);
     assert.equal(session.desk, null);
     assert.equal(session.plan, null);
+    assert.equal(session.reconnectBot, false);
   });
 
   it("stores emails lowercase and looks them up case-insensitively", async () => {
@@ -54,6 +58,7 @@ describe("seat ledger", () => {
           customer_email: "Pay@Example.com",
           customer_details: { email: "Pay@Example.com" },
           subscription: "sub_live_1",
+          payment_status: "paid",
           created: 1_700_000_000,
           metadata: { plan: "pro", price_id: "price_pro_test" },
           line_items: { data: [{ price: { id: "price_pro_test" }, quantity: 1 }] },

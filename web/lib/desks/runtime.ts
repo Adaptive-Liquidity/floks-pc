@@ -7,6 +7,7 @@ import {
   hashPairCode,
 } from "../../../src/lib/computers/index";
 import type { Computer, ComputerPairCode, ComputerProvider } from "../../../src/lib/computers/index";
+import { graceAllowsAccess } from "../billing/grace";
 import { getSeatStore, type SeatRecord } from "../billing/seats";
 import { webControlPlaneStore } from "../store/control-plane-pg";
 import { mapComputerState } from "./map-state";
@@ -110,6 +111,7 @@ function toDesk(
     hoursUsed: seat.hoursUsed,
     hoursIncluded: seat.hoursIncluded,
     seatStatus: seat.status,
+    graceActive: graceAllowsAccess(seat),
   });
   const revealedCode = revealed?.code ?? null;
   return {
@@ -291,6 +293,11 @@ export function webProviderName(): "fake" | "runloop" {
 export async function pauseComputer(computerId: string): Promise<void> {
   const service = await getComputerService();
   await service.pauseThisComputer(computerId);
+}
+
+export async function resumeComputer(computerId: string): Promise<void> {
+  const service = await getComputerService();
+  await service.wakeThisComputer(computerId);
 }
 
 export async function shutdownComputer(

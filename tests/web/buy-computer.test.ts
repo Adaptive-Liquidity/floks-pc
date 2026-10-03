@@ -15,6 +15,7 @@ import {
   BUY_LINK_TTL_MS,
   NO_COMPUTER_MESSAGE,
   createBuyLink,
+  peekBuyToken,
   readBuyToken,
 } from "../../web/lib/billing/buy-link.ts";
 import { provisionSeatComputers, shutdownSeatComputers } from "../../web/lib/billing/lifecycle.ts";
@@ -139,6 +140,7 @@ function checkoutEvent(
         customer_email: email,
         customer_details: { email },
         subscription: `sub_${id}`,
+        payment_status: "paid",
         created: 1_700_000_000,
         metadata: { plan: "personal", price_id: "price_personal_test", agent_quantity: "1", ...metadata },
         line_items: { data: [{ price: { id: "price_personal_test" }, quantity: 1 }] },
@@ -393,6 +395,41 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
     }
   });
 
+  it("blocks POST /buy when CHECKOUT_DISABLED=1 without consuming the token", async () => {
+    useBindKey();
+    setPendingBindStoreForTests(new MemoryPendingBindStore());
+    const previous = process.env.CHECKOUT_DISABLED;
+    process.env.CHECKOUT_DISABLED = "1";
+    try {
+      const fresh = await createBuyLink({
+        origin: ORIGIN,
+        email: EMAIL,
+        subject: SUBJECT,
+        flock: flockIdForEmail(EMAIL),
+        clientId: "stax_client",
+        plan: "personal",
+      });
+      const token = new URL(fresh.url).searchParams.get("t") ?? "";
+      const posted = await buyPost(
+        new Request(fresh.url, {
+          method: "POST",
+          headers: { origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ t: token }),
+        }),
+      );
+      assert.equal(posted.status, 503);
+      assert.equal(((await posted.json()) as { error?: string }).error, "checkout_disabled");
+      const preview = await buyGet(new Request(fresh.url));
+      assert.equal(preview.status, 200);
+      assert.match(await preview.text(), /Confirm purchase/);
+      const peeked = await peekBuyToken(token);
+      assert.equal(peeked.ok, true);
+    } finally {
+      if (previous === undefined) delete process.env.CHECKOUT_DISABLED;
+      else process.env.CHECKOUT_DISABLED = previous;
+    }
+  });
+
   it("binds a paid computer to the bot and ignores tampered checkout metadata", async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousPrice = process.env.STRIPE_PRICE_PERSONAL;
@@ -424,7 +461,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
       assert.ok(seat);
       const computers = await provisionSeatComputers(seat);
       assert.equal(computers.length > 0, true);
-      assert.equal(await bindPurchasedComputer(event, seat, computers), true);
+      assert.equal((await bindPurchasedComputer(event, seat, computers)).ok, true);
       const bound = await getOauthStore().getAccess(hashToken(token));
       assert.equal(bound?.computerId, computers[0]?.id);
       const status = await callTool(token, "computer_status", {});
@@ -480,7 +517,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
         assert.ok(tamperSeat, item.name);
         const created = await provisionSeatComputers(tamperSeat);
         assert.equal(created.length > 0, true, item.name);
-        assert.equal(await bindPurchasedComputer(tampered, tamperSeat, created), false, item.name);
+        assert.equal((await bindPurchasedComputer(tampered, tamperSeat, created)).ok, false, item.name);
         const row = await getOauthStore().getAccess(hashToken(issued.token));
         assert.equal(row?.computerId, null, item.name);
         const saved = await getSeatStore().getById(tamperSeat.id);
@@ -607,7 +644,7 @@ describe("buy a computer from the bot", { concurrency: 1 }, () => {
     const seat = await applyStripeEvent(event);
     assert.ok(seat);
     const computers = await provisionSeatComputers(seat);
-    assert.equal(await bindPurchasedComputer(event, seat, computers), true);
+    assert.equal((await bindPurchasedComputer(event, seat, computers)).ok, true);
     await drive(token);
     const preview = await buyGet(new Request(link.url));
     assert.equal(preview.status, 400);

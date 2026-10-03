@@ -1143,6 +1143,12 @@ export class ComputerService {
     await this.persist();
   }
 
+  computerIdForCheckoutNonce(checkoutNonce: string): string | null {
+    const claim = [...this.botClaims.values()].find((row) => row.checkoutNonce === checkoutNonce);
+    if (!claim || claim.status === "denied") return null;
+    return claim.computerId;
+  }
+
   async attachPurchaseToClaim(checkoutNonce: string, computerId: string): Promise<boolean> {
     await this.reloadIfRevisionChanged();
     const claim = [...this.botClaims.values()].find((row) => row.checkoutNonce === checkoutNonce);
@@ -1392,6 +1398,8 @@ export class ComputerService {
     if (computer.state === "deleted" || computer.state === "deleting") {
       throw new ComputerNotFound(computer.id);
     }
+    // Gate is side-effect-free. Decide before taking the per-computer lock.
+    await this.requireWakeAdmission(computer.id);
     if (!computer.providerRef) return computer;
     if ((await this.classifyProvider(computer.providerRef)) === "up") {
       return this.healToUp(computer);
@@ -1439,9 +1447,9 @@ export class ComputerService {
     if (computer.state === "deleted" || computer.state === "deleting") {
       throw new ComputerNotFound(computer.id);
     }
+    await this.requireWakeAdmission(computer.id);
     const kind = await this.classifyProvider(ref);
     if (kind === "up") return this.healToUp(computer);
-    await this.requireWakeAdmission(computer.id);
     const deadline = this.now() + this.wakeBudgetMs();
     computer = this.markWaking(computer);
     await this.persist();
@@ -1836,6 +1844,7 @@ export class ComputerService {
 
   async wakeThisComputer(computerId: string): Promise<Computer> {
     await this.reloadIfRevisionChanged();
+    await this.requireWakeAdmission(computerId);
     return this.enqueueDestroy(computerId, () => this.wakeThisComputerLocked(computerId));
   }
 
@@ -1846,8 +1855,8 @@ export class ComputerService {
 
   private async wakeThisComputerLocked(computerId: string): Promise<Computer> {
     const current = await this.get(computerId);
-    if (current.state === "ready" || current.state === "running") return current;
     await this.requireWakeAdmission(computerId);
+    if (current.state === "ready" || current.state === "running") return current;
     let computer = this.applyTransition(current, "waking");
     await this.persist();
     const ref = this.requireProviderRef(computer);

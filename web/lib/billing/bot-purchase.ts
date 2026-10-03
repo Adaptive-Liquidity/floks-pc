@@ -1,6 +1,7 @@
 import { MCP_PREFERRED_PROTOCOL, MCP_SUPPORTED_PROTOCOLS } from "../../../src/lib/mcp/config";
 import { jsonRpcResult } from "../../../src/lib/mcp/protocol";
 import type { OauthAccess } from "../oauth";
+import { completeOpenPurchase } from "./bind-purchase";
 import { activeComputerIdsForFlock } from "./pending-binds";
 import {
   NO_COMPUTER_MESSAGE,
@@ -73,6 +74,11 @@ export async function purchaseToolResult(
   if (access.computerId) return null;
   const presented = call.args.capability_token;
   if (typeof presented === "string" && presented.length > 0) return null;
+  try {
+    await completeOpenPurchase({ email: access.email, flock: access.flock });
+  } catch (err) {
+    console.error("[bot.complete]", err instanceof Error ? err.message : err);
+  }
   const owned = await activeComputerIdsForFlock(access.flock);
   if (owned.length > 0) {
     return rpc(call.id, protocolVersion, true, { message: RECONNECT_COMPUTER_MESSAGE });
