@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.ts";
+import {
+  ComputerAsleep,
+  ComputerService,
+  FakeProvider,
+  MemoryControlPlaneStore,
+} from "../../src/lib/computers/index.ts";
 import { POST as mcpPost } from "../../web/app/mcp/route.ts";
 import { createSeat, getSeatStore, resetSeatStoreForTests } from "../../web/lib/billing/seats.ts";
-import { setGraceColumnsReady } from "../../web/lib/billing/grace-schema.ts";
+import { resetGraceColumnsForTests, setGraceColumnsReady } from "../../web/lib/billing/grace-schema.ts";
 import { flockIdForEmail, resetDeskRuntimeForTests, setComputerServiceForTests } from "../../web/lib/desks/runtime.ts";
 import {
   admitComputerWake,
   decideWakeAdmission,
-  enforceComputerWake,
+  requireWakeAdmission,
 } from "../../web/lib/desks/wake-admission.ts";
 import {
   MemoryOauthStore,
@@ -25,6 +30,7 @@ describe("wake admission", { concurrency: 1 }, () => {
     process.env.NODE_ENV = "test";
     resetSeatStoreForTests();
     resetDeskRuntimeForTests();
+    resetGraceColumnsForTests();
     setOauthStoreForTests(new MemoryOauthStore());
   });
 
@@ -33,6 +39,7 @@ describe("wake admission", { concurrency: 1 }, () => {
     setOauthStoreForTests(new MemoryOauthStore());
     resetDeskRuntimeForTests();
     resetSeatStoreForTests();
+    resetGraceColumnsForTests();
   });
 
   it("lets an in-grace seat wake and returns 402 when grace is expired or hours are empty", () => {
@@ -96,7 +103,7 @@ describe("wake admission", { concurrency: 1 }, () => {
     }
   });
 
-  it("pauses an expired-grace computer on the shared wake helper", async () => {
+  it("does not pause from the wake gate", async () => {
     const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
     setComputerServiceForTests(service);
     const computer = await service.requestComputer({ birdId: "bird-hold", flockId: "flock-hold" });
@@ -111,11 +118,67 @@ describe("wake admission", { concurrency: 1 }, () => {
         graceUntil: new Date(Date.now() - 1_000).toISOString(),
       }),
     );
-    const decision = await enforceComputerWake(computer.id);
+    const decision = await requireWakeAdmission(computer.id);
     assert.equal(decision.allow, false);
     if (!decision.allow) assert.equal(decision.status, 402);
     assert.equal(await admitComputerWake(computer.id), false);
+    assert.equal((await service.get(computer.id)).state === "ready" || (await service.get(computer.id)).state === "running", true);
+  });
+
+  it("returns promptly on wake/exec/status/pause for a held seat", async () => {
+    const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
+    service.setWakeAdmission((id) => admitComputerWake(id));
+    setComputerServiceForTests(service);
+    const computer = await service.requestComputer({ birdId: "bird-deadlock", flockId: "flock-deadlock" });
+    await getSeatStore().upsert(
+      createSeat({
+        email: "deadlock@example.com",
+        plan: "personal",
+        stripeCustomerId: "cus_deadlock",
+        status: "canceled",
+        computerId: computer.id,
+        computerIds: [computer.id],
+        graceUntil: new Date(Date.now() - 1_000).toISOString(),
+      }),
+    );
+    const issued = await service.issueBoundCapability(computer.id, computer.flockId);
+    const auth = { kind: "bound" as const, capabilityId: issued.capabilityId, flockId: computer.flockId };
+    const budget = 750;
+    // Force the locked wake path (paused provider) so admission cannot pause-on-lock.
+    await withTimeout(service.pauseThisComputer(computer.id), budget, "pre-pause");
     assert.equal((await service.get(computer.id)).state, "paused");
+    await assert.doesNotReject(() =>
+      withTimeout(service.wakeThisComputer(computer.id).then(
+        () => {
+          throw new Error("held seat woke");
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof ComputerAsleep, String(err));
+        },
+      ), budget, "wake"),
+    );
+    await assert.doesNotReject(() =>
+      withTimeout(service.exec(auth, computer.id, { argv: ["echo", "hi"] }).then(
+        () => {
+          throw new Error("held seat exec ran");
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof ComputerAsleep, String(err));
+        },
+      ), budget, "exec"),
+    );
+    await assert.doesNotReject(() =>
+      withTimeout(service.status(auth, computer.id).then(
+        () => {
+          throw new Error("held seat status woke");
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof ComputerAsleep, String(err));
+        },
+      ), budget, "status"),
+    );
+    const paused = await withTimeout(service.pauseThisComputer(computer.id), budget, "pause");
+    assert.equal(paused.state, "paused");
   });
 
   it("returns HTTP 402 on the MCP path when grace has expired", async () => {
@@ -182,7 +245,6 @@ describe("wake admission", { concurrency: 1 }, () => {
     );
     assert.equal(res.status, 402);
     assert.equal(((await res.json()) as { reason?: string }).reason, "grace_expired");
-    assert.equal((await service.get(computer.id)).state, "paused");
   });
 
   it("wakes an in-grace seat on the MCP path", async () => {
@@ -249,3 +311,17 @@ describe("wake admission", { concurrency: 1 }, () => {
     assert.equal(res.status, 200);
   });
 });
+
+async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} hung past ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

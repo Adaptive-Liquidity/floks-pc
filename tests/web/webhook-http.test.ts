@@ -3,7 +3,13 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { ComputerService, FakeProvider, MemoryControlPlaneStore } from "../../src/lib/computers/index.ts";
 import { handleStripeWebhookRequest } from "../../web/lib/billing/webhook.ts";
 import { BUY_LINK_TTL_MS, createBuyLink } from "../../web/lib/billing/buy-link.ts";
-import { bindFailedForEmail } from "../../web/lib/billing/bind-purchase.ts";
+import { bindFailedForEmail, completeOpenPurchase } from "../../web/lib/billing/bind-purchase.ts";
+import {
+  MemoryStripeEventStore,
+  STRIPE_EVENT_LEASE_MS,
+  setStripeEventStoreForTests,
+} from "../../web/lib/billing/stripe-events.ts";
+import { PostgresPendingBindStore } from "../../web/lib/billing/pending-binds.ts";
 import { sessionFromSeats } from "../../web/lib/setup-payload.ts";
 import { SETUP_RECONNECT_BOT } from "../../web/lib/copy.ts";
 import type { ComputerSpec } from "../../src/lib/computers/types.ts";
@@ -331,5 +337,147 @@ describe("stripe webhook HTTP", { concurrency: 1 }, () => {
     const again = await handleStripeWebhookRequest(signedRequest(payload, signature));
     assert.equal(again.status, 200);
     assert.equal(((await again.json()) as { duplicate?: boolean }).duplicate, true);
+  });
+
+  it("treats an already-bound nonce as success and does not show reconnect", async () => {
+    process.env.STAXIONS_BIND_SECRET = "test-bind-0123456789-abcdef-0123456789";
+    const provider = new FakeProvider();
+    provider.injectFailure("provision", "unavailable");
+    setComputerServiceForTests(new ComputerService(provider, { store: new MemoryControlPlaneStore() }));
+
+    const email = "setupfirst@example.com";
+    const subject = "user_setupfirst";
+    const client = registerClient(["https://grok.com/callback"]);
+    await getOauthStore().saveClient(client);
+    const verifier = "verifier-value-which-is-long-enough";
+    const redirect = client.redirectUris[0] ?? "";
+    const flock = flockIdForEmail(email);
+    const code = await issueCode({
+      clientId: client.id,
+      redirectUri: redirect,
+      challenge: pkceS256(verifier),
+      subject,
+      flock,
+      email,
+    });
+    const exchanged = await exchangeCode({
+      code,
+      verifier,
+      clientId: client.id,
+      redirectUri: redirect,
+    });
+    assert.ok("token" in exchanged);
+    if (!("token" in exchanged)) return;
+
+    const link = await createBuyLink({
+      origin: "https://example.test",
+      email,
+      subject,
+      flock,
+      clientId: client.id,
+      plan: "personal",
+    });
+    const event = paidCheckoutEvent({
+      id: "cs_setup_first",
+      email,
+      eventId: "evt_setup_first",
+      metadata: {
+        oauth_client_id: client.id,
+        subject,
+        flock,
+        bind_nonce: link.nonce,
+      },
+    });
+    const stripe = getStripe();
+    assert.ok(stripe);
+    const payload = JSON.stringify(event);
+    const signature = stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET });
+    const first = await handleStripeWebhookRequest(signedRequest(payload, signature));
+    assert.equal(first.status, 500);
+    const finished = await completeOpenPurchase({ email, flock });
+    assert.equal(finished.bound, 1);
+    assert.ok((await getPendingBindStore().get(link.nonce))?.usedAt);
+    assert.equal((await getPendingBindStore().get(link.nonce))?.failedAt, null);
+
+    const retry = await handleStripeWebhookRequest(signedRequest(payload, signature));
+    assert.equal(retry.status, 200);
+    const pending = await getPendingBindStore().get(link.nonce);
+    assert.equal(pending?.failedAt, null);
+    assert.equal(pending?.failReason, null);
+    assert.equal(await bindFailedForEmail(email), false);
+    const seats = await getSeatStore().listByEmail(email);
+    assert.equal(seats.length, 1);
+    assert.ok(seats[0]?.computerId);
+    const session = sessionFromSeats({
+      email,
+      seats,
+      desks: [],
+      reconnectBot: await bindFailedForEmail(email),
+    });
+    assert.equal(session.reconnectBot, false);
+    const bound = await getOauthStore().getAccess(hashToken(exchanged.token));
+    assert.equal(bound?.computerId, seats[0]?.computerId);
+  });
+
+  it("reclaims a dead worker after the lease and provisions exactly once", async () => {
+    const store = new MemoryStripeEventStore();
+    const started = Date.now() - STRIPE_EVENT_LEASE_MS - 1;
+    await store.claim("evt_dead_worker", "checkout.session.completed", started);
+    setStripeEventStoreForTests(store);
+
+    const event = paidCheckoutEvent({
+      id: "cs_dead_worker",
+      email: "dead@example.com",
+      eventId: "evt_dead_worker",
+    });
+    const stripe = getStripe();
+    assert.ok(stripe);
+    const payload = JSON.stringify(event);
+    const signature = stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET });
+    const first = await handleStripeWebhookRequest(signedRequest(payload, signature));
+    assert.equal(first.status, 200);
+    const seats = await getSeatStore().listByEmail("dead@example.com");
+    assert.equal(seats.length, 1);
+    assert.ok(seats[0]?.computerId);
+    const again = await handleStripeWebhookRequest(signedRequest(payload, signature));
+    assert.equal(again.status, 200);
+    assert.equal(((await again.json()) as { duplicate?: boolean }).duplicate, true);
+    assert.equal((await getSeatStore().listByEmail("dead@example.com")).length, 1);
+  });
+
+  it("stores bind failures on pending_binds columns", async () => {
+    const written: unknown[][] = [];
+    const store = new PostgresPendingBindStore(
+      "postgres://unused",
+      async (text: string, values?: unknown[]) => {
+        if (text.includes("fail_reason")) {
+          written.push(values ?? []);
+          return { rows: [{ nonce: values?.[0] }] };
+        }
+        if (text.includes("SELECT")) {
+          return {
+            rows: [
+              {
+                nonce: "nonce-fail",
+                client_id: "client",
+                subject: "user",
+                flock: "flock",
+                plan: "personal",
+                email: "fail@example.com",
+                expires_at: new Date(),
+                opened_at: null,
+                used_at: new Date(),
+                failed_at: new Date(),
+                fail_reason: "expired",
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      },
+    );
+    assert.equal(await store.markFailed("nonce-fail", "expired"), true);
+    assert.equal(written[0]?.[2], "expired");
+    assert.equal((await store.get("nonce-fail"))?.failReason, "expired");
   });
 });

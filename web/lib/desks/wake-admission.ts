@@ -15,13 +15,11 @@ function seatForComputer(
   );
 }
 
-function seatComputerIds(seat: Pick<SeatRecord, "computerId" | "computerIds">): string[] {
-  const ids = [...seat.computerIds];
-  if (seat.computerId && !ids.includes(seat.computerId)) ids.unshift(seat.computerId);
-  return [...new Set(ids.filter(Boolean))];
-}
-
-/** Single wake gate for screen, dashboard, and MCP. In-grace seats wake; expired grace is 402. */
+/**
+ * Single wake gate for screen, dashboard, and MCP.
+ * In-grace seats wake; expired grace or an empty hour cap is 402.
+ * Side-effect-free: never pause or take the computer lock.
+ */
 export function decideWakeAdmission(
   seat: Pick<
     SeatRecord,
@@ -48,31 +46,18 @@ export async function decideComputerWake(
   return decideWakeAdmission(seat, nowMs);
 }
 
-/** Decide, hold expired-grace boxes, and return the same decision screen/dashboard/MCP use. */
-export async function enforceComputerWake(
-  computerId: string,
-  nowMs: number = Date.now(),
-): Promise<WakeDecision> {
-  const seats = await getSeatStore().listAll();
-  const seat = seatForComputer(seats, computerId);
-  if (!seat) return { allow: true };
-  const decision = decideWakeAdmission(seat, nowMs);
-  if (!decision.allow && decision.reason === "grace_expired") {
-    const { pauseComputer } = await import("./runtime");
-    for (const id of seatComputerIds(seat)) {
-      try {
-        await pauseComputer(id);
-      } catch {
-        // Hold is best-effort; the caller still sees the 402/deny.
-      }
-    }
-  }
-  return decision;
-}
-
+/** Boolean contract used inside ComputerService. Must not pause or re-enter the computer lock. */
 export async function admitComputerWake(
   computerId: string,
   nowMs: number = Date.now(),
 ): Promise<boolean> {
-  return (await enforceComputerWake(computerId, nowMs)).allow;
+  return (await decideComputerWake(computerId, nowMs)).allow;
+}
+
+/** One call per HTTP/screen path. Returns the 402 decision; the caller does not pause here. */
+export async function requireWakeAdmission(
+  computerId: string,
+  nowMs: number = Date.now(),
+): Promise<WakeDecision> {
+  return decideComputerWake(computerId, nowMs);
 }

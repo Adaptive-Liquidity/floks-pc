@@ -309,10 +309,10 @@ describe("pair keys on FakeProvider", () => {
     assert.equal(issued.code.length > 0, true);
     assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "new");
     assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "in_flight");
-    await completeStripeEvent("evt_retry");
-    assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "duplicate");
     await releaseStripeEvent("evt_retry");
     assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "new");
+    await completeStripeEvent("evt_retry");
+    assert.equal(await claimStripeEvent("evt_retry", "customer.subscription.deleted"), "duplicate");
   });
 
   it("keeps extra computer ids when the paid maximum drops", async () => {

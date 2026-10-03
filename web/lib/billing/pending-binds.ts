@@ -1,4 +1,5 @@
 import { flockIdForEmail } from "../desks/runtime";
+import { isUndefinedColumnError } from "./grace-schema";
 import { normalizeEmail } from "./plans";
 import { getSeatStore } from "./seats";
 import type { CheckoutPlanId } from "./catalog";
@@ -90,18 +91,13 @@ type PgClient = {
 };
 
 export class PostgresPendingBindStore implements PendingBindStore {
-  private readonly failures = new Map<string, { reason: string; at: number }>();
-
-  constructor(private readonly databaseUrl: string) {}
-
-  private withFailure(row: PendingBind | null): PendingBind | null {
-    if (!row) return null;
-    const fail = this.failures.get(row.nonce);
-    if (!fail) return row;
-    return { ...row, failedAt: fail.at, failReason: fail.reason };
-  }
+  constructor(
+    private readonly databaseUrl: string,
+    private readonly injectedQuery?: PgClient["query"],
+  ) {}
 
   private async withClient<T>(fn: (query: PgClient["query"]) => Promise<T>): Promise<T> {
+    if (this.injectedQuery) return fn(this.injectedQuery);
     const pg = (await import("pg")) as unknown as {
       default: { Client: new (config: { connectionString: string }) => PgClient };
     };
@@ -127,16 +123,14 @@ export class PostgresPendingBindStore implements PendingBindStore {
 
   async get(nonce: string): Promise<PendingBind | null> {
     const result = await this.withClient((query) => query(`SELECT * FROM pending_binds WHERE nonce = $1`, [nonce]));
-    return this.withFailure(mapBind(result.rows[0]));
+    return mapBind(result.rows[0]);
   }
 
   async listByEmail(email: string): Promise<PendingBind[]> {
     const result = await this.withClient((query) =>
       query(`SELECT * FROM pending_binds WHERE email = $1`, [normalizeEmail(email)]),
     );
-    return result.rows
-      .map((row) => this.withFailure(mapBind(row)))
-      .filter((row): row is PendingBind => row !== null);
+    return result.rows.map((row) => mapBind(row)).filter((row): row is PendingBind => row !== null);
   }
 
   async listOpenByEmail(email: string, now = Date.now()): Promise<PendingBind[]> {
@@ -149,9 +143,7 @@ export class PostgresPendingBindStore implements PendingBindStore {
         [normalizeEmail(email), now],
       ),
     );
-    return result.rows
-      .map((row) => this.withFailure(mapBind(row)))
-      .filter((row): row is PendingBind => row !== null);
+    return result.rows.map((row) => mapBind(row)).filter((row): row is PendingBind => row !== null);
   }
 
   async claimOpen(nonce: string, now: number): Promise<PendingBindClaim> {
@@ -183,11 +175,23 @@ export class PostgresPendingBindStore implements PendingBindStore {
   }
 
   async markFailed(nonce: string, reason: string, now = Date.now()): Promise<boolean> {
-    const marked = await this.markUsed(nonce, now);
-    const row = await this.get(nonce);
-    if (!row) return false;
-    this.failures.set(nonce, { reason, at: now });
-    return marked || Boolean(row.usedAt);
+    try {
+      const result = await this.withClient((query) =>
+        query(
+          `UPDATE pending_binds
+              SET used_at = COALESCE(used_at, to_timestamp($2 / 1000.0)),
+                  failed_at = to_timestamp($2 / 1000.0),
+                  fail_reason = $3
+            WHERE nonce = $1
+            RETURNING nonce`,
+          [nonce, now, reason],
+        ),
+      );
+      return result.rows.length > 0;
+    } catch (err) {
+      if (!isUndefinedColumnError(err)) throw err;
+      return this.markUsed(nonce, now);
+    }
   }
 }
 

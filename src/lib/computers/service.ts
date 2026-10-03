@@ -1366,6 +1366,8 @@ export class ComputerService {
     if (computer.state === "deleted" || computer.state === "deleting") {
       throw new ComputerNotFound(computer.id);
     }
+    // Gate is side-effect-free. Decide before taking the per-computer lock.
+    if (!(await this.wakeAdmission(computer.id))) throw new ComputerAsleep();
     if (!computer.providerRef) return computer;
     if ((await this.classifyProvider(computer.providerRef)) === "up") {
       return this.healToUp(computer);
@@ -1809,6 +1811,7 @@ export class ComputerService {
   }
 
   async wakeThisComputer(computerId: string): Promise<Computer> {
+    if (!(await this.wakeAdmission(computerId))) throw new ComputerAsleep();
     return this.enqueueDestroy(computerId, () => this.wakeThisComputerLocked(computerId));
   }
 

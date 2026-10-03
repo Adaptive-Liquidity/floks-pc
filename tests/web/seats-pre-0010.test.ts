@@ -8,6 +8,7 @@ import {
 } from "../../web/lib/billing/grace.ts";
 import {
   GRACE_NEGATIVE_PROBE_TTL_MS,
+  resetGraceColumnsForTests,
   setGraceColumnsReady,
 } from "../../web/lib/billing/grace-schema.ts";
 import { enforceBillingHold, provisionSeatComputers, runComputerMaintenance } from "../../web/lib/billing/lifecycle.ts";
@@ -115,12 +116,14 @@ describe("seats without migration 0010", { concurrency: 1 }, () => {
     useTestPriceEnv();
     resetSeatStoreForTests();
     resetDeskRuntimeForTests();
+    resetGraceColumnsForTests();
   });
 
   afterEach(() => {
     resetSeatStoreForTests();
     setComputerServiceForTests(null);
     resetDeskRuntimeForTests();
+    resetGraceColumnsForTests();
   });
 
   it("uses pre-0010 SQL when information_schema says grace columns are missing", async () => {

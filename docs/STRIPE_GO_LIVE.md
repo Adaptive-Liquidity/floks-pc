@@ -43,7 +43,7 @@ Subscribe to:
 - `charge.dispute.updated`
 - `charge.dispute.closed`
 
-Signature must verify (`Stripe-Signature` + `STRIPE_WEBHOOK_SECRET`). Duplicate deliveries are skipped by event id in `stripe_events` (Postgres when `DATABASE_URL` is set). Unsigned bodies are refused in production. Provision and bot bind run before the handler returns 200. If they throw, the event id is released and the handler returns 500 so Stripe retries.
+Signature must verify (`Stripe-Signature` + `STRIPE_WEBHOOK_SECRET`). Duplicate deliveries are skipped by event id in `stripe_events` (Postgres when `DATABASE_URL` is set). After `0010`, rows carry `status` + `claimed_at`: `processing` is 409 to other workers, `done` is skip, `failed` or a `processing` lease older than five minutes can be retried. Unsigned bodies are refused in production. Provision and bot bind run before the handler returns 200. If they throw, the event is marked failed and the handler returns 500 so Stripe retries.
 
 Refund and dispute: a partial refund does not change seat status. A full refund is treated as canceled (grace, then sleep, files kept). A dispute opened marks `past_due`. A dispute won restores `active` if the subscription is otherwise active.
 
@@ -60,7 +60,7 @@ Put that configuration id in `STRIPE_PORTAL_CONFIGURATION_ID`. Stripe emails rec
 
 ## Migration file (do not apply from this PR)
 
-`migrations/0010_billing_grace.sql` adds `grace_until` and `billing_event_at` on `billing_seats`. Apply it for 72-hour grace to work. The app stays up without it: `/setup`, login, and the Stripe webhook keep reading and writing seats. Without `0010`, grace is zero: `past_due` and `canceled` are held and paused immediately (same as the pre-grace product). A negative schema probe is retried after 60 seconds so applying `0010` under a running server turns grace on without a restart.
+`migrations/0010_billing_grace.sql` adds `grace_until` and `billing_event_at` on `billing_seats`, `failed_at` / `fail_reason` on `pending_binds`, and `status` / `claimed_at` on `stripe_events`. Apply it for 72-hour grace, durable bind-failure banners, and the five-minute webhook lease. The app stays up without it: `/setup`, login, and the Stripe webhook keep reading and writing seats. Without `0010`, grace is zero (`past_due` / `canceled` are held immediately), bind failures fall back to `used_at` only, and webhook ids are insert-or-skip. A negative schema probe is retried after 60 seconds so applying `0010` under a running server turns those columns on without a restart. An already-bound bot on Stripe retry is success, not a reconnect banner.
 
 Apply only after the owner approves that database, after `0009_pending_binds.sql`. Do not apply `0010` from this PR.
 
