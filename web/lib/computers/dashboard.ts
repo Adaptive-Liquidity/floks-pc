@@ -34,7 +34,7 @@ export function lifecycleActionsFor(status: DashboardStatus): {
   return {
     pause: status === "running",
     resume: status === "paused" || status === "stopped",
-    restart: status === "running" || status === "paused" || status === "stopped",
+    restart: true,
   };
 }
 

@@ -186,6 +186,7 @@ export {
   activityStoreFromEnv,
   decodeActivityCursor,
   encodeActivityCursor,
+  isRoundTripIsoTimestamp,
   isDashboardEventKind,
   paginateActivityEvents,
   toActivityEvent,

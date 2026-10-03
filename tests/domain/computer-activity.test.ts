@@ -12,6 +12,8 @@ import {
   ProviderNeedsReplacement,
   RebuildConfirmRequired,
   ACTIVITY_RETENTION_MS,
+  decodeActivityCursor,
+  encodeActivityCursor,
   paginateActivityEvents,
   type ActivityEvent,
   type ActivityStore,
@@ -396,6 +398,85 @@ describe("computer activity + owner lifecycle", () => {
           limit: 10,
         }),
       (err: unknown) => err instanceof InvalidActivityCursor,
+    );
+    for (const at of ["1", "0", "2026-02-30", "2026-02-30T00:00:00.000Z"]) {
+      await assert.rejects(
+        () =>
+          service.listActivityEvents(id, {
+            cursor: Buffer.from(`${at}\tid-1`, "utf8").toString("base64url"),
+            limit: 10,
+          }),
+        (err: unknown) => err instanceof InvalidActivityCursor,
+        at,
+      );
+    }
+    await assert.rejects(
+      () =>
+        service.listActivityEvents(id, {
+          cursor: Buffer.from("2026-10-02T00:00:00.000Z\t!!!", "utf8").toString("base64url"),
+          limit: 10,
+        }),
+      (err: unknown) => err instanceof InvalidActivityCursor,
+    );
+    const valid = encodeActivityCursor("2026-10-02T00:00:00.000Z", "evt_1");
+    const page = await service.listActivityEvents(id, { cursor: valid, limit: 10 });
+    assert.equal(Array.isArray(page.events), true);
+  });
+
+  it("parks a declined rebuild so the bot cannot leave the box waking", async () => {
+    const provider = new FakeProvider();
+    const service = new ComputerService(provider);
+    const { id, token } = await pairedComputer(service, "bird-stuck-wake");
+    const cap = auth(token);
+    provider.wake = async () => {
+      throw new ProviderNeedsReplacement("fake");
+    };
+
+    await assert.rejects(
+      () => service.restartThisComputer(id),
+      (err: unknown) => err instanceof RebuildConfirmRequired,
+    );
+    const declined = await service.get(id);
+    assert.equal(declined.state, "stopped");
+    assert.equal(declined.rebuildConfirmRequired, true);
+
+    await assert.rejects(
+      () => service.exec(cap, id, { argv: ["echo", "no"] }),
+      (err: unknown) => err instanceof RebuildConfirmRequired,
+    );
+    const afterBot = await service.get(id);
+    assert.equal(afterBot.state, "stopped");
+    assert.equal(afterBot.rebuildConfirmRequired, true);
+    assert.notEqual(afterBot.state, "waking");
+
+    await service.transition(id, "waking");
+    assert.equal((await service.get(id)).state, "waking");
+    await assert.rejects(
+      () => service.wakeThisComputer(id),
+      (err: unknown) => err instanceof RebuildConfirmRequired,
+    );
+    assert.equal((await service.get(id)).state, "stopped");
+
+    await service.transition(id, "waking");
+    const rebuilt = await service.restartThisComputer(id, { confirmRebuild: true });
+    assert.equal(rebuilt.state, "ready");
+    assert.equal(rebuilt.rebuildConfirmRequired, false);
+  });
+});
+
+describe("activity cursor", () => {
+  it("accepts only ISO round-trip timestamps and safe ids", () => {
+    const ok = encodeActivityCursor("2026-10-02T00:00:00.000Z", "abc_1");
+    assert.deepEqual(decodeActivityCursor(ok), {
+      at: "2026-10-02T00:00:00.000Z",
+      id: "abc_1",
+    });
+    for (const at of ["1", "0", "2026-02-30", "2026-02-30T00:00:00.000Z", "2026-10-02T00:00:00Z"]) {
+      assert.equal(decodeActivityCursor(Buffer.from(`${at}\tid-1`, "utf8").toString("base64url")), null, at);
+    }
+    assert.equal(
+      decodeActivityCursor(Buffer.from("2026-10-02T00:00:00.000Z\tbad id", "utf8").toString("base64url")),
+      null,
     );
   });
 });

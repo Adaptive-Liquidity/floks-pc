@@ -77,6 +77,16 @@ export function encodeActivityCursor(at: string, id: string): string {
   return Buffer.from(`${at}\t${id}`, "utf8").toString("base64url");
 }
 
+const ACTIVITY_CURSOR_ID = /^[A-Za-z0-9:_-]{1,64}$/;
+
+/** True only when `value` is a real UTC ISO instant (`Date#toISOString` round-trip). */
+export function isRoundTripIsoTimestamp(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return false;
+  return new Date(ms).toISOString() === value;
+}
+
 export function decodeActivityCursor(cursor: string): { at: string; id: string } | null {
   try {
     const raw = Buffer.from(cursor, "base64url").toString("utf8");
@@ -84,8 +94,8 @@ export function decodeActivityCursor(cursor: string): { at: string; id: string }
     if (tab <= 0) return null;
     const at = raw.slice(0, tab);
     const id = raw.slice(tab + 1);
-    if (!at || !id) return null;
-    if (!Number.isFinite(Date.parse(at))) return null;
+    if (!isRoundTripIsoTimestamp(at)) return null;
+    if (!ACTIVITY_CURSOR_ID.test(id)) return null;
     return { at, id };
   } catch {
     return null;

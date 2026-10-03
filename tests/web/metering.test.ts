@@ -109,4 +109,43 @@ describe("usage metering and suspend", () => {
     assert.equal(past.action, "shutdown");
     if (past.action === "shutdown") assert.equal(past.reason, "past_due");
   });
+
+  it("does not meter a refused rebuild, even if the stored state is still waking", () => {
+    const seat = createSeat({
+      email: "rebuild@example.com",
+      plan: "personal",
+      stripeCustomerId: "cus_r",
+      lastMeteredAt: "2026-09-28T00:00:00.000Z",
+    });
+    const nowMs = Date.parse("2026-09-28T01:00:00.000Z");
+    const stuckWake = decideMetering({
+      seat,
+      computerState: "waking",
+      lastActiveAt: "2026-09-28T00:00:00.000Z",
+      nowMs,
+      rebuildConfirmRequired: true,
+    });
+    assert.equal(stuckWake.action, "none");
+    if (stuckWake.action === "none") assert.equal(stuckWake.reason, "not_billable");
+
+    const parked = decideMetering({
+      seat,
+      computerState: "stopped",
+      lastActiveAt: "2026-09-28T00:00:00.000Z",
+      nowMs,
+      rebuildConfirmRequired: true,
+    });
+    assert.equal(parked.action, "none");
+
+    const liveWake = decideMetering({
+      seat,
+      computerState: "waking",
+      lastActiveAt: "2026-09-28T00:30:00.000Z",
+      nowMs,
+      idleMinutes: 180,
+      rebuildConfirmRequired: false,
+    });
+    assert.equal(liveWake.action, "meter");
+    if (liveWake.action === "meter") assert.equal(liveWake.addSeconds, 3600);
+  });
 });

@@ -129,6 +129,7 @@ export async function runComputerMaintenance(nowMs: number = Date.now()): Promis
         lastActiveAt,
         nowMs,
         idleMinutes,
+        rebuildConfirmRequired: computer?.rebuildConfirmRequired === true,
       });
 
       if (decision.action === "meter" || decision.action === "suspend") {

@@ -158,6 +158,21 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
       resume: false,
       restart: true,
     });
+    assert.deepEqual(lifecycleActionsFor("starting"), {
+      pause: false,
+      resume: false,
+      restart: true,
+    });
+    assert.deepEqual(lifecycleActionsFor("stopped"), {
+      pause: false,
+      resume: true,
+      restart: true,
+    });
+    assert.deepEqual(lifecycleActionsFor("paused"), {
+      pause: false,
+      resume: true,
+      restart: true,
+    });
     assert.equal(formatLastActive(null), "never");
     assert.match(REBUILD_WARNING, /delete its files/);
   });
@@ -555,5 +570,72 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
       params(computer.id),
     );
     assert.equal(badDate.status, 400);
+    for (const at of ["1", "0", "2026-02-30", "2026-02-30T00:00:00.000Z"]) {
+      const cursor = Buffer.from(`${at}\tid-1`, "utf8").toString("base64url");
+      const res = await getActivity(
+        activityReq(computer.id, "owner@example.com", `?cursor=${encodeURIComponent(cursor)}`),
+        params(computer.id),
+      );
+      assert.equal(res.status, 400, at);
+    }
+  });
+
+  it("parks a declined rebuild so confirm restart works and the dashboard keeps an action", async () => {
+    const provider = new FakeProvider();
+    const service = new ComputerService(provider, { activityStore: new MemoryActivityStore() });
+    setComputerServiceForTests(service);
+    const computer = await seatWithComputer("owner@example.com", service, "bird-stuck-dash");
+    const issued = await service.issuePairCode(computer.id);
+    const paired = await service.pair(issued.code, {
+      birdId: "bird-stuck-dash",
+      flockId: "flock-owner@example.com",
+    });
+    provider.wake = async () => {
+      throw new ProviderNeedsReplacement("fake");
+    };
+
+    const declined = await postLifecycle(
+      postReq(computer.id, "owner@example.com", { action: "restart" }),
+      params(computer.id),
+    );
+    assert.equal(declined.status, 409);
+    assert.equal((await service.get(computer.id)).state, "stopped");
+
+    await assert.rejects(
+      () => service.exec({ kind: "capability", token: paired.token }, computer.id, { argv: ["echo", "no"] }),
+      (err: unknown) => err instanceof RebuildConfirmRequired,
+    );
+    assert.equal((await service.get(computer.id)).state, "stopped");
+
+    const status = await getLifecycle(getReq(computer.id, "owner@example.com"), params(computer.id));
+    assert.equal(status.status, 200);
+    const statusBody = (await status.json()) as {
+      status?: string;
+      actions?: { pause: boolean; resume: boolean; restart: boolean };
+      needsRebuildConfirm?: boolean;
+    };
+    assert.equal(statusBody.status, "stopped");
+    assert.equal(statusBody.needsRebuildConfirm, true);
+    assert.equal(statusBody.actions?.restart, true);
+    assert.equal(statusBody.actions?.resume, true);
+    assert.ok(statusBody.actions?.pause || statusBody.actions?.resume || statusBody.actions?.restart);
+
+    const resume = await postLifecycle(
+      postReq(computer.id, "owner@example.com", { action: "resume" }),
+      params(computer.id),
+    );
+    assert.equal(resume.status, 409);
+    assert.equal(((await resume.json()) as { code?: string }).code, "REBUILD_CONFIRM_REQUIRED");
+    assert.equal((await service.get(computer.id)).state, "stopped");
+
+    await service.transition(computer.id, "waking");
+    assert.equal((await service.get(computer.id)).state, "waking");
+    const confirmed = await postLifecycle(
+      postReq(computer.id, "owner@example.com", { action: "restart", confirmRebuild: true }),
+      params(computer.id),
+    );
+    assert.equal(confirmed.status, 200);
+    assert.equal((await service.get(computer.id)).state, "ready");
+    assert.equal((await service.get(computer.id)).rebuildConfirmRequired, false);
   });
 });

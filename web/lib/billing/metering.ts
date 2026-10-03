@@ -75,6 +75,7 @@ export function decideMetering(input: {
   lastActiveAt: string | null;
   nowMs: number;
   idleMinutes?: number;
+  rebuildConfirmRequired?: boolean;
 }): MeterDecision {
   const status: SeatStatus = input.seat.status;
   if (status === "canceled") {
@@ -88,13 +89,12 @@ export function decideMetering(input: {
       : { action: "none", reason: "already_stopped" };
   }
 
-  const addSeconds = isBillableState(input.computerState)
-    ? secondsBetween(input.seat.lastMeteredAt, input.nowMs)
-    : 0;
+  const metered = isBillableState(input.computerState) && input.rebuildConfirmRequired !== true;
+  const addSeconds = metered ? secondsBetween(input.seat.lastMeteredAt, input.nowMs) : 0;
   const nextUsed = input.seat.secondsUsed + addSeconds;
   const nextSeat = { ...input.seat, secondsUsed: nextUsed };
 
-  if (shouldSuspendForCap(nextSeat) && isBillableState(input.computerState)) {
+  if (shouldSuspendForCap(nextSeat) && metered) {
     return { action: "suspend", reason: "hours_empty", addSeconds };
   }
   const idleInput: { lastActiveAt: string | null; nowMs: number; idleMinutes?: number } = {
@@ -102,7 +102,7 @@ export function decideMetering(input: {
     nowMs: input.nowMs,
   };
   if (input.idleMinutes !== undefined) idleInput.idleMinutes = input.idleMinutes;
-  if (isBillableState(input.computerState) && shouldSuspendForIdle(idleInput)) {
+  if (metered && shouldSuspendForIdle(idleInput)) {
     return { action: "suspend", reason: "idle", addSeconds };
   }
   if (addSeconds > 0) return { action: "meter", addSeconds };
