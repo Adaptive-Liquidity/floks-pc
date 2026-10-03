@@ -139,6 +139,7 @@ function checkoutEvent(
         customer_email: email,
         customer_details: { email },
         subscription: `sub_${id}`,
+        payment_status: "paid",
         created: 1_700_000_000,
         metadata: { plan: "personal", price_id: "price_personal_test", agent_quantity: "1", ...metadata },
         line_items: { data: [{ price: { id: "price_personal_test" }, quantity: 1 }] },
