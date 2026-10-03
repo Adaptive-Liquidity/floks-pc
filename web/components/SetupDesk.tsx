@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useChrome } from "@/components/Chrome";
 import { PayPills } from "@/components/PayPills";
+import { ComputerManageSection } from "@/components/computer/ComputerManageSection";
+import { dashboardStatusFromDesk } from "@/lib/computers/dashboard";
 import { publicConnector, SETUP_ACTIONS } from "@/lib/config";
 import {
   ACCOUNT_EMPTY,
@@ -83,6 +85,13 @@ export function SetupDesk({
               <a className="ghost wide" href={`/setup/computers/${desk.computerId}`}>
                 Open screen
               </a>
+            ) : null}
+            {desk.computerId ? (
+              <ComputerManageSection
+                computerId={desk.computerId}
+                preview={preview}
+                initialStatus={dashboardStatusFromDesk(desk.state)}
+              />
             ) : null}
             {desk.computerId ? (
               <button

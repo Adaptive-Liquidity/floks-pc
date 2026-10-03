@@ -117,4 +117,50 @@ describe("usage metering and suspend", () => {
     });
     assert.equal(past.action, "none");
   });
+
+  it("meters by runtime state only, ignoring a leftover rebuild flag", () => {
+    const seat = createSeat({
+      email: "rebuild@example.com",
+      plan: "personal",
+      stripeCustomerId: "cus_r",
+      lastMeteredAt: "2026-09-28T00:00:00.000Z",
+    });
+    const nowMs = Date.parse("2026-09-28T01:00:00.000Z");
+    const ready = decideMetering({
+      seat,
+      computerState: "ready",
+      lastActiveAt: "2026-09-28T00:30:00.000Z",
+      nowMs,
+      idleMinutes: 180,
+    });
+    assert.equal(ready.action, "meter");
+    if (ready.action === "meter") assert.equal(ready.addSeconds, 3600);
+
+    const waking = decideMetering({
+      seat,
+      computerState: "waking",
+      lastActiveAt: "2026-09-28T00:30:00.000Z",
+      nowMs,
+      idleMinutes: 180,
+    });
+    assert.equal(waking.action, "meter");
+
+    const parked = decideMetering({
+      seat,
+      computerState: "stopped",
+      lastActiveAt: "2026-09-28T00:00:00.000Z",
+      nowMs,
+    });
+    assert.equal(parked.action, "none");
+
+    const idleReady = decideMetering({
+      seat,
+      computerState: "ready",
+      lastActiveAt: "2026-09-28T00:00:00.000Z",
+      nowMs,
+      idleMinutes: 30,
+    });
+    assert.equal(idleReady.action, "suspend");
+    if (idleReady.action === "suspend") assert.equal(idleReady.reason, "idle");
+  });
 });

@@ -159,6 +159,7 @@ export function computersFromSnapshot(snapshot: ControlPlaneSnapshot): Computer[
     createdAt: new Date(c.createdAt),
     updatedAt: new Date(c.updatedAt),
     lastActiveAt: c.lastActiveAt ? new Date(c.lastActiveAt) : null,
+    rebuildConfirmRequired: c.rebuildConfirmRequired === true,
   }));
 }
 

@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import {
   ComputerService,
   FakeProvider,
+  MemoryActivityStore,
   MemoryControlPlaneStore,
   controlPlaneStoreFromEnv,
   hashPairCode,
 } from "../../../src/lib/computers/index";
+import { PostgresActivityStore } from "../store/activity-pg";
 import type { Computer, ComputerPairCode, ComputerProvider } from "../../../src/lib/computers/index";
 import { graceAllowsAccess } from "../billing/grace";
 import { getSeatStore, type SeatRecord } from "../billing/seats";
@@ -25,10 +27,18 @@ const globalDesk = globalThis as typeof globalThis & {
   __staxRevealInjected?: PairRevealStore | null;
 };
 let memoryPlane: MemoryControlPlaneStore | null = null;
+let memoryActivity: MemoryActivityStore | null = null;
 
 function sharedMemoryPlane(): MemoryControlPlaneStore {
   if (!memoryPlane) memoryPlane = new MemoryControlPlaneStore();
   return memoryPlane;
+}
+
+function sharedActivityStore(): MemoryActivityStore | PostgresActivityStore {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (databaseUrl) return new PostgresActivityStore(databaseUrl);
+  if (!memoryActivity) memoryActivity = new MemoryActivityStore();
+  return memoryActivity;
 }
 
 function getRevealStore(): PairRevealStore {
@@ -64,7 +74,10 @@ export async function getComputerService(): Promise<ComputerService> {
         webControlPlaneStore(process.env, provider.name) ??
         controlPlaneStoreFromEnv(process.env, provider.name) ??
         sharedMemoryPlane();
-      const service = new ComputerService(provider, { store });
+      const service = new ComputerService(provider, {
+        store,
+        activityStore: sharedActivityStore(),
+      });
       service.setWakeAdmission(admitComputerWake);
       await service.hydrate();
       return service;
@@ -78,7 +91,11 @@ export function setPairRevealStoreForTests(store: PairRevealStore | null): void 
   globalDesk.__staxReveal = store;
 }
 
+/** Tests that imported the pre-grace name still hit the single admitComputerWake gate. */
+export const admitWakeForComputer = admitComputerWake;
+
 export function setComputerServiceForTests(service: ComputerService | null): void {
+  if (service) service.setWakeAdmission(admitComputerWake);
   globalDesk.__staxDeskService = service ? Promise.resolve(service) : null;
 }
 
