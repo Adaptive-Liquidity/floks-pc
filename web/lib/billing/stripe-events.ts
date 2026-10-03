@@ -103,7 +103,8 @@ export class PostgresStripeEventStore implements StripeEventStore {
     const client = new pg.default.Client({ connectionString: this.databaseUrl });
     await client.connect();
     try {
-      return await client.query(text, values);
+      const result = await client.query(text, values);
+      return { rows: result.rows as T[] };
     } finally {
       await client.end();
     }
