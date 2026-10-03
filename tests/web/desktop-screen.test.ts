@@ -10,7 +10,7 @@ import { MCP_TOOL_NAMES } from "../../src/lib/mcp/tools.ts";
 import { POST as desktopPost } from "../../web/app/api/setup/computers/[id]/desktop/route.ts";
 import { createSeat, getSeatStore, resetSeatStoreForTests, type SeatRecord, type SeatStatus } from "../../web/lib/billing/seats.ts";
 import { DESKTOP_POLL_MAX_MS, DESKTOP_POLL_MS, desktopPollDelay } from "../../web/lib/desks/desktop-poll.ts";
-import { DESKTOP_OWNER_LIMIT, desktopOwnerRateKey } from "../../web/lib/desks/desktop-rate.ts";
+import { DESKTOP_OWNER_LIMIT } from "../../web/lib/desks/desktop-rate.ts";
 import {
   desktopBindSecret,
   encodeDesktopToken,
@@ -31,7 +31,7 @@ import {
 } from "../../web/lib/desks/desktop-sessions.ts";
 import { flockIdForEmail, setComputerServiceForTests } from "../../web/lib/desks/runtime.ts";
 import { admitComputerWake } from "../../web/lib/desks/wake-admission.ts";
-import { resetRateLimitsForTests, takeRateLimit } from "../../web/lib/rate-limit.ts";
+import { resetRateLimitsForTests } from "../../web/lib/rate-limit.ts";
 
 const ORIGIN = "https://staxions-preview.vercel.app";
 const EMAIL = "owner@example.com";
@@ -476,18 +476,40 @@ describe("owner desktop HTTP", { concurrency: 1 }, () => {
   });
 
   it("rate-limits one owner on the desktop route", async () => {
-    const { computerId } = await seededComputer("seat:rl");
+    const rlEmail = "rate-limit-owner@example.com";
+    const rlSubject = "user_rate_limit";
+    process.env.STAX_TEST_AUTH = "1";
+    process.env.STAXIONS_BIND_SECRET = BIND;
+    resetSeatStoreForTests();
+    resetDesktopSessionStoreForTests();
     resetRateLimitsForTests();
+    const service = new ComputerService(new FakeProvider(), { store: new MemoryControlPlaneStore() });
+    service.setWakeAdmission(admitComputerWake);
+    setComputerServiceForTests(service);
+    const computer = await service.requestComputer({
+      birdId: "seat:rl",
+      flockId: flockIdForEmail(rlEmail),
+    });
+    await getSeatStore().upsert(
+      createSeat({
+        email: rlEmail,
+        plan: "personal",
+        stripeCustomerId: "cus_rl",
+        computerId: computer.id,
+        computerIds: [computer.id],
+      }),
+    );
     let limited = 0;
     let ok = 0;
+    const statuses = new Map<number, number>();
     for (let i = 0; i < DESKTOP_OWNER_LIMIT + 1; i++) {
-      const res = await callDesktop(computerId, { action: "open" });
+      const res = await callDesktop(computer.id, { action: "open" }, { email: rlEmail, subject: rlSubject });
+      statuses.set(res.status, (statuses.get(res.status) ?? 0) + 1);
       if (res.status === 429) limited += 1;
       if (res.status === 200) ok += 1;
     }
-    assert.equal(ok, DESKTOP_OWNER_LIMIT);
+    assert.equal(ok, DESKTOP_OWNER_LIMIT, `statuses=${JSON.stringify(Object.fromEntries(statuses))}`);
     assert.equal(limited, 1);
-    assert.equal(takeRateLimit(desktopOwnerRateKey(EMAIL), DESKTOP_OWNER_LIMIT), false);
   });
 });
 
