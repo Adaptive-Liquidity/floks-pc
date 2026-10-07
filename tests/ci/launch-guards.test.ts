@@ -87,6 +87,7 @@ describe("launch guards", () => {
       "0010_billing_grace.sql",
       "0011_desktop_sessions.sql",
       "0012_computer_activity_events.sql",
+      "0013_mcp_audit_events.sql",
     ]);
   });
 

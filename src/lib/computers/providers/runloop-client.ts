@@ -75,10 +75,12 @@ export type RunloopLaunchParameters =
   | {
       architecture: "x86_64" | "arm64";
       keep_alive_time_seconds: number;
+      network_policy_id: string;
     }
   | {
       architecture: "x86_64" | "arm64";
       lifecycle: { after_idle: { idle_time_seconds: number; on_idle: "suspend" } };
+      network_policy_id: string;
     };
 
 const RunloopOnIdleSchema = z.enum(["suspend"]).optional();
@@ -93,16 +95,43 @@ export function parseRunloopOnIdle(env: NodeJS.ProcessEnv = process.env): "suspe
   return parsed.data;
 }
 
+/**
+ * A Runloop network policy id. `allow_all` is a policy flag, not an id, and is refused.
+ * Missing means the computer does not launch.
+ */
+export function parseRunloopNetworkPolicyId(env: NodeJS.ProcessEnv = process.env): string {
+  const trimmed = env.RUNLOOP_NETWORK_POLICY_ID?.trim() ?? "";
+  if (!trimmed) {
+    throw new Error(
+      "RUNLOOP_NETWORK_POLICY_ID is required. Refusing to launch without an explicit network policy.",
+    );
+  }
+  if (trimmed.toLowerCase() === "allow_all") {
+    throw new Error(
+      'RUNLOOP_NETWORK_POLICY_ID must be a policy id. "allow_all" is not a launch policy.',
+    );
+  }
+  return trimmed;
+}
+
 /** Suspend-on-idle omits keep_alive. Runloop ignores keep_alive when after_idle is set. */
 export function runloopLaunchParameters(
   params: RunloopCreateParams,
   fallbackKeepAlive: number,
-  onIdle?: "suspend",
+  onIdle: "suspend" | undefined,
+  networkPolicyId: string,
 ): RunloopLaunchParameters {
+  const policyId = networkPolicyId.trim();
+  if (!policyId || policyId.toLowerCase() === "allow_all") {
+    throw new Error(
+      "RUNLOOP_NETWORK_POLICY_ID is required. Refusing to launch without an explicit network policy.",
+    );
+  }
   const architecture = params.architecture || DEFAULT_RUNLOOP_ARCH;
   if (onIdle === "suspend") {
     return {
       architecture,
+      network_policy_id: policyId,
       lifecycle: {
         after_idle: {
           idle_time_seconds: params.idleTimeSeconds ?? (params.keepAliveSeconds || fallbackKeepAlive),
@@ -113,6 +142,7 @@ export function runloopLaunchParameters(
   }
   return {
     architecture,
+    network_policy_id: policyId,
     keep_alive_time_seconds: params.keepAliveSeconds || fallbackKeepAlive,
   };
 }

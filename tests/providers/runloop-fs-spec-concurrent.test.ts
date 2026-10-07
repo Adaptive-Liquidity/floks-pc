@@ -131,6 +131,7 @@ describe("concurrent fsWrite unique spec (executing fake box)", () => {
     const plane = await createSdkRunloopPlane({
       apiKey: "not-sent",
       blueprint: "bp",
+      env: { RUNLOOP_NETWORK_POLICY_ID: "np_test_launch" },
       sdk: {
         devbox: {
           createFromBlueprintName: async () => box,

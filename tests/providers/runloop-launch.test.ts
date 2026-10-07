@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   LIVE_KEEP_ALIVE_SECONDS,
+  parseRunloopNetworkPolicyId,
   parseRunloopOnIdle,
   runloopLaunchParameters,
   type RunloopCreateParams,
@@ -20,8 +21,15 @@ const PARAMS: RunloopCreateParams = {
   envVars: {},
 };
 
+const TEST_POLICY_ID = "np_test_launch";
+
+function withPolicy(env: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return { RUNLOOP_NETWORK_POLICY_ID: TEST_POLICY_ID, ...env };
+}
+
 function stubSdk() {
   const bodies: Array<Record<string, unknown>> = [];
+  const resumes: string[] = [];
   const box = {
     id: "devbox-stub",
     getInfo: async () => ({ status: "running", metadata: {} }),
@@ -40,7 +48,9 @@ function stubSdk() {
     },
     suspend: async () => undefined,
     awaitSuspended: async () => undefined,
-    resume: async () => undefined,
+    resume: async () => {
+      resumes.push("resume");
+    },
     awaitRunning: async () => undefined,
     shutdown: async () => undefined,
     keepAlive: async () => undefined,
@@ -48,6 +58,7 @@ function stubSdk() {
   };
   return {
     bodies,
+    resumes,
     sdk: {
       devbox: {
         createFromBlueprintName: async (_blueprint: string, body: Record<string, unknown>) => {
@@ -65,15 +76,15 @@ function stubSdk() {
 }
 
 async function planeFor(env: NodeJS.ProcessEnv) {
-  const { bodies, sdk } = stubSdk();
+  const { bodies, resumes, sdk } = stubSdk();
   const plane = await createSdkRunloopPlane({
     apiKey: "not-sent",
     blueprint: "bp",
     keepAliveSeconds: LIVE_KEEP_ALIVE_SECONDS,
     sdk,
-    env,
+    env: withPolicy(env),
   });
-  return { bodies, plane };
+  return { bodies, resumes, plane };
 }
 
 describe("runloop launch parameters", () => {
@@ -115,7 +126,7 @@ describe("runloop launch parameters", () => {
             apiKey: "not-sent",
             blueprint: "bp",
             sdk: stubSdk().sdk,
-            env: { FLOK_RUNLOOP_ON_IDLE: value },
+            env: withPolicy({ FLOK_RUNLOOP_ON_IDLE: value }),
           }),
         (err: unknown) => {
           const message = err instanceof Error ? err.message : "";
@@ -131,6 +142,8 @@ describe("runloop launch parameters", () => {
     const keep = runloopLaunchParameters(
       { ...PARAMS, keepAliveSeconds: LIVE_KEEP_ALIVE_SECONDS },
       LIVE_KEEP_ALIVE_SECONDS,
+      undefined,
+      TEST_POLICY_ID,
     );
     assert.equal("keep_alive_time_seconds" in keep && keep.keep_alive_time_seconds, 900);
   });
@@ -143,7 +156,7 @@ describe("runloop launch parameters", () => {
       return true;
     }) as typeof process.stderr.write;
     try {
-      const keep = await planeFor({});
+      const keep = await planeFor(withPolicy());
       await keep.plane.create(PARAMS);
       await keep.plane.restore("snap-log", PARAMS);
       const suspended = await planeFor({ FLOK_RUNLOOP_ON_IDLE: "suspend" });
@@ -166,5 +179,38 @@ describe("runloop launch parameters", () => {
     assert.equal(text.includes("not-sent"), false);
     assert.equal(text.includes("bird-launch"), false);
     assert.equal(text.includes("devbox"), false);
+    assert.equal(text.includes(TEST_POLICY_ID), false);
+  });
+
+  it("sends a network policy id on create and restore, and refuses allow_all", async () => {
+    const { bodies, resumes, plane } = await planeFor({});
+    await plane.create(PARAMS);
+    await plane.restore("snap-policy", PARAMS);
+    const woken = await plane.get("devbox-stub");
+    await woken.resume();
+    assert.equal(bodies.length, 2);
+    assert.deepEqual(resumes, ["resume"]);
+    for (const body of bodies) {
+      const launch = body.launch_parameters as Record<string, unknown>;
+      assert.equal(launch.network_policy_id, TEST_POLICY_ID);
+      assert.equal("allow_all" in launch, false);
+      assert.equal(JSON.stringify(launch).includes("allow_all"), false);
+    }
+    assert.equal(parseRunloopNetworkPolicyId(withPolicy()), TEST_POLICY_ID);
+    for (const value of ["", "   ", "allow_all", "ALLOW_ALL"]) {
+      const { bodies: untouched, sdk } = stubSdk();
+      await assert.rejects(
+        () =>
+          createSdkRunloopPlane({
+            apiKey: "not-sent",
+            blueprint: "bp",
+            sdk,
+            env: { RUNLOOP_NETWORK_POLICY_ID: value },
+          }),
+        /explicit network policy|not a launch policy/,
+      );
+      assert.equal(untouched.length, 0);
+    }
+    assert.throws(() => parseRunloopNetworkPolicyId({}), /RUNLOOP_NETWORK_POLICY_ID is required/);
   });
 });

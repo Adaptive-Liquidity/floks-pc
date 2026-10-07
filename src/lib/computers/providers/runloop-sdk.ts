@@ -46,6 +46,7 @@ import {
   RUNLOOP_WORKSPACE_ROOT,
   isIdempotentShutdownError,
   logRunloopLaunch,
+  parseRunloopNetworkPolicyId,
   runloopLaunchParameters,
   parseRunloopOnIdle,
   type RunloopControlPlane,
@@ -212,13 +213,16 @@ export async function createSdkRunloopPlane(opts: {
   sdk?: DevboxLauncher;
   env?: NodeJS.ProcessEnv;
 }): Promise<RunloopControlPlane> {
-  const onIdle = parseRunloopOnIdle(opts.env ?? process.env);
+  const env = opts.env ?? process.env;
+  const onIdle = parseRunloopOnIdle(env);
+  const networkPolicyId = parseRunloopNetworkPolicyId(env);
   const sdk = opts.sdk ?? (new RunloopSDK({ bearerToken: opts.apiKey }) as unknown as DevboxLauncher);
   return new SdkRunloopControlPlane(
     sdk,
     opts.blueprint,
     opts.keepAliveSeconds ?? LIVE_KEEP_ALIVE_SECONDS,
     onIdle,
+    networkPolicyId,
   );
 }
 
@@ -227,19 +231,25 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
     private readonly sdk: DevboxLauncher,
     private readonly blueprint: string,
     private readonly keepAliveSeconds: number,
-    private readonly onIdle?: "suspend",
+    private readonly onIdle: "suspend" | undefined,
+    private readonly networkPolicyId: string,
   ) {}
 
   async create(params: RunloopCreateParams): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
-    const launch = runloopLaunchParameters(params, this.keepAliveSeconds, this.onIdle);
+    const launch = runloopLaunchParameters(
+      params,
+      this.keepAliveSeconds,
+      this.onIdle,
+      this.networkPolicyId,
+    );
     logRunloopLaunch("create", launch);
     const created = (await this.sdk.devbox.createFromBlueprintName(this.blueprint, {
       name: `flok-${params.birdId}`.slice(0, 48),
       metadata: params.labels,
       launch_parameters: launch,
     })) as unknown as SdkDevbox;
-    const session = new SdkRunloopDevbox(created, params.birdId, params.flockId);
+    const session = new SdkRunloopDevbox(created, params.birdId, params.flockId, this.networkPolicyId);
     await session.ensureWorkspace();
     return session;
   }
@@ -260,7 +270,7 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
     } catch {
       // metadata is diagnostic only
     }
-    const session = new SdkRunloopDevbox(box, birdId, flockId);
+    const session = new SdkRunloopDevbox(box, birdId, flockId, this.networkPolicyId);
     if (mapRunloopDevboxStatus(reported) === "running") {
       await session.ensureWorkspace();
     }
@@ -272,14 +282,19 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
     params: RunloopCreateParams,
   ): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
-    const launch = runloopLaunchParameters(params, this.keepAliveSeconds, this.onIdle);
+    const launch = runloopLaunchParameters(
+      params,
+      this.keepAliveSeconds,
+      this.onIdle,
+      this.networkPolicyId,
+    );
     logRunloopLaunch("restore", launch);
     const created = (await this.sdk.devbox.createFromSnapshot(snapshotRef, {
       name: `flok-restore-${params.birdId}`.slice(0, 48),
       metadata: params.labels,
       launch_parameters: launch,
     })) as unknown as SdkDevbox;
-    const session = new SdkRunloopDevbox(created, params.birdId, params.flockId);
+    const session = new SdkRunloopDevbox(created, params.birdId, params.flockId, this.networkPolicyId);
     await session.ensureWorkspace();
     return session;
   }
@@ -299,6 +314,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     private readonly box: SdkDevbox,
     birdId: string,
     flockId: string,
+    private readonly networkPolicyId: string,
   ) {
     this.id = box.id;
     this.birdId = birdId;
@@ -327,8 +343,16 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   }
 
   async resume(): Promise<void> {
+    if (!this.networkPolicyId || this.networkPolicyId.toLowerCase() === "allow_all") {
+      throw new Error(
+        "RUNLOOP_NETWORK_POLICY_ID is required. Refusing to wake without an explicit network policy.",
+      );
+    }
     this.interactiveStackUp = false;
     this.botUserReady = false;
+    // Runloop SDK 1.28 resume() takes no launch body, so the policy id cannot be
+    // sent again here. Create and snapshot restore already sent it. Wake still
+    // refuses to run when that id was never configured.
     await this.box.resume();
     await this.box.awaitRunning();
   }

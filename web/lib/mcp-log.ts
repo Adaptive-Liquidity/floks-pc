@@ -1,13 +1,27 @@
 import { randomBytes } from "node:crypto";
 import type { McpLogger } from "../../src/lib/mcp/log";
+import { mcpAuditRow, postgresMcpAuditSink, type McpAuditSink } from "./mcp-audit";
 
 /** One id per process boot. Safe to log. */
 export const MCP_INSTANCE_ID = randomBytes(4).toString("hex");
 
-/** JSON logs for Preview and local runs. Production stays quiet. */
-export function vercelMcpLogger(env: NodeJS.ProcessEnv = process.env): McpLogger {
+/**
+ * Preview and local runs write JSON to the console.
+ * Production writes one metadata row. It does not write command output.
+ */
+export function vercelMcpLogger(
+  env: NodeJS.ProcessEnv = process.env,
+  sink: McpAuditSink = postgresMcpAuditSink(env),
+): McpLogger {
   if (env.VERCEL_ENV === "production") {
-    return { info() {}, warn() {}, error() {} };
+    const write = (level: "info" | "warn" | "error", event: string, fields?: Record<string, unknown>) => {
+      void sink(mcpAuditRow(level, event, fields));
+    };
+    return {
+      info: (event, fields) => write("info", event, fields),
+      warn: (event, fields) => write("warn", event, fields),
+      error: (event, fields) => write("error", event, fields),
+    };
   }
   const write = (level: "info" | "warn" | "error", event: string, fields?: Record<string, unknown>) => {
     const line = JSON.stringify({ event, ...(fields ?? {}) });
