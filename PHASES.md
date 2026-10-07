@@ -37,7 +37,7 @@ Runloop Devbox is **provider v1**, not the product name.
 
 **Gate:** A real Grok Bot calls `computer_observe({ include_accessibility: true })` and receives `accessibility_summary.source === "cdp"` with non-empty nodes from a real Runloop Agent Computer.
 
-**Evidence:** Pair `bird-local` / `flock-local`. Observe returned `source: "cdp"` with 6 nodes; root `RootWebArea` / `FLOKS C3B fixture` with bounds. No screenshot required. No `open_url` required (observe starts Chrome when CDP is down). `capabilities().accessibility` stays `false`.
+**Evidence:** Pair `bird-local` / `flock-local`. Observe returned `source: "cdp"` with 6 nodes; root `RootWebArea` / `FLOKS C3B fixture` with bounds. No screenshot required. No `open_url` required (observe starts Chrome when CDP is down). `capabilities().accessibility` stays `false`. The C3B HTML fixture is test-only. Customer ensures do not write it; a visible browser starts at about:blank. Provision and restore still fail closed if Chrome does not start. Wake and the health probe log `flok-browser ensure failed` and continue; the next observe or act retries strictly.
 
 ---
 
@@ -337,7 +337,7 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
 ### Implement
 - Reproducible interactive Blueprint under `blueprints/runloop-interactive/` based on `FROM runloop:runloop/universal-ubuntu-24.04-x86_64-dnd`
 - Graphical stack as non-root `flok-ui`; Chrome without `--no-sandbox`
-- Persistent profile `/home/user/flok/.browser/profile`
+- Persistent profile `/home/flok-ui/.flok-browser/profile`
 - `ensureInteractiveStack()` after provision, restore, and resume (disk survives suspend; RAM/processes do not)
 - `observe()` screenshot from `:99`
 - Bounded `act()`: click_coordinates, type, key, scroll, open_url, wait; `click_element` fail-closed
@@ -364,14 +364,14 @@ Live tests are **opt-in only** (`FLOK_LIVE_RUNLOOP_TEST=1`, manual `runloop-c3` 
   - Live case `one Devbox: stack, fixture, observe, input, profile, suspend/resume, local noVNC, cleanup` **64.1s, not skipped**
   - Chrome 151.0.7922.173; blueprint default `flok-runloop-interactive`
 - Live proofs encoded in `tests/live/runloop.c3b.live.test.ts` (all asserted; suite would fail otherwise):
-  - Chrome readiness / profile initialization (`pollUntilChromeReady`, `requireProfile: true`; `filesystem.list` of `/home/user/flok/.browser/profile` non-empty)
+  - Chrome readiness / profile initialization (`pollUntilChromeReady`, `requireProfile: true`; `filesystem.list` of `/home/flok-ui/.flok-browser/profile` non-empty)
   - Real screenshot (`observe` 1440×900 PNG IHDR; no accessibility fabrications)
   - `click_coordinates` / `type` / `key` / `scroll` all `success: true`
   - Localhost noVNC (`http://127.0.0.1:6080/`)
   - No public VNC (ports 5900 and 6080 listen on loopback only)
   - Suspend / resume: profile marker `c3b-marker` survived disk suspend
   - Graphical stack recovery: Xvfb `:99` + Openbox + Chrome-ready after resume; screenshot after resume
-  - Profile persistence: Chrome `--user-data-dir=/home/user/flok/.browser/profile` without `--no-sandbox`
+  - Profile persistence: Chrome `--user-data-dir=/home/flok-ui/.flok-browser/profile` without `--no-sandbox`
   - Devbox cleanup: `finally` `destroy` (no `destroy failed` log)
 - Isolation: zero writes under Floks-main
 - Nexus / graph flags remain false
@@ -559,7 +559,7 @@ A real Grok Bot calls `computer_observe({ include_accessibility: true })` and re
 **Evidence**
 - Merge: [Adaptive-Liquidity/floks-pc#17](https://github.com/Adaptive-Liquidity/floks-pc/pull/17) → `bda72e00b67d2667afcdc9fbe1138b6483fb6863`
 - Pair as `bird-local` / `flock-local`
-- Observe returned `source: "cdp"` with 6 nodes; root `RootWebArea` / `FLOKS C3B fixture` with bounds
+- Observe returned `source: "cdp"` with 6 nodes; root `RootWebArea` / `FLOKS C3B fixture` with bounds. That fixture is test-only and is not written onto customer computers.
 - No screenshot required; no `open_url` required (observe may start Chrome when CDP is down)
 - Exactly eight MCP tools; no new tools
 - CDP loopback-only (`127.0.0.1:9222`); no `--no-sandbox`; no `0.0.0.0`

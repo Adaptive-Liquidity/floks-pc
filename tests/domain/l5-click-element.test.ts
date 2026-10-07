@@ -96,6 +96,29 @@ describe("L5 click_element", () => {
     if (!guessed.ok) assert.equal(guessed.code, "CLICK_ELEMENT_UNMAPPED");
   });
 
+  it("adds a stubbed +0,+30 viewport origin to the screen click", () => {
+    const cache = axCacheFromObservation(
+      {
+        screenWidth: 1440,
+        screenHeight: 900,
+        accessibilitySummary: {
+          nodes: [{ id: "link", role: "link", name: "More information...", bounds: { x: 10, y: 10, width: 20, height: 20 } }],
+          viewportOrigin: { x: 0, y: 30 },
+        },
+      },
+      1_000,
+    );
+    assert.ok(cache);
+    assert.deepEqual(cache?.viewportOrigin, { x: 0, y: 30 });
+    const hit = rewriteClickElement({ type: "click_element", elementId: "link" }, cache, 1_000);
+    assert.equal(hit.ok, true);
+    if (hit.ok) {
+      assert.equal(hit.action.type, "click_coordinates");
+      assert.equal(hit.action.x, 20);
+      assert.equal(hit.action.y, 50);
+    }
+  });
+
   it("ComputerService rewrites click_element after observe AX and never forwards elementId", async () => {
     const provider = new FakeProvider();
     const service = new ComputerService(provider);

@@ -9,7 +9,6 @@ import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
 import {
   ComputerService,
-  ComputerUseNotAvailable,
   FLAGS,
   FakeProvider,
   MemoryRunloopControlPlane,
@@ -101,7 +100,9 @@ describe("C5 MCP gateway", () => {
     assert.ok(exec);
     const execSchema = exec.inputSchema;
     const required = execSchema.required as string[];
-    assert.equal(required.includes("capability_token"), true);
+    assert.equal(required.includes("capability_token"), false);
+    assert.equal(required.includes("computer_handle"), false);
+    assert.equal(required.includes("argv"), true);
     const props = execSchema.properties as Record<string, Record<string, unknown>>;
     assert.equal(props.argv.maxItems, 64);
     const env = props.env as Record<string, unknown>;
@@ -164,7 +165,7 @@ describe("C5 MCP gateway", () => {
       arguments: { capability_token: noema.token, computer_handle: noema.handle },
     });
     assert.equal((res.result as { isError: boolean }).isError, false);
-    assert.equal(payload(res).state, "ready");
+    assert.equal(payload(res).state, "running");
     assert.equal("providerDetail" in payload(res), false);
     assert.equal("provider_ref" in payload(res), false);
   });
@@ -518,12 +519,18 @@ describe("C5 MCP gateway", () => {
     assert.notEqual(summary.source, "cdp");
   });
 
-  it("computer_observe include_accessibility fail-closes without guest Chrome CDP", async () => {
+  it("computer_observe returns a screenshot when guest Chrome CDP is not ready", async () => {
+    let now = 0;
     const runloop = new RunloopProvider({
       client: new MemoryRunloopControlPlane(),
       blueprint: "memory-linux-vm",
     });
-    const svc = new ComputerService(runloop);
+    const svc = new ComputerService(runloop, {
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+    });
     const gw = new McpGateway(svc, { logger: new RecordingLogger() });
     const computer = await svc.requestComputer({ birdId: "runloop-ax", flockId: FLOCK });
     const issued = await svc.issuePairCode(computer.id);
@@ -560,13 +567,10 @@ describe("C5 MCP gateway", () => {
     );
     const env = observed as Record<string, unknown>;
     const result = env.result as { isError: boolean; structuredContent: Record<string, unknown> };
-    assert.equal(result.isError, true);
-    assert.equal(result.structuredContent.code, new ComputerUseNotAvailable().code);
-    assert.match(
-      String(result.structuredContent.message),
-      /guest Chrome CDP is not available on the memory plane/,
-    );
-    assert.equal("accessibility_summary" in result.structuredContent, false);
+    assert.equal(result.isError, false);
+    assert.equal(result.structuredContent.has_screenshot, true);
+    assert.equal(result.structuredContent.accessibility_pending, true);
+    assert.equal(result.structuredContent.accessibility_summary, undefined);
   });
 
   it("computer_act fail-closes click_element and still omits fake AX after open_url", async () => {
@@ -727,7 +731,7 @@ describe("C5 MCP gateway", () => {
         }),
       });
       const stJson = (await st.json()) as { result: { isError: boolean; structuredContent: { state: string } } };
-      assert.equal(stJson.result.structuredContent.state, "ready");
+      assert.equal(stJson.result.structuredContent.state, "running");
 
       const oversized = await fetch(base, {
         method: "POST",
@@ -1073,11 +1077,13 @@ describe("C5 MCP gateway", () => {
       assert.equal(res.status, 200);
       assert.equal(res.headers.get("mcp-protocol-version"), MCP_PREFERRED_PROTOCOL);
       const json = (await res.json()) as {
-        result: { protocolVersion: string };
-        _meta: { "io.modelcontextprotocol/protocolVersion": string };
+        result: {
+          protocolVersion: string;
+          _meta: { "io.modelcontextprotocol/protocolVersion": string };
+        };
       };
       assert.equal(json.result.protocolVersion, MCP_PREFERRED_PROTOCOL);
-      assert.equal(json._meta["io.modelcontextprotocol/protocolVersion"], MCP_PREFERRED_PROTOCOL);
+      assert.equal(json.result._meta["io.modelcontextprotocol/protocolVersion"], MCP_PREFERRED_PROTOCOL);
 
       const listed = await fetch(base, {
         method: "POST",
@@ -1140,11 +1146,11 @@ describe("C5 MCP gateway", () => {
       const mixedJson = (await mixed.json()) as Array<{
         id?: number;
         error?: unknown;
-        _meta?: { "io.modelcontextprotocol/protocolVersion"?: string };
+        result?: { _meta?: { "io.modelcontextprotocol/protocolVersion"?: string } };
       }>;
       assert.equal(Array.isArray(mixedJson), true);
       const ping = mixedJson.find((item) => item.id === 2);
-      assert.equal(ping?._meta?.["io.modelcontextprotocol/protocolVersion"], legacy);
+      assert.equal(ping?.result?._meta?.["io.modelcontextprotocol/protocolVersion"], legacy);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
     }

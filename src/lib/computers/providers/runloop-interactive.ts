@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { posix as pathPosix } from "node:path";
 import type { Action } from "../types.js";
 import { RUNLOOP_WORKSPACE_ROOT } from "./runloop-client.js";
+import { CONTROL_PLANE_DIR, ENSURE_UI_BROWSER_PY, UI_BROWSER_DIR } from "./runloop-bot-user.js";
 import { CDP_DEBUG_ADDRESS, CDP_DEBUG_PORT } from "./runloop-cdp.js";
 
 export {
@@ -30,11 +31,11 @@ export const FLOK_DISPLAY = ":99";
 export const DISPLAY_WIDTH = 1440;
 export const DISPLAY_HEIGHT = 900;
 export const DISPLAY_DEPTH = 24;
-export const BROWSER_PROFILE_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser/profile`;
-export const INTERACTIVE_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.flok`;
-export const FIXTURE_PATH = `${INTERACTIVE_DIR}/fixture.html`;
-/** Unique PNG path under the flok-ui-writable browser dir (not root-locked .flok). */
-export const OBS_SHOT_DIR = `${RUNLOOP_WORKSPACE_ROOT}/.browser`;
+export const BROWSER_PROFILE_DIR = `${UI_BROWSER_DIR}/profile`;
+/** Root-owned helpers. Not in the customer workspace file view. */
+export const INTERACTIVE_DIR = CONTROL_PLANE_DIR;
+/** Unique PNG path under the flok-ui-writable browser dir (not root-locked helpers). */
+export const OBS_SHOT_DIR = UI_BROWSER_DIR;
 export function uniqueObsShotPath(): string {
   return `${OBS_SHOT_DIR}/obs-${randomUUID()}.png`;
 }
@@ -199,6 +200,7 @@ export function argvAsUiUser(argv: string[]): string[] {
     `DISPLAY=${FLOK_DISPLAY}`,
     `HOME=${FLOK_UI_HOME}`,
     `XDG_RUNTIME_DIR=${FLOK_UI_XDG_RUNTIME}`,
+    `DBUS_SESSION_BUS_ADDRESS=unix:path=${FLOK_UI_XDG_RUNTIME}/bus`,
     ...argv,
   ];
 }
@@ -213,6 +215,11 @@ export function chromeLaunchArgv(url: string): string[] {
     `--app=${url}`,
     "--no-first-run",
     "--disable-sync",
+    // The guest network drops Google. Without these, Chrome waits on that
+    // traffic and never opens the debugging port.
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--disable-breakpad",
     `--remote-debugging-port=${CDP_DEBUG_PORT}`,
     `--remote-debugging-address=${CDP_DEBUG_ADDRESS}`,
     // Node's WebSocket sends no Origin; Chrome 128+ closes the upgrade otherwise.
@@ -224,7 +231,7 @@ export function chromeLaunchArgv(url: string): string[] {
 /** Guest-local Chrome startup log. Not an audit artifact; truncated in diagnostics. */
 export const CHROME_LOG_PATH = "/tmp/flok-chrome.log";
 export const CHROME_HOME_FALLBACK_DIR = `${FLOK_UI_HOME}/.config/google-chrome`;
-export const CHROME_READY_TIMEOUT_MS = 20_000;
+export const CHROME_READY_TIMEOUT_MS = 45_000;
 export const CHROME_READY_POLL_MS = 500;
 const CHROME_LOG_TAIL_CHARS = 4096;
 const PROFILE_TEST_MARKERS = new Set(["c3b-marker", "last-url", "launched"]);
@@ -529,8 +536,8 @@ export const CHROME_READY_PROBE_PY = [
   "import json,os,subprocess,pathlib",
   "UID=1500",
   "USER='flok-ui'",
-  "PROFILE='/home/user/flok/.browser/profile'",
-  "BROWSER='/home/user/flok/.browser'",
+  "PROFILE='/home/flok-ui/.flok-browser/profile'",
+  "BROWSER='/home/flok-ui/.flok-browser'",
   "WS='/home/user/flok'",
   "LOG='/tmp/flok-chrome.log'",
   "FALLBACK='/home/flok-ui/.config/google-chrome'",
@@ -607,7 +614,7 @@ export const CHROME_READY_PROBE_PY = [
   "def userns():",
   "    try: return pathlib.Path('/proc/sys/kernel/unprivileged_userns_clone').read_text().strip()",
   "    except Exception: return None",
-  "cmd=pgrep('google-chrome')+pgrep('--user-data-dir=/home/user/flok/.browser/profile')",
+  "cmd=pgrep('google-chrome')+pgrep('--user-data-dir=/home/flok-ui/.flok-browser/profile')",
   "seen=set(); cmdlines=[]",
   "for ln in cmd:",
   "    if ln not in seen: seen.add(ln); cmdlines.append(ln)",
@@ -651,7 +658,7 @@ export DISPLAY="\${FLOK_DISPLAY:-:99}"
 WIDTH="\${FLOK_DISPLAY_WIDTH:-1440}"
 HEIGHT="\${FLOK_DISPLAY_HEIGHT:-900}"
 DEPTH="\${FLOK_DISPLAY_DEPTH:-24}"
-PROFILE="\${FLOK_BROWSER_PROFILE:-/home/user/flok/.browser/profile}"
+PROFILE="\${FLOK_BROWSER_PROFILE:-/home/flok-ui/.flok-browser/profile}"
 RUNDIR="/tmp/flok-interactive"
 NOVNC_PORT="\${FLOK_NOVNC_PORT:-6080}"
 UI_USER="\${FLOK_UI_USER:-${FLOK_UI_USER}}"
@@ -659,7 +666,13 @@ UI_HOME="\${FLOK_UI_HOME:-${FLOK_UI_HOME}}"
 UI_UID="\${FLOK_UI_UID:-${FLOK_UI_UID}}"
 XDG_RUNTIME_DIR="/run/user/\${UI_UID}"
 
-mkdir -p "$RUNDIR" "$PROFILE" /home/user/flok/.flok /home/user/flok/.browser
+mkdir -p "$RUNDIR"
+export FLOK_UI_HOME="$UI_HOME"
+export FLOK_UI_UID="$UI_UID"
+export FLOK_BOT_HOME="/home/user/flok"
+python3 - <<'PY'
+${ENSURE_UI_BROWSER_PY}
+PY
 
 if ! command -v Xvfb >/dev/null 2>&1; then
   echo "ok missing-xvfb profile=$PROFILE"
@@ -676,33 +689,44 @@ if ! command -v runuser >/dev/null 2>&1; then
 fi
 
 mkdir -p "$XDG_RUNTIME_DIR" /tmp/.X11-unix
-chown "$UI_USER:$UI_USER" "$XDG_RUNTIME_DIR"
+chown -h "$UI_USER:$UI_USER" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 chmod 1777 /tmp/.X11-unix || true
-chown "$UI_USER:$UI_USER" "$RUNDIR" || true
-# Root-executed helpers live in .flok; never hand that directory to flok-ui.
-chown root:root /home/user/flok/.flok
-chmod 755 /home/user/flok/.flok
-if [ -f /home/user/flok/.flok/execvp.py ]; then
-  chown root:root /home/user/flok/.flok/execvp.py
-  chmod 755 /home/user/flok/.flok/execvp.py
+chown -h "$UI_USER:$UI_USER" "$RUNDIR" || true
+# Chrome stalls on a missing bus and never opens its debugging port.
+if [ ! -S /run/dbus/system_bus_socket ] && command -v dbus-daemon >/dev/null 2>&1; then
+  mkdir -p /run/dbus
+  dbus-daemon --system --fork || true
 fi
-if [ -f /home/user/flok/.flok/ensure-interactive.sh ]; then
-  chown root:root /home/user/flok/.flok/ensure-interactive.sh
-  chmod 755 /home/user/flok/.flok/ensure-interactive.sh
+SESSION_BUS="$XDG_RUNTIME_DIR/bus"
+if [ ! -S "$SESSION_BUS" ] && command -v dbus-daemon >/dev/null 2>&1; then
+  runuser -u "$UI_USER" -- dbus-daemon --session --address="unix:path=$SESSION_BUS" --nofork --nopidfile >>/tmp/flok-dbus.log 2>&1 &
+  echo $! > "$RUNDIR/dbus.pid"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -S "$SESSION_BUS" ] && break
+    sleep 0.1
+  done
 fi
-if [ -f /home/user/flok/.flok/fixture.html ]; then
-  chown root:root /home/user/flok/.flok/fixture.html
-  chmod 644 /home/user/flok/.flok/fixture.html
+# Control-plane helpers live in /var/lib/flok (root 0700), never the customer workspace.
+CTRL="\${FLOK_CONTROL_PLANE_DIR:-/var/lib/flok}"
+mkdir -p "$CTRL"
+if [ -L "$CTRL" ]; then
+  echo "refusing symlink $CTRL" >&2
+  exit 1
 fi
-if [ -f /home/user/flok/.flok/cdp-ax.mjs ]; then
-  chown root:root /home/user/flok/.flok/cdp-ax.mjs
-  chmod 755 /home/user/flok/.flok/cdp-ax.mjs
-fi
-chown -R "$UI_USER:$UI_USER" /home/user/flok/.browser
-chmod 700 /home/user/flok/.browser
-chmod 700 "$PROFILE" || true
-chmod 775 /home/user/flok || true
+chown -h root:root "$CTRL"
+chmod 0700 "$CTRL"
+for helper in execvp.py ensure-interactive.sh ensure-bot-user.sh cdp-ax.mjs cdp-nav.mjs; do
+  if [ -f "$CTRL/$helper" ] && [ ! -L "$CTRL/$helper" ]; then
+    chown -h root:root "$CTRL/$helper"
+    chmod 0700 "$CTRL/$helper"
+  fi
+done
+rm -rf /home/user/flok/.flok
+python3 - <<'PY'
+${ENSURE_UI_BROWSER_PY}
+PY
+chmod 1775 /home/user/flok || true
 if [ -L /tmp/flok-chrome.log ] || { [ -e /tmp/flok-chrome.log ] && [ ! -f /tmp/flok-chrome.log ]; }; then
   echo "refusing to use /tmp/flok-chrome.log: not a regular file" >&2
   ls -ld /tmp/flok-chrome.log >&2
@@ -717,7 +741,7 @@ chown --no-dereference "$UI_USER:$UI_USER" /tmp/flok-chrome.log
 chmod 640 /tmp/flok-chrome.log
 if ! runuser -u "$UI_USER" -- test -w "$PROFILE"; then
   echo "profile not writable by $UI_USER: $PROFILE" >&2
-  ls -ld "$PROFILE" /home/user/flok/.browser /home/user/flok >&2
+  ls -ld "$PROFILE" "$UI_HOME/.flok-browser" "$UI_HOME" /home/user/flok >&2
   exit 1
 fi
 
@@ -744,6 +768,7 @@ start_ui() {
       DISPLAY="$DISPLAY" \\
       HOME="$UI_HOME" \\
       XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \\
+      DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus" \\
       sh -c 'log="$1"; shift; nohup "$@" >>"$log" 2>&1 & echo $!' sh "$logfile" "$@"
   )"
   echo "$pid" > "$pidfile"
@@ -762,6 +787,9 @@ fi
 if ! alive "$RUNDIR/openbox.pid"; then
   start_ui openbox openbox
 fi
+if command -v xsetroot >/dev/null 2>&1; then
+  runuser -u "$UI_USER" -- env DISPLAY="$DISPLAY" HOME="$UI_HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus" xsetroot -solid '#1f2933' || true
+fi
 if command -v x11vnc >/dev/null 2>&1 && ! alive "$RUNDIR/x11vnc.pid"; then
   start_ui x11vnc x11vnc -display "$DISPLAY" -localhost -nopw -forever -shared -rfbport 5900
 fi
@@ -774,31 +802,12 @@ if command -v websockify >/dev/null 2>&1 && ! alive "$RUNDIR/novnc.pid"; then
     start_ui novnc websockify --web "$WEB" "127.0.0.1:\${NOVNC_PORT}" 127.0.0.1:5900
   fi
 fi
+if [ -L /run/flok-cdp ]; then
+  echo "refusing symlink /run/flok-cdp" >&2
+  exit 1
+fi
+mkdir -p /run/flok-cdp
+chown -h root:root /run/flok-cdp
+chmod 0700 /run/flok-cdp
 echo "ok display=$DISPLAY profile=$PROFILE ui=$UI_USER"
-`;
-
-export const FIXTURE_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <title>FLOKS C3B fixture</title>
-  <style>
-    html, body { margin: 0; width: 1440px; height: 900px; background: #102a43; color: #fff; font: 24px sans-serif; }
-    #target { position: absolute; left: 160px; top: 80px; width: 400px; height: 200px; background: #2cb1bc; }
-    #out { position: absolute; left: 160px; top: 300px; }
-  </style>
-</head>
-<body>
-  <div id="target">click-me</div>
-  <div id="out">idle</div>
-  <script>
-    document.getElementById('target').addEventListener('click', function () {
-      document.getElementById('out').textContent = 'clicked';
-    });
-    document.addEventListener('keydown', function (e) {
-      document.getElementById('out').textContent = 'key:' + e.key;
-    });
-  </script>
-</body>
-</html>
 `;

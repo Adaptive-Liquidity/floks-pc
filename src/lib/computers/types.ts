@@ -33,16 +33,32 @@ export const LEGAL_TRANSITIONS: Readonly<Record<ComputerState, readonly Computer
   running: ["paused", "stopped", "checkpointing", "recovering", "error", "deleting"],
   paused: ["running", "waking", "stopped", "checkpointing", "recovering", "error", "deleting"],
   stopped: ["running", "ready", "waking", "recovering", "error", "deleting"],
-  waking: ["ready", "running", "recovery_failed", "error", "deleting"],
+  waking: ["ready", "running", "stopped", "recovery_failed", "error", "deleting"], // stopped: park a refused rebuild
   checkpointing: ["ready", "running", "paused", "error", "deleting"],
   recovering: ["ready", "restore_failed", "recovery_failed", "cleanup_needed", "error", "deleting"],
   restore_failed: ["recovering", "cleanup_needed", "deleting"],
-  recovery_failed: ["recovering", "waking", "cleanup_needed", "deleting"],
+  recovery_failed: ["recovering", "waking", "stopped", "cleanup_needed", "deleting"],
   cleanup_needed: ["deleting", "recovering"],
   error: ["recovering", "deleting", "cleanup_needed"],
   deleting: ["deleted", "cleanup_needed"],
   deleted: [],
 } as const;
+
+/** Owner restart is allowed only from these states. */
+export const RESTARTABLE_STATES = [
+  "ready",
+  "running",
+  "paused",
+  "stopped",
+  "waking",
+  "recovery_failed",
+] as const satisfies readonly ComputerState[];
+
+export type RestartableState = (typeof RESTARTABLE_STATES)[number];
+
+export function isRestartableState(state: ComputerState): state is RestartableState {
+  return (RESTARTABLE_STATES as readonly ComputerState[]).includes(state);
+}
 
 export type OsType = "linux" | "windows";
 
@@ -76,10 +92,12 @@ export interface SharedAccountAuth {
 
 /**
  * Auth presented to ComputerService operation methods.
- * Only `{ kind: "capability", token }` can authorize. Shared MCP auth cannot.
+ * `capability` is a raw pair-code secret. `bound` is an OAuth row's stored
+ * capability id plus the signed-in flock. Shared MCP auth cannot authorize.
  */
 export type ComputerOperationAuth =
   | { kind: "capability"; token: string }
+  | { kind: "bound"; capabilityId: string; flockId: string }
   | { kind: "shared"; accountId: string }
   | { kind: "none" };
 
@@ -97,6 +115,23 @@ export interface PairResult {
   flockId: string;
   scopes: CapabilityScope[];
   expiresAt: Date;
+}
+
+export type BotClaimStatus = "pending" | "approved" | "redeemed" | "denied";
+
+/** Human-approved claim that becomes one bot's computer key. The raw code is never stored. */
+export interface BotClaim {
+  id: string;
+  secretDigest: string;
+  flockId: string;
+  subject: string;
+  botLabel: string | null;
+  computerId: string | null;
+  checkoutNonce: string | null;
+  status: BotClaimStatus;
+  createdAt: Date;
+  expiresAt: Date;
+  attemptCount: number;
 }
 
 export interface IssuedPairCode {
@@ -142,6 +177,8 @@ export interface Computer {
   updatedAt: Date;
   latestCheckpoint: ComputerLatestCheckpoint | null;
   recoveryNote: string | null;
+  /** Durable: owner must confirm a wipe-rebuild. Survives Vercel instances. */
+  rebuildConfirmRequired: boolean;
 }
 
 /** Durable checkpoint pointer. No workspace bytes, tokens, or API keys. */
@@ -253,6 +290,8 @@ export interface ComputerCapability {
   expiresAt: Date;
   revokedAt: Date | null;
   lastUsedAt: Date | null;
+  /** Set only for a per-bot key. Absent on account-bound capabilities. */
+  botLabel?: string | null;
 }
 
 export interface ComputerPairCode {
@@ -328,9 +367,17 @@ export interface ObserveRequest {
 export interface Observation {
   screenWidth: number;
   screenHeight: number;
+  /** click_coordinates use these full-size pixels. A client may scale the image. */
+  coordinateSpace?: "screen_pixels";
+  /** Selected page href when CDP is up. */
+  browserUrl?: string;
+  /** True when the screenshot samples as one colour. */
+  screenBlank?: boolean;
   activeWindow?: string;
   screenshotBase64?: string;
   accessibilitySummary?: unknown;
+  /** CDP did not answer in time. The screenshot is real; the tree is not invented. */
+  accessibilityPending?: boolean;
 }
 
 export type ActionType =
@@ -361,7 +408,13 @@ export interface ActionBatch {
 
 export interface ActionResult {
   ok: boolean;
-  results: Array<{ action: Action; success: boolean; error?: string }>;
+  results: Array<{
+    action: Action;
+    success: boolean;
+    error?: string;
+    code?: string;
+    finalUrl?: string;
+  }>;
 }
 
 export interface TakeoverGrant {

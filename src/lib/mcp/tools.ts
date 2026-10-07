@@ -1,6 +1,6 @@
 /**
- * The eight C5 MCP tools. Input schemas are Zod (runtime) + JSON Schema (tools/list).
- * Handoffs are listed so the surface is exactly eight tools, then fail closed (C9).
+ * The eight MCP tools. Input schemas are Zod (runtime) + JSON Schema (tools/list).
+ * Handoffs stay listed so the surface is exactly eight tools, and then fail closed.
  */
 
 import { z } from "zod";
@@ -32,18 +32,29 @@ const capabilityToken = z
   .max(256)
   .optional()
   .describe("Capability secret from computer_pair. Never log it.");
-const handle = z.string().min(1).max(128).describe("computer_handle from computer_pair.");
+const handle = z
+  .string()
+  .min(1)
+  .max(128)
+  .optional()
+  .describe("computer_handle from computer_pair. Ignored when this Bot is already bound.");
 
 export const ComputerPairArgsSchema = z.object({
-  pair_code: z.string().min(1).max(32).describe("One-time pair code (ABCD-EFGH-JK)."),
-  bird_id: z.string().min(1).max(128),
-  flock_id: z.string().min(1).max(128),
+  pair_code: z.string().min(1).max(32).optional().describe("One-time pair code (ABCD-EFGH-JK)."),
+  capability_token: capabilityToken,
+  computer_handle: handle,
+  bird_id: z.string().min(1).max(128).optional(),
+  flock_id: z.string().min(1).max(128).optional(),
   account_id: z
     .string()
     .min(1)
     .max(128)
     .optional()
     .describe("Optional shared-account metadata. Never sufficient for access."),
+  plan: z
+    .enum(["personal", "pro", "team"])
+    .optional()
+    .describe("Checkout plan when this Bot has no computer yet. Defaults to personal."),
 });
 
 export const ComputerStatusArgsSchema = z.object({
@@ -66,7 +77,7 @@ export const ComputerFsArgsSchema = z.object({
   computer_handle: handle,
   operation: FsOperationSchema,
   path: z.string().min(1).max(2048),
-  content: z.string().max(1_000_000).optional(),
+  content: z.string().max(1_400_000).optional(),
   destination: z.string().max(2048).optional(),
   encoding: z.enum(["utf8", "base64"]).optional(),
 });
@@ -123,21 +134,22 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "computer_pair",
     description:
-      "Redeem a one-time pair code for a capability token bound to this Bot's computer/bird/flock. Account/MCP auth does not authorize pairing.",
-    inputSchema: advertisedSchema(ComputerPairArgsSchema, ["pair_code", "bird_id", "flock_id"]),
+      "Redeem a one-time pair code for a capability token bound to this Bot's computer/bird/flock. Account/MCP auth does not authorize pairing. If this Bot has no computer yet, call with an optional plan (personal, pro, or team) to get a checkout link. With per-bot keys, call with no arguments to get a pair code and approve_url, then call again with that pair_code. If bot_label is not your name, stop and call computer_pair. Keep pair_code and capability_token in your own bot memory.",
+    inputSchema: advertisedSchema(ComputerPairArgsSchema, []),
   },
   {
     name: "computer_status",
-    description: "Return computer lifecycle state. Requires a valid capability with status scope.",
-    inputSchema: advertisedSchema(ComputerStatusArgsSchema, ["capability_token", "computer_handle"]),
+    description:
+      "Return computer lifecycle state. Requires a valid capability with status scope. If bot_label is not your name, stop and call computer_pair.",
+    inputSchema: advertisedSchema(ComputerStatusArgsSchema, []),
   },
   {
     name: "computer_exec",
     description:
-      "Run argv[] on the computer. Default mode is argv. mode=shell requires the shell scope (not granted by default pairing).",
+      "Run argv[] on the computer. Default mode is argv. mode=shell requires the shell scope (not granted by default pairing). Pipelines use argv [\"bash\",\"-lc\",\"...\"]. If bot_label is not your name, stop and call computer_pair.",
     inputSchema: advertisedSchema(
       ComputerExecArgsSchema,
-      ["capability_token", "computer_handle", "argv"],
+      ["argv"],
       (schema) => {
         const props = objectProperties(schema);
         const env = props?.env;
@@ -150,41 +162,32 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: "computer_fs",
     description:
-      "Filesystem operation inside the workspace jail (stat/list/read/write/mkdir/move/copy/delete). Path escape is rejected.",
-    inputSchema: advertisedSchema(ComputerFsArgsSchema, [
-      "capability_token",
-      "computer_handle",
-      "operation",
-      "path",
-    ]),
+      "Filesystem operation inside the workspace jail (stat/list/read/write/mkdir/move/copy/delete). Path escape is rejected. If bot_label is not your name, stop and call computer_pair.",
+    inputSchema: advertisedSchema(ComputerFsArgsSchema, ["operation", "path"]),
   },
   {
     name: "computer_observe",
     description:
-      "Observe the computer display. Set include_screenshot true to see the screen as an image. Set include_accessibility true for AX node ids (required before click_element). Accessibility is never fabricated as live CDP.",
-    inputSchema: advertisedSchema(ComputerObserveArgsSchema, ["capability_token", "computer_handle"]),
+      "Observe the computer display. Set include_screenshot true to see the screen as an image. Set include_accessibility true for AX node ids (required before click_element). Accessibility is never fabricated as live CDP. Screenshot is screen_width by screen_height pixels (coordinate_space screen_pixels); your client may show it scaled. screen_blank true means the screenshot is a single colour, including a white about:blank window. If bot_label is not your name, stop and call computer_pair.",
+    inputSchema: advertisedSchema(ComputerObserveArgsSchema, []),
   },
   {
     name: "computer_act",
     description:
-      "Apply a bounded action batch. For clicks: computer_observe({ include_accessibility: true }) then click_element with an AX node id from that tree (15s). Guessed/offscreen clicks fail closed. Also open_url/type/key/scroll/wait. No public VNC/takeover.",
-    inputSchema: advertisedSchema(ComputerActArgsSchema, [
-      "capability_token",
-      "computer_handle",
-      "actions",
-    ]),
+      "Apply a bounded action batch. For clicks: computer_observe({ include_accessibility: true }) then click_element with an AX node id from that tree (15s). Guessed/offscreen clicks fail closed. click_coordinates use full-size screen pixels from computer_observe. Prefer click_element. open_url reports NAVIGATION_FAILED if the page didn't load. Also type/key/scroll/wait. No public VNC/takeover. If bot_label is not your name, stop and call computer_pair.",
+    inputSchema: advertisedSchema(ComputerActArgsSchema, ["actions"]),
   },
   {
     name: "handoff_send",
     description:
-      "Send an explicit file handoff to another Node. Not implemented in C5 (Gate C9). Fails closed.",
-    inputSchema: advertisedSchema(HandoffArgsSchema, ["capability_token", "computer_handle"]),
+      "Send an explicit file handoff to another Node. Not available yet. Returns NOT AVAILABLE; no files are sent or received.",
+    inputSchema: advertisedSchema(HandoffArgsSchema, []),
   },
   {
     name: "handoff_receive",
     description:
-      "Receive an explicit file handoff. Not implemented in C5 (Gate C9). Fails closed.",
-    inputSchema: advertisedSchema(HandoffArgsSchema, ["capability_token", "computer_handle"]),
+      "Receive an explicit file handoff. Not available yet. Returns NOT AVAILABLE; no files are sent or received.",
+    inputSchema: advertisedSchema(HandoffArgsSchema, []),
   },
 ];
 

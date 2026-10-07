@@ -11,7 +11,7 @@ export const DESK_STATES = [
 
 export type DeskState = (typeof DESK_STATES)[number];
 
-export const GATE_STATES = ["cold", "just_paid", "expired", "invalid"] as const;
+export const GATE_STATES = ["cold", "just_paid", "expired", "invalid", "workos_env"] as const;
 export type GateState = (typeof GATE_STATES)[number];
 
 export const OAUTH_STATES = [
@@ -20,10 +20,25 @@ export const OAUTH_STATES = [
   "invalid_client",
   "already_allowed",
   "error",
+  "signed_out",
+  "no_plan",
 ] as const;
 export type OauthUiState = (typeof OAUTH_STATES)[number];
 
-export type PlanId = "spark" | "desk" | "shift";
+export type PlanId = "personal" | "pro" | "team";
+
+export type DeskRecord = {
+  id: string;
+  state: DeskState;
+  userCode: string | null;
+  pendingRequest: boolean;
+  pairKeyId: string | null;
+  hoursUsed: number | null;
+  hoursIncluded: number | null;
+  computerId: string | null;
+  botName: string | null;
+  lastUsedLabel: string | null;
+};
 
 export type SeatSession = {
   authenticated: true;
@@ -34,14 +49,14 @@ export type SeatSession = {
   seats: number;
   pluginAllowed: boolean;
   webhookPending: boolean;
-  desk: {
-    state: DeskState;
-    userCode: string | null;
-    pendingRequest: boolean;
-  } | null;
+  desk: DeskRecord | null;
+  desks: DeskRecord[];
   hoursUsed: number | null;
   hoursIncluded: number | null;
   portalReady: boolean;
+  revealedPairCode: string | null;
+  canceledHold: boolean;
+  reconnectBot: boolean;
 };
 
 export type SetupView =

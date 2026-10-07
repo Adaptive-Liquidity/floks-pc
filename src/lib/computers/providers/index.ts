@@ -25,4 +25,5 @@ export {
   assertNoControlPlaneSecrets,
   CONTROL_PLANE_SECRET_ENV_KEYS,
   isIdempotentShutdownError,
+  mapRunloopDevboxStatus,
 } from "./runloop-client.js";

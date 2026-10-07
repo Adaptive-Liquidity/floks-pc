@@ -12,60 +12,163 @@ import {
   BROWSER_PROFILE_DIR,
   ENSURE_INTERACTIVE_SH,
   ENSURE_SCRIPT_PATH,
-  FIXTURE_HTML,
-  FIXTURE_PATH,
   FLOK_DISPLAY,
   FLOK_UI_USER,
-  INTERACTIVE_DIR,
   argvAsUiUser,
   chromeLaunchArgv,
   pngDimensions,
   uniqueObsShotPath,
   CHROME_LOG_PATH,
+  CHROME_READY_PROBE_PY,
+  CHROME_READY_TIMEOUT_MS,
   CDP_AX_HELPER_JS,
   CDP_HELPER_PATH,
   CDP_NODE_BIN,
   CdpAxDumpSchema,
+  classifyChromeReadiness,
+  formatChromeReadyFailure,
   logCdpAxObserve,
   parseCdpAxHelperStdout,
+  parseChromeReadyEvidence,
   sanitizeCdpAxHint,
 } from "./runloop-interactive.js";
+import { CDP_NAV_HELPER_JS, CDP_NAV_HELPER_PATH } from "./runloop-cdp.js";
+import {
+  BROWSER_START_URL,
+  BrowserNotReady,
+  bringManagedBrowserToFront,
+  ensureManagedBrowser,
+  navigateManagedPage,
+  parseNavHelperStdout,
+} from "./runloop-browser.js";
 import {
   assertNoControlPlaneSecrets,
-  DEFAULT_RUNLOOP_ARCH,
   LIVE_KEEP_ALIVE_SECONDS,
   RUNLOOP_WORKSPACE_ROOT,
   isIdempotentShutdownError,
+  logRunloopLaunch,
+  parseRunloopNetworkPolicyId,
+  runloopLaunchParameters,
+  parseRunloopOnIdle,
   type RunloopControlPlane,
   type RunloopCreateParams,
   type RunloopDevboxSession,
+  mapRunloopDevboxStatus,
   type RunloopDevboxState,
   type RunloopExecResult,
   type RunloopFsResult,
 } from "./runloop-client.js";
 import {
-  GUEST_READ_B64_PY,
-  GUEST_WRITE_B64_PY,
+  GUEST_FS_MAX_BYTES,
+  GUEST_NOFOLLOW_COPY_PY,
+  GUEST_NOFOLLOW_DELETE_PY,
+  GUEST_NOFOLLOW_LIST_PY,
+  GUEST_NOFOLLOW_MKDIR_PY,
+  GUEST_NOFOLLOW_MOVE_PY,
+  GUEST_NOFOLLOW_READ_B64_PY,
+  GUEST_NOFOLLOW_STAT_PY,
+  GUEST_NOFOLLOW_WRITE_STDIN_PY,
+  GUEST_PRIV_DELETE_PY,
+  GUEST_PRIV_MKDIR_PY,
+  GUEST_PRIV_READ_B64_PY,
   bufferFromBase64Stdout,
-  bufferFromDownload,
-  bufferFromUtf8Read,
-  utf8RoundtripEquals,
 } from "./runloop-fs.js";
+import {
+  CONTROL_PLANE_BOT_USER_PATH,
+  CONTROL_PLANE_DIR,
+  CONTROL_PLANE_EXECVP_PATH,
+  ENSURE_BOT_USER_SH,
+  FLOK_BOT_USER,
+  argvAsBotUser,
+  isReservedControlPlanePath,
+  uniqueControlPlaneFsSpecPath,
+} from "./runloop-bot-user.js";
 
 const EXECVP_PY = [
-  "import os, sys, json, base64",
-  "spec = json.loads(base64.b64decode(sys.argv[1]))",
+  "import os, sys, json, base64, re, stat",
+  "SPEC_DIR='/var/lib/flok'",
+  "SPEC_RE=re.compile(r'^/var/lib/flok/fs-spec-[0-9a-f-]{36}\\.json$')",
+  "def load_spec():",
+  "    if len(sys.argv) >= 3 and sys.argv[1] == '--spec-file':",
+  "        path = sys.argv[2]",
+  "        if not SPEC_RE.match(path):",
+  "            sys.stderr.write('permission denied'); sys.exit(1)",
+  "        name = os.path.basename(path)",
+  "        try:",
+  "            dirfd = os.open(SPEC_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NOCTTY)",
+  "        except OSError:",
+  "            sys.stderr.write('permission denied'); sys.exit(1)",
+  "        try:",
+  "            dst = os.fstat(dirfd)",
+  "            if dst.st_uid != 0 or (dst.st_mode & 0o077) != 0 or not stat.S_ISDIR(dst.st_mode):",
+  "                sys.stderr.write('permission denied'); sys.exit(1)",
+  "            try:",
+  "                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NOCTTY, dir_fd=dirfd)",
+  "            except OSError:",
+  "                sys.stderr.write('permission denied'); sys.exit(1)",
+  "            try:",
+  "                st = os.fstat(fd)",
+  "                if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_nlink != 1:",
+  "                    sys.stderr.write('permission denied'); sys.exit(1)",
+  "                os.fchmod(fd, 0o600)",
+  "                chunks = []",
+  "                while True:",
+  "                    b = os.read(fd, 65536)",
+  "                    if not b: break",
+  "                    chunks.append(b)",
+  "                    if sum(len(x) for x in chunks) > 8000000:",
+  "                        sys.stderr.write('file too large'); sys.exit(1)",
+  "                data = json.loads(b''.join(chunks))",
+  "            finally:",
+  "                os.close(fd)",
+  "            try:",
+  "                os.unlink(name, dir_fd=dirfd)",
+  "            except FileNotFoundError:",
+  "                pass",
+  "            except OSError:",
+  "                sys.stderr.write('permission denied'); sys.exit(1)",
+  "            return data",
+  "        finally:",
+  "            os.close(dirfd)",
+  "    return json.loads(base64.b64decode(sys.argv[1]))",
+  "def write_all(fd, data):",
+  "    off = 0",
+  "    while off < len(data):",
+  "        try:",
+  "            n = os.write(fd, data[off:])",
+  "        except BrokenPipeError:",
+  "            return",
+  "        if n <= 0: return",
+  "        off += n",
+  "spec = load_spec()",
   "cwd = spec.get('cwd') or '/home/user/flok'",
   "os.chdir(cwd)",
   "env = os.environ.copy()",
   "for k, v in (spec.get('env') or {}).items():",
   "    env[str(k)] = str(v)",
   "argv = spec['argv']",
-  "os.execvpe(argv[0], argv, env)",
+  "stdin_b64 = spec.get('stdin_b64')",
+  "if stdin_b64 is None:",
+  "    os.execvpe(argv[0], argv, env)",
+  "r, w = os.pipe()",
+  "pid = os.fork()",
+  "if pid == 0:",
+  "    os.close(w)",
+  "    os.dup2(r, 0)",
+  "    os.close(r)",
+  "    os.execvpe(argv[0], argv, env)",
+  "    os._exit(127)",
+  "os.close(r)",
+  "write_all(w, base64.b64decode(stdin_b64))",
+  "os.close(w)",
+  "_, status = os.waitpid(pid, 0)",
+  "if os.WIFEXITED(status): sys.exit(os.WEXITSTATUS(status))",
+  "if os.WIFSIGNALED(status): sys.exit(128 + os.WTERMSIG(status))",
+  "sys.exit(1)",
   "",
 ].join("\n");
 
-const EXECVP_PATH = `${RUNLOOP_WORKSPACE_ROOT}/.flok/execvp.py`;
+const EXECVP_PATH = CONTROL_PLANE_EXECVP_PATH;
 
 type SdkDevbox = {
   id: string;
@@ -91,41 +194,63 @@ type SdkDevbox = {
   resume(): Promise<unknown>;
   awaitRunning(): Promise<unknown>;
   shutdown(): Promise<unknown>;
+  keepAlive(): Promise<unknown>;
   snapshotDisk(params?: { name?: string }): Promise<{ id: string }>;
+};
+
+type DevboxLauncher = {
+  devbox: {
+    createFromBlueprintName(blueprint: string, body: Record<string, unknown>): Promise<SdkDevbox>;
+    createFromSnapshot(snapshotRef: string, body: Record<string, unknown>): Promise<SdkDevbox>;
+    fromId(id: string): SdkDevbox;
+  };
 };
 
 export async function createSdkRunloopPlane(opts: {
   apiKey: string;
   blueprint: string;
   keepAliveSeconds?: number;
+  /** Test stub. Production uses RunloopSDK. */
+  sdk?: DevboxLauncher;
+  env?: NodeJS.ProcessEnv;
 }): Promise<RunloopControlPlane> {
-  const sdk = new RunloopSDK({ bearerToken: opts.apiKey });
+  const env = opts.env ?? process.env;
+  const onIdle = parseRunloopOnIdle(env);
+  const networkPolicyId = parseRunloopNetworkPolicyId(env);
+  const sdk = opts.sdk ?? (new RunloopSDK({ bearerToken: opts.apiKey }) as unknown as DevboxLauncher);
   return new SdkRunloopControlPlane(
     sdk,
     opts.blueprint,
     opts.keepAliveSeconds ?? LIVE_KEEP_ALIVE_SECONDS,
+    onIdle,
+    networkPolicyId,
   );
 }
 
 class SdkRunloopControlPlane implements RunloopControlPlane {
   constructor(
-    private readonly sdk: RunloopSDK,
+    private readonly sdk: DevboxLauncher,
     private readonly blueprint: string,
     private readonly keepAliveSeconds: number,
+    private readonly onIdle: "suspend" | undefined,
+    private readonly networkPolicyId: string,
   ) {}
 
   async create(params: RunloopCreateParams): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
-    const launch = {
-      architecture: params.architecture || DEFAULT_RUNLOOP_ARCH,
-      keep_alive_time_seconds: params.keepAliveSeconds || this.keepAliveSeconds,
-    };
+    const launch = runloopLaunchParameters(
+      params,
+      this.keepAliveSeconds,
+      this.onIdle,
+      this.networkPolicyId,
+    );
+    logRunloopLaunch("create", launch);
     const created = (await this.sdk.devbox.createFromBlueprintName(this.blueprint, {
       name: `flok-${params.birdId}`.slice(0, 48),
       metadata: params.labels,
       launch_parameters: launch,
     })) as unknown as SdkDevbox;
-    const session = new SdkRunloopDevbox(created, params.birdId, params.flockId);
+    const session = new SdkRunloopDevbox(created, params.birdId, params.flockId, this.networkPolicyId);
     await session.ensureWorkspace();
     return session;
   }
@@ -134,8 +259,10 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
     const box = this.sdk.devbox.fromId(id) as unknown as SdkDevbox;
     let birdId = "unknown";
     let flockId = "unknown";
+    let reported = "";
     try {
       const info = await box.getInfo();
+      reported = info.status;
       const meta = info.metadata ?? {};
       const bird = meta.bird_id || meta["flok.bird_id"];
       const flock = meta.flock_id || meta["flok.flock_id"];
@@ -144,8 +271,10 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
     } catch {
       // metadata is diagnostic only
     }
-    const session = new SdkRunloopDevbox(box, birdId, flockId);
-    await session.ensureWorkspace();
+    const session = new SdkRunloopDevbox(box, birdId, flockId, this.networkPolicyId);
+    if (mapRunloopDevboxStatus(reported) === "running") {
+      await session.ensureWorkspace();
+    }
     return session;
   }
 
@@ -154,16 +283,19 @@ class SdkRunloopControlPlane implements RunloopControlPlane {
     params: RunloopCreateParams,
   ): Promise<RunloopDevboxSession> {
     assertNoControlPlaneSecrets(params.envVars);
-    const launch = {
-      architecture: params.architecture || DEFAULT_RUNLOOP_ARCH,
-      keep_alive_time_seconds: params.keepAliveSeconds || this.keepAliveSeconds,
-    };
+    const launch = runloopLaunchParameters(
+      params,
+      this.keepAliveSeconds,
+      this.onIdle,
+      this.networkPolicyId,
+    );
+    logRunloopLaunch("restore", launch);
     const created = (await this.sdk.devbox.createFromSnapshot(snapshotRef, {
       name: `flok-restore-${params.birdId}`.slice(0, 48),
       metadata: params.labels,
       launch_parameters: launch,
     })) as unknown as SdkDevbox;
-    const session = new SdkRunloopDevbox(created, params.birdId, params.flockId);
+    const session = new SdkRunloopDevbox(created, params.birdId, params.flockId, this.networkPolicyId);
     await session.ensureWorkspace();
     return session;
   }
@@ -177,11 +309,13 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   interactiveGuest = false;
   private interactiveStackUp = false;
   private graphicalStack = false;
+  private botUserReady = false;
 
   constructor(
     private readonly box: SdkDevbox,
     birdId: string,
     flockId: string,
+    private readonly networkPolicyId: string,
   ) {
     this.id = box.id;
     this.birdId = birdId;
@@ -189,8 +323,9 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   }
 
   async ensureWorkspace(): Promise<void> {
-    await this.box.cmd.exec(`mkdir -p ${shellSingle(RUNLOOP_WORKSPACE_ROOT + "/.flok")}`);
+    await this.ensureControlPlaneDir();
     await this.box.file.write({ file_path: EXECVP_PATH, contents: EXECVP_PY });
+    await this.ensureBotUser();
     await this.lockRootExecutedAssets();
     const boot = await this.box.cmd.exec("cat /proc/sys/kernel/random/boot_id");
     this.bootId = ((await boot.stdout()) ?? "").trim();
@@ -203,12 +338,22 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
 
   async suspend(): Promise<void> {
     this.interactiveStackUp = false;
+    this.botUserReady = false;
     await this.box.suspend();
     await this.box.awaitSuspended();
   }
 
   async resume(): Promise<void> {
+    if (!this.networkPolicyId || this.networkPolicyId.toLowerCase() === "allow_all") {
+      throw new Error(
+        "RUNLOOP_NETWORK_POLICY_ID is required. Refusing to wake without an explicit network policy.",
+      );
+    }
     this.interactiveStackUp = false;
+    this.botUserReady = false;
+    // Runloop SDK 1.28 resume() takes no launch body, so the policy id cannot be
+    // sent again here. Create and snapshot restore already sent it. Wake still
+    // refuses to run when that id was never configured.
     await this.box.resume();
     await this.box.awaitRunning();
   }
@@ -220,6 +365,10 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       if (isIdempotentShutdownError(err)) return;
       throw err;
     }
+  }
+
+  async keepAlive(): Promise<void> {
+    await this.box.keepAlive();
   }
 
   async exec(req: {
@@ -263,136 +412,72 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   async fsStat(
     path: string,
   ): Promise<RunloopFsResult<{ path: string; isDir: boolean; size: number }>> {
-    const jailed = await this.enforceResolved(path);
+    const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    const r = await this.execPython(
-      `import os,json,sys; p=sys.argv[1]; st=os.stat(p); print(json.dumps({"isDir":os.path.isdir(p),"size":st.st_size}))`,
-      [path],
-    );
+    const r = await this.execPython(GUEST_NOFOLLOW_STAT_PY, [path]);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     const data = JSON.parse(r.stdout) as { isDir: boolean; size: number };
     return { ok: true, data: { path, isDir: data.isDir, size: data.size } };
   }
 
   async fsList(path: string): Promise<RunloopFsResult<string[]>> {
-    const jailed = await this.enforceResolved(path);
+    const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    const r = await this.execPython(
-      `import os,json,sys; p=sys.argv[1]; print(json.dumps(sorted(os.listdir(p))))`,
-      [path],
-    );
+    const r = await this.execPython(GUEST_NOFOLLOW_LIST_PY, [path]);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true, data: JSON.parse(r.stdout) as string[] };
   }
 
   async fsRead(path: string): Promise<RunloopFsResult<Buffer>> {
-    const jailed = await this.enforceResolved(path);
+    const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    const st = await this.fsStat(path);
-    if (!st.ok || !st.data) {
-      return { ok: false, errorCode: st.ok ? "NOT_FOUND" : st.errorCode };
-    }
-    const expected = st.data.size;
-    try {
-      const resp = await this.box.file.download({ path });
-      let buf = bufferFromDownload(await resp.arrayBuffer(), expected);
-      if (!buf) {
-        try {
-          const text = await this.box.file.read({ file_path: path });
-          buf = bufferFromUtf8Read(text, expected);
-        } catch {
-          buf = null;
-        }
-      }
-      if (!buf && expected > 0) {
-        const r = await this.execPython(GUEST_READ_B64_PY, [path]);
-        if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
-        buf = bufferFromBase64Stdout(r.stdout);
-      }
-      if (!buf) {
-        return expected === 0 ? { ok: true, data: Buffer.alloc(0) } : { ok: false, errorCode: "IO_ERROR" };
-      }
-      if (expected > 0 && buf.length !== expected) {
-        return { ok: false, errorCode: "IO_ERROR" };
-      }
-      return { ok: true, data: buf };
-    } catch (e) {
-      return { ok: false, errorCode: classifyFs(e) };
-    }
+    const r = await this.execPython(GUEST_NOFOLLOW_READ_B64_PY, [path]);
+    if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+    return { ok: true, data: bufferFromBase64Stdout(r.stdout) };
   }
 
   async fsWrite(path: string, body: Buffer): Promise<RunloopFsResult> {
-    const jailed = await this.enforceResolved(path);
+    const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    try {
-      const parent = pathPosix.dirname(path);
-      await this.fsMkdir(parent);
-      let st: RunloopFsResult<{ path: string; isDir: boolean; size: number }> | undefined;
-      if (utf8RoundtripEquals(body)) {
-        await this.box.file.write({ file_path: path, contents: body.toString("utf8") });
-        st = await this.fsStat(path);
-      }
-      if (!st?.ok || !st.data || st.data.size !== body.length) {
-        if (body.length > 200_000) return { ok: false, errorCode: "IO_ERROR" };
-        const r = await this.execPython(GUEST_WRITE_B64_PY, [path, body.toString("base64")]);
-        if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
-        st = await this.fsStat(path);
-      }
-      if (!st.ok || !st.data || st.data.size !== body.length) {
-        return { ok: false, errorCode: "IO_ERROR" };
-      }
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, errorCode: classifyFs(e) };
-    }
+    if (body.length > GUEST_FS_MAX_BYTES) return { ok: false, errorCode: "FILE_TOO_LARGE" };
+    const r = await this.execPython(GUEST_NOFOLLOW_WRITE_STDIN_PY, [path], { stdin: body });
+    if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+    return { ok: true };
   }
 
   async fsMkdir(path: string): Promise<RunloopFsResult> {
-    const jailed = await this.enforceResolved(path);
+    const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    const r = await this.execPython(`import os,sys; os.makedirs(sys.argv[1], exist_ok=True)`, [
-      path,
-    ]);
+    const r = await this.execPython(GUEST_NOFOLLOW_MKDIR_PY, [path]);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true };
   }
 
   async fsDelete(path: string): Promise<RunloopFsResult> {
     if (path === RUNLOOP_WORKSPACE_ROOT) return { ok: false, errorCode: "PATH_ESCAPE" };
-    const jailed = await this.enforceResolved(path);
+    const jailed = this.customerJail(path);
     if (!jailed.ok) return jailed;
-    const r = await this.execPython(
-      `import os,shutil,sys,pathlib; p=sys.argv[1];\n` +
-        `p_=pathlib.Path(p);\n` +
-        `shutil.rmtree(p) if p_.is_dir() else os.remove(p)`,
-      [path],
-    );
+    const r = await this.execPython(GUEST_NOFOLLOW_DELETE_PY, [path]);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true };
   }
 
   async fsMove(from: string, to: string): Promise<RunloopFsResult> {
-    const a = await this.enforceResolved(from);
+    const a = this.customerJail(from);
     if (!a.ok) return a;
-    const b = await this.enforceResolved(to);
+    const b = this.customerJail(to);
     if (!b.ok) return b;
-    const r = await this.execPython(`import os,sys; os.rename(sys.argv[1], sys.argv[2])`, [
-      from,
-      to,
-    ]);
+    const r = await this.execPython(GUEST_NOFOLLOW_MOVE_PY, [from, to]);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true };
   }
 
   async fsCopy(from: string, to: string): Promise<RunloopFsResult> {
-    const a = await this.enforceResolved(from);
+    const a = this.customerJail(from);
     if (!a.ok) return a;
-    const b = await this.enforceResolved(to);
+    const b = this.customerJail(to);
     if (!b.ok) return b;
-    const r = await this.execPython(
-      `import shutil,sys; shutil.copy2(sys.argv[1], sys.argv[2])`,
-      [from, to],
-    );
+    const r = await this.execPython(GUEST_NOFOLLOW_COPY_PY, [from, to]);
     if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
     return { ok: true };
   }
@@ -402,31 +487,19 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     return snap.id;
   }
 
-  async ensureInteractiveStack(): Promise<void> {
+  async ensureInteractiveStack(opts?: { browser?: "strict" | "best-effort" }): Promise<void> {
     if (this.interactiveStackUp) {
-      if (!this.graphicalStack || (await this.xvfbAlive())) return;
+      await this.ensureBotUser();
+      if (!this.graphicalStack || (await this.xvfbAlive())) {
+        await this.finishBrowser(opts);
+        return;
+      }
       this.interactiveStackUp = false;
     }
-    this.requireFs(
-      await this.fsMkdir(pathPosix.dirname(ENSURE_SCRIPT_PATH)),
-      "ensureInteractiveStack mkdir",
-    );
-    // Take .flok away from flok-ui before writing helpers root will execute.
+    await this.ensureBotUser();
+    await this.writeControlPlaneHelpers();
     await this.lockRootExecutedAssets();
-    this.requireFs(
-      await this.fsWrite(ENSURE_SCRIPT_PATH, Buffer.from(ENSURE_INTERACTIVE_SH, "utf8")),
-      "ensureInteractiveStack write script",
-    );
-    this.requireFs(
-      await this.fsWrite(FIXTURE_PATH, Buffer.from(FIXTURE_HTML, "utf8")),
-      "ensureInteractiveStack write fixture",
-    );
-    this.requireFs(
-      await this.fsWrite(CDP_HELPER_PATH, Buffer.from(CDP_AX_HELPER_JS, "utf8")),
-      "ensureInteractiveStack write cdp helper",
-    );
-    this.requireFs(await this.fsMkdir(BROWSER_PROFILE_DIR), "ensureInteractiveStack mkdir profile");
-    await this.lockRootExecutedAssets();
+    this.requireFs(await this.controlPlaneMkdir(BROWSER_PROFILE_DIR), "ensureInteractiveStack mkdir profile");
     const r = await this.exec({
       argv: ["bash", ENSURE_SCRIPT_PATH],
       cwd: RUNLOOP_WORKSPACE_ROOT,
@@ -454,6 +527,20 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     }
     this.interactiveGuest = this.graphicalStack && chromeOk;
     this.interactiveStackUp = true;
+    await this.finishBrowser(opts);
+  }
+
+  private async finishBrowser(opts?: { browser?: "strict" | "best-effort" }): Promise<void> {
+    const budgetMs = opts?.browser === "best-effort" ? 5_000 : CHROME_READY_TIMEOUT_MS;
+    try {
+      await this.ensureBrowser(budgetMs);
+    } catch (err) {
+      if (opts?.browser === "best-effort") {
+        process.stderr.write("flok-browser ensure failed\n");
+        return;
+      }
+      throw err;
+    }
   }
 
   async screenshot(): Promise<{
@@ -463,19 +550,19 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     activeWindow?: string;
   }> {
     const shotPath = uniqueObsShotPath();
-    this.requireFs(await this.fsMkdir(pathPosix.dirname(shotPath)), "screenshot dir");
+    this.requireFs(await this.controlPlaneMkdir(pathPosix.dirname(shotPath)), "screenshot dir");
     const shot = await this.exec({
-      argv: argvAsUiUser(["import", "-display", FLOK_DISPLAY, "-window", "root", shotPath]),
+      argv: argvAsUiUser(["import", "-display", FLOK_DISPLAY, "-window", "root", `PNG24:${shotPath}`]),
       cwd: RUNLOOP_WORKSPACE_ROOT,
       env: { DISPLAY: FLOK_DISPLAY },
       timeoutMs: 15_000,
     });
     if (shot.exitCode !== 0) {
-      await this.fsDelete(shotPath).catch(() => undefined);
+      await this.controlPlaneDelete(shotPath).catch(() => undefined);
       throw new ProviderUnavailable("runloop", `screenshot failed: ${shot.stderr}`);
     }
     try {
-      const file = await this.fsRead(shotPath);
+      const file = await this.controlPlaneRead(shotPath);
       if (!file.ok || !file.data) {
         throw new ProviderUnavailable("runloop", "screenshot read failed");
       }
@@ -499,7 +586,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       if (activeWindow) out.activeWindow = activeWindow;
       return out;
     } finally {
-      await this.fsDelete(shotPath).catch(() => undefined);
+      await this.controlPlaneDelete(shotPath).catch(() => undefined);
     }
   }
 
@@ -550,57 +637,83 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     return r;
   }
 
-  private async launchChromeForCdp(): Promise<void> {
-    logCdpAxObserve("chrome-launch", { via: "observe" });
-    const r = await this.exec({
-      argv: this.chromePopenArgv(`file://${FIXTURE_PATH}`),
+  private async execGuest(argv: string[], timeoutMs: number): Promise<RunloopExecResult> {
+    let r = await this.exec({
+      argv,
       cwd: RUNLOOP_WORKSPACE_ROOT,
       env: { DISPLAY: FLOK_DISPLAY },
-      timeoutMs: 20_000,
+      timeoutMs,
     });
-    if (r.exitCode !== 0) {
-      throw new ProviderUnavailable("runloop", "chrome launch failed");
+    if (r.exitCode === 127 && argv[0] === "node") {
+      r = await this.exec({
+        argv: [CDP_NODE_BIN, ...argv.slice(1)],
+        cwd: RUNLOOP_WORKSPACE_ROOT,
+        env: { DISPLAY: FLOK_DISPLAY },
+        timeoutMs,
+      });
+    }
+    return r;
+  }
+
+  /** One flok-ui Chrome at about:blank. A fixture process on 9222 is killed first. */
+  private async ensureBrowser(budgetMs = CHROME_READY_TIMEOUT_MS): Promise<void> {
+    if (!this.interactiveGuest) return;
+    try {
+      await ensureManagedBrowser({
+        timeoutMs: budgetMs,
+        exec: async (argv) => {
+          const isLaunch = argv.includes("python3") && argv.join(" ").includes("Popen");
+          const commandBudget = isLaunch ? 20_000 : 8_000;
+          const r = await this.execGuest(argv, Math.min(commandBudget, budgetMs));
+          return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+        },
+        launchArgv: this.chromePopenArgv(BROWSER_START_URL),
+      });
+    } catch (err) {
+      if (budgetMs < CHROME_READY_TIMEOUT_MS) throw err;
+      if (err instanceof BrowserNotReady) {
+        throw new ProviderUnavailable("runloop", await this.chromeReadyFailure());
+      }
+      if (err instanceof ProviderUnavailable) throw err;
+      throw new ProviderUnavailable(
+        "runloop",
+        err instanceof Error ? err.message : "chrome launch failed",
+      );
     }
   }
 
-  private async waitForCdp(): Promise<boolean> {
-    const py = [
-      "import urllib.request,time,sys",
-      "deadline=time.time()+20",
-      "while time.time()<deadline:",
-      "  try:",
-      "    urllib.request.urlopen('http://127.0.0.1:9222/json/version', timeout=1)",
-      "    print('cdp-ready')",
-      "    sys.exit(0)",
-      "  except Exception:",
-      "    time.sleep(1)",
-      "print('cdp-down')",
-      "sys.exit(1)",
-      "",
-    ].join("\n");
-    const r = await this.exec({
-      argv: ["python3", "-c", py],
-      cwd: RUNLOOP_WORKSPACE_ROOT,
-      timeoutMs: 25_000,
-    });
-    logCdpAxObserve("cdp-wait", { ready: r.exitCode === 0 });
-    return r.exitCode === 0;
+  private async chromeReadyFailure(): Promise<string> {
+    try {
+      const probe = await this.exec({
+        argv: ["python3", "-c", CHROME_READY_PROBE_PY],
+        cwd: RUNLOOP_WORKSPACE_ROOT,
+        timeoutMs: 15_000,
+      });
+      const evidence = parseChromeReadyEvidence(probe.stdout);
+      return formatChromeReadyFailure(classifyChromeReadiness(evidence, { timedOut: true }), evidence);
+    } catch {
+      return "chrome did not answer on 127.0.0.1:9222";
+    }
   }
 
-  async cdpAxDump(): Promise<{ nodes: unknown[] }> {
-    await this.ensureInteractiveStack();
-    // Same argv the live tester proved via computer_exec: node /home/user/flok/.flok/cdp-ax.mjs
+  async browserUrl(): Promise<string | undefined> {
+    if (!this.interactiveGuest) return undefined;
+    const r = await this.execGuest(["node", CDP_NAV_HELPER_PATH, "--href"], 10_000);
+    if (r.exitCode !== 0) return undefined;
+    const parsed = parseNavHelperStdout(r.stdout);
+    if (!parsed?.ok || !parsed.href) return undefined;
+    return parsed.href;
+  }
+
+  async cdpAxDump(): Promise<{
+    nodes: unknown[];
+    viewportOrigin?: { x: number; y: number };
+    devicePixelRatio?: number;
+  }> {
     let r = await this.runCdpHelper();
     const refused = /ECONNREFUSED|9222/.test(r.stderr);
     if (r.exitCode !== 0 && refused) {
-      await this.launchChromeForCdp();
-      const ready = await this.waitForCdp();
-      if (!ready) {
-        throw new ProviderUnavailable(
-          "runloop",
-          "cdp ax helper failed (connect ECONNREFUSED 127.0.0.1:9222)",
-        );
-      }
+      await this.ensureBrowser();
       r = await this.runCdpHelper();
     }
     if (r.exitCode !== 0) {
@@ -621,10 +734,40 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     if (!checked.success) {
       throw new ProviderUnavailable("runloop", "cdp ax helper dump invalid");
     }
-    return { nodes: checked.data.nodes };
+    const dump: {
+      nodes: unknown[];
+      viewportOrigin?: { x: number; y: number };
+      devicePixelRatio?: number;
+    } = { nodes: checked.data.nodes };
+    if (checked.data.viewportOrigin) dump.viewportOrigin = checked.data.viewportOrigin;
+    if (checked.data.devicePixelRatio !== undefined) dump.devicePixelRatio = checked.data.devicePixelRatio;
+    return dump;
   }
 
-  async uiAction(action: Action): Promise<void> {
+  async uiAction(action: Action): Promise<{ finalUrl?: string } | void> {
+    if (action.type === "open_url") {
+      const url = action.url ?? "";
+      return navigateManagedPage({
+        url,
+        ensureBrowser: () => this.ensureBrowser(),
+        navArgv: ["node", CDP_NAV_HELPER_PATH, url],
+        exec: async (argv) => {
+          const r = await this.execGuest(argv, 20_000);
+          return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+        },
+      });
+    }
+    if (action.type === "launch_application") {
+      await bringManagedBrowserToFront({
+        ensureBrowser: () => this.ensureBrowser(),
+        frontArgv: ["node", CDP_NAV_HELPER_PATH, "--front"],
+        exec: async (argv) => {
+          const r = await this.execGuest(argv, 15_000);
+          return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+        },
+      });
+      return;
+    }
     const env = { DISPLAY: FLOK_DISPLAY };
     let argv: string[];
     switch (action.type) {
@@ -660,16 +803,6 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       case "wait":
         argv = ["sleep", String((action.durationMs ?? 100) / 1000)];
         break;
-      case "open_url":
-      case "launch_application": {
-        const url =
-          action.type === "open_url"
-            ? (action.url ?? `file://${FIXTURE_PATH}`)
-            : `file://${FIXTURE_PATH}`;
-        // Detach so exec returning does not SIGHUP Chrome. No --no-sandbox.
-        argv = this.chromePopenArgv(url);
-        break;
-      }
       default:
         throw new Error(`unsupported action ${action.type}`);
     }
@@ -679,16 +812,6 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       env,
       timeoutMs: 20_000,
     });
-    if (action.type === "open_url" || action.type === "launch_application") {
-      // Python Popen returns immediately; non-zero means spawn failed (missing binary, etc.).
-      if (r.exitCode !== 0) {
-        throw new ProviderUnavailable(
-          "runloop",
-          r.stderr || r.stdout || "chrome launch failed",
-        );
-      }
-      return;
-    }
     if (r.exitCode !== 0 && !r.timedOut) {
       throw new ProviderUnavailable("runloop", r.stderr || `uiAction ${action.type} failed`);
     }
@@ -714,24 +837,89 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     }
   }
 
+  async ensureBotUser(): Promise<void> {
+    if (this.botUserReady) return;
+    await this.ensureControlPlaneDir();
+    await this.box.file.write({
+      file_path: CONTROL_PLANE_BOT_USER_PATH,
+      contents: ENSURE_BOT_USER_SH,
+    });
+    const script = shellSingle(CONTROL_PLANE_BOT_USER_PATH);
+    const result = await this.box.cmd.exec(
+      [
+        `if [ -f ${script} ] && [ ! -L ${script} ]; then chown -h root:root ${script} && chmod 0700 ${script}; fi`,
+        `bash ${script}`,
+      ].join(" && "),
+    );
+    if ((result.exitCode ?? 1) !== 0) {
+      const detail = sanitizeCdpAxHint((await result.stderr()) || (await result.stdout()), 180);
+      throw new ProviderUnavailable(
+        "runloop",
+        detail
+          ? `could not create unprivileged bot user '${FLOK_BOT_USER}' (${detail})`
+          : `could not create unprivileged bot user '${FLOK_BOT_USER}' on this computer`,
+      );
+    }
+    this.botUserReady = true;
+  }
+
+  private async ensureControlPlaneDir(): Promise<void> {
+    const dir = shellSingle(CONTROL_PLANE_DIR);
+    const mkdir = await this.box.cmd.exec(
+      `mkdir -p ${dir} && if [ -L ${dir} ]; then echo refusing symlink ${dir} >&2; exit 1; fi && chown -h root:root ${dir} && chmod 0700 ${dir}`,
+    );
+    if ((mkdir.exitCode ?? 1) !== 0) {
+      throw new ProviderUnavailable(
+        "runloop",
+        `control-plane helper dir failed: ${await mkdir.stderr()}`,
+      );
+    }
+  }
+
+  private async writeControlPlaneHelpers(): Promise<void> {
+    await this.ensureControlPlaneDir();
+    await this.box.file.write({
+      file_path: ENSURE_SCRIPT_PATH,
+      contents: ENSURE_INTERACTIVE_SH,
+    });
+    await this.box.file.write({
+      file_path: CDP_HELPER_PATH,
+      contents: CDP_AX_HELPER_JS,
+    });
+    await this.box.file.write({
+      file_path: CDP_NAV_HELPER_PATH,
+      contents: CDP_NAV_HELPER_JS,
+    });
+    await this.box.file.write({
+      file_path: EXECVP_PATH,
+      contents: EXECVP_PY,
+    });
+  }
+
   /**
    * Lock root-executed guest helpers via Devbox-root cmd.exec (not execvp.py).
-   * flok-ui must not be able to replace anything root later runs.
+   * The bot user and flok-ui must not replace anything root later runs.
    */
   private async lockRootExecutedAssets(): Promise<void> {
-    const dir = shellSingle(INTERACTIVE_DIR);
+    const dir = shellSingle(CONTROL_PLANE_DIR);
     const execvp = shellSingle(EXECVP_PATH);
     const script = shellSingle(ENSURE_SCRIPT_PATH);
-    const fixture = shellSingle(FIXTURE_PATH);
+    const botUser = shellSingle(CONTROL_PLANE_BOT_USER_PATH);
     const cdpHelper = shellSingle(CDP_HELPER_PATH);
+    const cdpNav = shellSingle(CDP_NAV_HELPER_PATH);
+    const leftover = shellSingle(`${RUNLOOP_WORKSPACE_ROOT}/.flok`);
     const lock = await this.box.cmd.exec(
       [
-        `chown root:root ${dir}`,
-        `chmod 755 ${dir}`,
-        `if [ -f ${execvp} ]; then chown root:root ${execvp} && chmod 755 ${execvp}; fi`,
-        `if [ -f ${script} ]; then chown root:root ${script} && chmod 755 ${script}; fi`,
-        `if [ -f ${fixture} ]; then chown root:root ${fixture} && chmod 644 ${fixture}; fi`,
-        `if [ -f ${cdpHelper} ]; then chown root:root ${cdpHelper} && chmod 755 ${cdpHelper}; fi`,
+        `mkdir -p ${dir}`,
+        `if [ -L ${dir} ]; then echo refusing symlink ${dir} >&2; exit 1; fi`,
+        `chown -h root:root ${dir}`,
+        `chmod 0700 ${dir}`,
+        `if [ -f ${execvp} ] && [ ! -L ${execvp} ]; then chown -h root:root ${execvp} && chmod 0700 ${execvp}; fi`,
+        `if [ -f ${script} ] && [ ! -L ${script} ]; then chown -h root:root ${script} && chmod 0700 ${script}; fi`,
+        `if [ -f ${botUser} ] && [ ! -L ${botUser} ]; then chown -h root:root ${botUser} && chmod 0700 ${botUser}; fi`,
+        `if [ -f ${cdpHelper} ] && [ ! -L ${cdpHelper} ]; then chown -h root:root ${cdpHelper} && chmod 0700 ${cdpHelper}; fi`,
+        `if [ -f ${cdpNav} ] && [ ! -L ${cdpNav} ]; then chown -h root:root ${cdpNav} && chmod 0700 ${cdpNav}; fi`,
+        `rm -rf ${leftover}`,
       ].join(" && "),
     );
     if ((lock.exitCode ?? 1) !== 0) {
@@ -742,35 +930,65 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
     }
   }
 
-  private async enforceResolved(path: string): Promise<RunloopFsResult> {
+  /**
+   * Lexical jail only. Customer fs never realpath-then-act as another user.
+   * Guest Python opens with O_NOFOLLOW as `flok`.
+   */
+  private customerJail(path: string): RunloopFsResult {
     try {
       assertInsideRoot(path, RUNLOOP_WORKSPACE_ROOT);
     } catch {
       return { ok: false, errorCode: "PATH_ESCAPE" };
     }
-    const r = await this.execPython(
-      `import os,sys; print(os.path.realpath(sys.argv[1]))`,
-      [path],
-    );
-    if (r.exitCode !== 0) {
-      // path may not exist yet (mkdir/write); lexical jail already applied
-      return { ok: true };
+    if (isReservedControlPlanePath(path)) {
+      return { ok: false, errorCode: "PERMISSION_DENIED" };
     }
-    const resolved = r.stdout.trim();
-    try {
-      assertInsideRoot(resolved, RUNLOOP_WORKSPACE_ROOT);
-      return { ok: true };
-    } catch {
-      return { ok: false, errorCode: "PATH_ESCAPE" };
-    }
+    return { ok: true };
   }
 
-  private async execPython(code: string, argv: string[]): Promise<RunloopExecResult> {
-    const payload = {
-      argv: ["python3", "-c", code, ...argv],
+  /** Platform-only mkdir (Chrome profile / screenshot dir). Not computer_fs. */
+  private async controlPlaneMkdir(path: string): Promise<RunloopFsResult> {
+    const r = await this.execPython(GUEST_PRIV_MKDIR_PY, [path], { privileged: true });
+    if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+    return { ok: true };
+  }
+
+  /** Platform-only read of a file the graphical stack just wrote. Not computer_fs. */
+  private async controlPlaneRead(path: string): Promise<RunloopFsResult<Buffer>> {
+    const r = await this.execPython(GUEST_PRIV_READ_B64_PY, [path], { privileged: true });
+    if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+    return { ok: true, data: bufferFromBase64Stdout(r.stdout) };
+  }
+
+  private async controlPlaneDelete(path: string): Promise<RunloopFsResult> {
+    const r = await this.execPython(GUEST_PRIV_DELETE_PY, [path], { privileged: true });
+    if (r.exitCode !== 0) return { ok: false, errorCode: classifyFs(r.stderr) };
+    return { ok: true };
+  }
+
+  private async execPython(
+    code: string,
+    argv: string[],
+    opts?: { privileged?: boolean; stdin?: Buffer },
+  ): Promise<RunloopExecResult> {
+    const guestArgv = ["python3", "-c", code, ...argv];
+    const payload: { argv: string[]; cwd: string; stdin_b64?: string } = {
+      argv: opts?.privileged === true ? guestArgv : argvAsBotUser(guestArgv),
       cwd: RUNLOOP_WORKSPACE_ROOT,
     };
+    if (opts?.stdin !== undefined) {
+      payload.stdin_b64 = opts.stdin.toString("base64");
+      return this.execViaSpecFile(payload);
+    }
     const b64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
+    return this.execViaArgvSpec(b64);
+  }
+
+  /**
+   * Small specs stay on argv. Write bodies never do — Linux MAX_ARG_STRLEN
+   * is 128 KiB and a double-base64 body hits E2BIG near 72 KB.
+   */
+  private async execViaArgvSpec(b64: string): Promise<RunloopExecResult> {
     const command = `python3 ${shellSingle(EXECVP_PATH)} ${b64}`;
     try {
       const result = await this.box.cmd.exec(command, { optimistic_timeout: 15 });
@@ -789,32 +1007,52 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
       };
     }
   }
+
+  /** Control-plane staging only. Customer computer_fs paths never use box.file. */
+  private async execViaSpecFile(payload: {
+    argv: string[];
+    cwd: string;
+    stdin_b64?: string;
+  }): Promise<RunloopExecResult> {
+    const specPath = uniqueControlPlaneFsSpecPath();
+    await this.box.file.write({
+      file_path: specPath,
+      contents: JSON.stringify(payload),
+    });
+    const spec = shellSingle(specPath);
+    const execvp = shellSingle(EXECVP_PATH);
+    try {
+      const result = await this.box.cmd.exec(`python3 ${execvp} --spec-file ${spec}`, {
+        optimistic_timeout: 15,
+      });
+      return {
+        exitCode: result.exitCode ?? 1,
+        stdout: await result.stdout(),
+        stderr: await result.stderr(),
+        timedOut: false,
+      };
+    } catch (e) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: e instanceof Error ? e.message : String(e),
+        timedOut: false,
+      };
+    } finally {
+      await this.box.cmd.exec(`rm -f ${spec}`);
+    }
+  }
 }
 
 function mapStatus(status: string): RunloopDevboxState {
-  switch (status) {
-    case "running":
-      return "running";
-    case "suspended":
-    case "suspending":
-      return "paused";
-    case "shutdown":
-      return "stopped";
-    case "failure":
-      return "error";
-    case "provisioning":
-    case "initializing":
-    case "queued":
-    case "scheduled":
-    case "resuming":
-      return "provisioning";
-    default:
-      return "error";
-  }
+  return mapRunloopDevboxStatus(status);
 }
 
 function classifyFs(err: unknown): string {
   const s = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  if (s.includes("file too large")) {
+    return "FILE_TOO_LARGE";
+  }
   if (s.includes("permission") || s.includes("denied") || s.includes("read-only")) {
     return "PERMISSION_DENIED";
   }

@@ -1,0 +1,424 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "react";
+import { DESKTOP_POLL_MS, desktopPollDelay } from "@/lib/desks/desktop-poll";
+import {
+  SCROLL_BURST_MS,
+  emptyScrollBurst,
+  noteWheelTick,
+  scrollSendFinished,
+  scrollToSend,
+} from "@/lib/desks/scroll-burst";
+
+type DesktopMode = "view" | "control";
+
+function desktopUrl(computerId: string): string {
+  return `/api/setup/computers/${encodeURIComponent(computerId)}/desktop`;
+}
+
+async function desktopPost(
+  computerId: string,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  return fetch(desktopUrl(computerId), {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function mapKey(event: KeyboardEvent): { type: "key" | "type"; key?: string; text?: string } | null {
+  if (event.ctrlKey || event.metaKey) {
+    const letter = event.key.toLowerCase();
+    const combo = `ctrl+${letter}`;
+    if (["ctrl+l", "ctrl+t", "ctrl+w", "ctrl+r", "ctrl+a", "ctrl+c", "ctrl+v"].includes(combo)) {
+      return { type: "key", key: combo };
+    }
+    return null;
+  }
+  switch (event.key) {
+    case "Enter":
+      return { type: "key", key: "Return" };
+    case "Backspace":
+      return { type: "key", key: "BackSpace" };
+    case "Escape":
+      return { type: "key", key: "Escape" };
+    case "Tab":
+      return { type: "key", key: "Tab" };
+    case " ":
+      return { type: "key", key: "space" };
+    case "Delete":
+      return { type: "key", key: "Delete" };
+    case "ArrowUp":
+      return { type: "key", key: "Up" };
+    case "ArrowDown":
+      return { type: "key", key: "Down" };
+    case "ArrowLeft":
+      return { type: "key", key: "Left" };
+    case "ArrowRight":
+      return { type: "key", key: "Right" };
+    case "Home":
+      return { type: "key", key: "Home" };
+    case "End":
+      return { type: "key", key: "End" };
+    case "F5":
+      return { type: "key", key: "F5" };
+    default:
+      if (event.key.length === 1) return { type: "type", text: event.key };
+      return null;
+  }
+}
+
+export function ComputerScreen({
+  computerId,
+  label,
+  initialState,
+  needsWake: initialNeedsWake,
+}: {
+  computerId: string;
+  label: string;
+  initialState: string;
+  needsWake: boolean;
+}) {
+  const [token, setToken] = useState<string | null>(null);
+  const [mode, setMode] = useState<DesktopMode>("view");
+  const [state, setState] = useState(initialState);
+  const [needsWake, setNeedsWake] = useState(initialNeedsWake);
+  const [screenshot, setScreenshot] = useState<string | null>(null);
+  const [screenWidth, setScreenWidth] = useState(1440);
+  const [screenHeight, setScreenHeight] = useState(900);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const tokenRef = useRef<string | null>(null);
+  const modeRef = useRef<DesktopMode>("view");
+  const inFlightRef = useRef(false);
+  const lastErrorRef = useRef(false);
+  const lastDelayRef = useRef(DESKTOP_POLL_MS);
+  const scrollRef = useRef(emptyScrollBurst());
+  const scrollTimerRef = useRef<number | undefined>(undefined);
+  const scrollEpochRef = useRef(0);
+  const flushScrollBurstRef = useRef<() => void>(() => {});
+
+  const dropScrollBurst = useCallback(() => {
+    scrollEpochRef.current += 1;
+    if (scrollTimerRef.current !== undefined) {
+      window.clearTimeout(scrollTimerRef.current);
+      scrollTimerRef.current = undefined;
+    }
+    scrollRef.current = emptyScrollBurst();
+  }, []);
+
+  const applyMode = useCallback(
+    (next: DesktopMode) => {
+      modeRef.current = next;
+      setMode(next);
+      if (next !== "control") dropScrollBurst();
+    },
+    [dropScrollBurst],
+  );
+
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+  useEffect(() => {
+    modeRef.current = mode;
+    if (mode !== "control") dropScrollBurst();
+  }, [dropScrollBurst, mode]);
+  useEffect(() => {
+    return () => {
+      dropScrollBurst();
+    };
+  }, [dropScrollBurst]);
+
+  const applyStatus = useCallback((body: { state?: unknown; needsWake?: unknown }) => {
+    if (typeof body.state === "string") setState(body.state);
+    if (typeof body.needsWake === "boolean") setNeedsWake(body.needsWake);
+  }, []);
+
+  const openSession = useCallback(async () => {
+    const res = await desktopPost(computerId, { action: "open" });
+    const body = (await res.json()) as {
+      ok?: boolean;
+      token?: string;
+      mode?: DesktopMode;
+      message?: string;
+      state?: string;
+      needsWake?: boolean;
+    };
+    if (!res.ok || !body.token) {
+      setMessage(body.message ?? "Could not open the screen.");
+      return;
+    }
+    setToken(body.token);
+    applyMode(body.mode === "control" ? "control" : "view");
+    applyStatus(body);
+  }, [applyMode, applyStatus, computerId]);
+
+  const pullScreen = useCallback(async () => {
+    const current = tokenRef.current;
+    if (!current) return;
+    if (inFlightRef.current) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    inFlightRef.current = true;
+    try {
+      const res = await desktopPost(computerId, { action: "screen", token: current });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        message?: string;
+        reason?: string;
+        screenshot?: string;
+        screenWidth?: number;
+        screenHeight?: number;
+        state?: string;
+        needsWake?: boolean;
+      };
+      if (res.status === 401 && (body.reason === "expired" || body.reason === "revoked")) {
+        lastErrorRef.current = false;
+        setToken(null);
+        applyMode("view");
+        setMessage(body.message ?? "That screen session expired.");
+        return;
+      }
+      if (!res.ok) {
+        lastErrorRef.current = true;
+        setMessage(body.message ?? "The screen is not available.");
+        return;
+      }
+      lastErrorRef.current = false;
+      lastDelayRef.current = DESKTOP_POLL_MS;
+      applyStatus(body);
+      if (typeof body.screenshot === "string") setScreenshot(body.screenshot);
+      if (typeof body.screenWidth === "number") setScreenWidth(body.screenWidth);
+      if (typeof body.screenHeight === "number") setScreenHeight(body.screenHeight);
+    } catch {
+      lastErrorRef.current = true;
+      setMessage("The screen is not available.");
+    } finally {
+      inFlightRef.current = false;
+    }
+  }, [applyMode, applyStatus, computerId]);
+
+  useEffect(() => {
+    void openSession();
+  }, [openSession]);
+
+  useEffect(() => {
+    if (!token || needsWake) return;
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    const schedule = (): void => {
+      const delay = desktopPollDelay({
+        inFlight: inFlightRef.current,
+        hidden: typeof document !== "undefined" && document.visibilityState === "hidden",
+        lastError: lastErrorRef.current,
+        lastDelayMs: lastDelayRef.current,
+      });
+      if (delay === null) return;
+      lastDelayRef.current = delay;
+      timeoutId = window.setTimeout(() => {
+        void run();
+      }, delay);
+    };
+
+    const run = async (): Promise<void> => {
+      if (cancelled) return;
+      await pullScreen();
+      if (cancelled) return;
+      schedule();
+    };
+
+    lastErrorRef.current = false;
+    lastDelayRef.current = DESKTOP_POLL_MS;
+    void run();
+
+    const onVisibility = (): void => {
+      if (cancelled) return;
+      if (typeof document === "undefined") return;
+      if (document.visibilityState === "hidden") {
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+        timeoutId = undefined;
+        return;
+      }
+      lastErrorRef.current = false;
+      lastDelayRef.current = DESKTOP_POLL_MS;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      void run();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [needsWake, pullScreen, token]);
+
+  useEffect(() => {
+    return () => {
+      const current = tokenRef.current;
+      if (!current) return;
+      void desktopPost(computerId, { action: "close", token: current });
+    };
+  }, [computerId]);
+
+  async function wake(): Promise<void> {
+    if (busy) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const res = await desktopPost(computerId, { action: "wake" });
+      const body = (await res.json()) as { ok?: boolean; message?: string; state?: string; needsWake?: boolean };
+      if (!res.ok) {
+        setMessage(body.message ?? "This computer could not wake.");
+        return;
+      }
+      applyStatus(body);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleControl(): Promise<void> {
+    const current = tokenRef.current;
+    if (!current || busy) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const action = modeRef.current === "control" ? "hand_back" : "take_control";
+      const res = await desktopPost(computerId, { action, token: current });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        token?: string;
+        mode?: DesktopMode;
+        message?: string;
+      };
+      if (!res.ok || !body.token) {
+        setMessage(body.message ?? "Could not change control.");
+        return;
+      }
+      setToken(body.token);
+      applyMode(body.mode === "control" ? "control" : "view");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendActions(actions: Array<Record<string, unknown>>): Promise<void> {
+    const current = tokenRef.current;
+    if (!current || modeRef.current !== "control") return;
+    await desktopPost(computerId, { action: "act", token: current, actions });
+  }
+
+  function onFrameClick(event: MouseEvent<HTMLDivElement>): void {
+    if (mode !== "control") return;
+    const img = frameRef.current?.querySelector("img");
+    const box = img?.getBoundingClientRect() ?? frameRef.current?.getBoundingClientRect();
+    if (!box || box.width <= 0 || box.height <= 0) return;
+    const x = Math.floor(((event.clientX - box.left) / box.width) * screenWidth);
+    const y = Math.floor(((event.clientY - box.top) / box.height) * screenHeight);
+    if (x < 0 || y < 0 || x >= screenWidth || y >= screenHeight) return;
+    void sendActions([{ type: "click_coordinates", x, y }]);
+  }
+
+  function armScrollBurst(): void {
+    if (scrollTimerRef.current !== undefined) return;
+    if (scrollRef.current.sending) return;
+    if (scrollRef.current.pending === 0) return;
+    if (modeRef.current !== "control") return;
+    scrollTimerRef.current = window.setTimeout(() => {
+      scrollTimerRef.current = undefined;
+      flushScrollBurstRef.current();
+    }, SCROLL_BURST_MS);
+  }
+
+  function flushScrollBurst(): void {
+    const epoch = scrollEpochRef.current;
+    if (modeRef.current !== "control") {
+      dropScrollBurst();
+      return;
+    }
+    const decision = scrollToSend(scrollRef.current);
+    if (!decision) return;
+    scrollRef.current = decision.next;
+    void sendActions([{ type: "scroll", x: 0, y: decision.y }]).finally(() => {
+      if (scrollEpochRef.current !== epoch) return;
+      scrollRef.current = scrollSendFinished(scrollRef.current);
+      if (modeRef.current !== "control") return;
+      armScrollBurst();
+    });
+  }
+
+  flushScrollBurstRef.current = flushScrollBurst;
+
+  function onFrameWheel(event: WheelEvent<HTMLDivElement>): void {
+    if (mode !== "control") return;
+    event.preventDefault();
+    // One command for the burst. A guest command per tick blocks the next screenshot.
+    scrollRef.current = noteWheelTick(scrollRef.current, event.deltaY);
+    armScrollBurst();
+  }
+
+  useEffect(() => {
+    if (mode !== "control") return;
+    const onKey = (event: KeyboardEvent) => {
+      const mapped = mapKey(event);
+      if (!mapped) return;
+      event.preventDefault();
+      void sendActions([mapped]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mode]);
+
+  const stateLabel = state.replaceAll("_", " ");
+
+  return (
+    <div className="paper rack">
+      <section className="bay">
+        <p className="kicker">Computer</p>
+        <h1>{label}</h1>
+        <p>{stateLabel}</p>
+        {mode === "control" ? (
+          <p className="banner" role="status">
+            You have control
+          </p>
+        ) : (
+          <p>Viewing only</p>
+        )}
+        {needsWake ? (
+          <>
+            <p>This computer is asleep. Wake it to watch the screen.</p>
+            <button className="key wide" type="button" disabled={busy} onClick={() => void wake()}>
+              Wake
+            </button>
+          </>
+        ) : (
+          <>
+            <div
+              ref={frameRef}
+              className={mode === "control" ? "screen-frame control" : "screen-frame"}
+              onClick={onFrameClick}
+              onWheel={onFrameWheel}
+            >
+              {screenshot ? (
+                <img src={`data:image/png;base64,${screenshot}`} alt="Live computer screen" />
+              ) : (
+                <p className="screen-wait">Waiting for the screen</p>
+              )}
+            </div>
+            <button className="ghost wide" type="button" disabled={busy || !token} onClick={() => void toggleControl()}>
+              {mode === "control" ? "Hand back" : "Take control"}
+            </button>
+          </>
+        )}
+        <a className="ghost wide" href="/setup">
+          Back to account
+        </a>
+        {message ? <p className="note">{message}</p> : null}
+      </section>
+    </div>
+  );
+}

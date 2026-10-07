@@ -5,6 +5,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  ComputerService,
+  FakeProvider,
   generatePairCode,
   hashPairCode,
   validatePairCode,
@@ -91,6 +93,33 @@ describe("pairing", () => {
           expiresAt,
           usedAt: null,
           attemptCount: 5,
+        }),
+      (err: unknown) => err instanceof PairCodeInvalid,
+    );
+  });
+});
+
+describe("ComputerService pair-key revoke", () => {
+  it("lists digest-only rows and burns unused codes", async () => {
+    const service = new ComputerService(new FakeProvider());
+    const computer = await service.requestComputer({
+      birdId: "bird-pair-revoke",
+      flockId: "flock-pair-revoke",
+    });
+    const issued = await service.issuePairCode(computer.id);
+    const listed = service.listPairCodes(computer.id);
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0]?.id, issued.id);
+    assert.equal("code" in listed[0]!, false);
+    assert.equal(listed[0]?.codeDigest, hashPairCode(issued.code));
+
+    const burned = await service.revokeUnusedPairCodes(computer.id);
+    assert.equal(burned, 1);
+    await assert.rejects(
+      () =>
+        service.pair(issued.code, {
+          birdId: "bird-pair-revoke",
+          flockId: "flock-pair-revoke",
         }),
       (err: unknown) => err instanceof PairCodeInvalid,
     );
