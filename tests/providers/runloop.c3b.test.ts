@@ -743,7 +743,7 @@ describe("C3B Chrome readiness classification", () => {
     assert.match(CHROME_READY_PROBE_PY, /flok-ui/);
     assert.match(CHROME_READY_PROBE_PY, /unprivileged_userns_clone/);
     assert.equal(CHROME_LOG_PATH, "/tmp/flok-chrome.log");
-    assert.equal(CHROME_READY_TIMEOUT_MS, 20_000);
+    assert.equal(CHROME_READY_TIMEOUT_MS, 45_000);
     assert.equal(CHROME_READY_POLL_MS, 500);
   });
 });

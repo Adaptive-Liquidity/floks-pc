@@ -44,7 +44,8 @@ export function cdpReadyProbeArgv(): string[] {
     [
       "import urllib.request,sys",
       "try:",
-      `    urllib.request.urlopen(${JSON.stringify(CDP_VERSION_URL)}, timeout=1)`,
+      "    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))",
+      `    opener.open(${JSON.stringify(CDP_VERSION_URL)}, timeout=1)`,
       "    print('cdp-ready')",
       "except Exception:",
       "    print('cdp-down')",
@@ -166,7 +167,7 @@ export async function ensureManagedBrowser(opts: {
 }): Promise<{ started: boolean; readyMs: number }> {
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const timeoutMs = opts.timeoutMs ?? 20_000;
+  const timeoutMs = opts.timeoutMs ?? 45_000;
   const pollMs = opts.pollMs ?? 500;
   const startedAt = now();
   await opts.exec(fixtureCleanupArgv());

@@ -20,6 +20,7 @@ import {
   uniqueObsShotPath,
   CHROME_LOG_PATH,
   CHROME_READY_PROBE_PY,
+  CHROME_READY_TIMEOUT_MS,
   CDP_AX_HELPER_JS,
   CDP_HELPER_PATH,
   CDP_NODE_BIN,
@@ -530,7 +531,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   }
 
   private async finishBrowser(opts?: { browser?: "strict" | "best-effort" }): Promise<void> {
-    const budgetMs = opts?.browser === "best-effort" ? 5_000 : 20_000;
+    const budgetMs = opts?.browser === "best-effort" ? 5_000 : CHROME_READY_TIMEOUT_MS;
     try {
       await this.ensureBrowser(budgetMs);
     } catch (err) {
@@ -655,7 +656,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
   }
 
   /** One flok-ui Chrome at about:blank. A fixture process on 9222 is killed first. */
-  private async ensureBrowser(budgetMs = 20_000): Promise<void> {
+  private async ensureBrowser(budgetMs = CHROME_READY_TIMEOUT_MS): Promise<void> {
     if (!this.interactiveGuest) return;
     try {
       await ensureManagedBrowser({
@@ -669,7 +670,7 @@ class SdkRunloopDevbox implements RunloopDevboxSession {
         launchArgv: this.chromePopenArgv(BROWSER_START_URL),
       });
     } catch (err) {
-      if (budgetMs < 20_000) throw err;
+      if (budgetMs < CHROME_READY_TIMEOUT_MS) throw err;
       if (err instanceof BrowserNotReady) {
         throw new ProviderUnavailable("runloop", await this.chromeReadyFailure());
       }

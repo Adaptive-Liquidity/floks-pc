@@ -42,6 +42,8 @@ describe("C7 Chrome loopback CDP argv", () => {
     assert.ok(chrome.includes(`--remote-debugging-port=${CDP_DEBUG_PORT}`));
     assert.ok(chrome.includes(`--remote-debugging-address=${CDP_DEBUG_ADDRESS}`));
     assert.ok(chrome.includes("--remote-allow-origins=*"));
+    assert.ok(chrome.includes("--disable-background-networking"));
+    assert.ok(chrome.includes("DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1500/bus"));
     assert.equal(CDP_DEBUG_ADDRESS, "127.0.0.1");
     assert.equal(CDP_DEBUG_PORT, 9222);
     assert.equal(chrome.includes("0.0.0.0"), false);

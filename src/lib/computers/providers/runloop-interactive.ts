@@ -200,6 +200,7 @@ export function argvAsUiUser(argv: string[]): string[] {
     `DISPLAY=${FLOK_DISPLAY}`,
     `HOME=${FLOK_UI_HOME}`,
     `XDG_RUNTIME_DIR=${FLOK_UI_XDG_RUNTIME}`,
+    `DBUS_SESSION_BUS_ADDRESS=unix:path=${FLOK_UI_XDG_RUNTIME}/bus`,
     ...argv,
   ];
 }
@@ -214,6 +215,11 @@ export function chromeLaunchArgv(url: string): string[] {
     `--app=${url}`,
     "--no-first-run",
     "--disable-sync",
+    // The guest network drops Google. Without these, Chrome waits on that
+    // traffic and never opens the debugging port.
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--disable-breakpad",
     `--remote-debugging-port=${CDP_DEBUG_PORT}`,
     `--remote-debugging-address=${CDP_DEBUG_ADDRESS}`,
     // Node's WebSocket sends no Origin; Chrome 128+ closes the upgrade otherwise.
@@ -225,7 +231,7 @@ export function chromeLaunchArgv(url: string): string[] {
 /** Guest-local Chrome startup log. Not an audit artifact; truncated in diagnostics. */
 export const CHROME_LOG_PATH = "/tmp/flok-chrome.log";
 export const CHROME_HOME_FALLBACK_DIR = `${FLOK_UI_HOME}/.config/google-chrome`;
-export const CHROME_READY_TIMEOUT_MS = 20_000;
+export const CHROME_READY_TIMEOUT_MS = 45_000;
 export const CHROME_READY_POLL_MS = 500;
 const CHROME_LOG_TAIL_CHARS = 4096;
 const PROFILE_TEST_MARKERS = new Set(["c3b-marker", "last-url", "launched"]);
@@ -687,6 +693,20 @@ chown -h "$UI_USER:$UI_USER" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 chmod 1777 /tmp/.X11-unix || true
 chown -h "$UI_USER:$UI_USER" "$RUNDIR" || true
+# Chrome stalls on a missing bus and never opens its debugging port.
+if [ ! -S /run/dbus/system_bus_socket ] && command -v dbus-daemon >/dev/null 2>&1; then
+  mkdir -p /run/dbus
+  dbus-daemon --system --fork || true
+fi
+SESSION_BUS="$XDG_RUNTIME_DIR/bus"
+if [ ! -S "$SESSION_BUS" ] && command -v dbus-daemon >/dev/null 2>&1; then
+  runuser -u "$UI_USER" -- dbus-daemon --session --address="unix:path=$SESSION_BUS" --nofork --nopidfile >>/tmp/flok-dbus.log 2>&1 &
+  echo $! > "$RUNDIR/dbus.pid"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -S "$SESSION_BUS" ] && break
+    sleep 0.1
+  done
+fi
 # Control-plane helpers live in /var/lib/flok (root 0700), never the customer workspace.
 CTRL="\${FLOK_CONTROL_PLANE_DIR:-/var/lib/flok}"
 mkdir -p "$CTRL"
@@ -748,6 +768,7 @@ start_ui() {
       DISPLAY="$DISPLAY" \\
       HOME="$UI_HOME" \\
       XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \\
+      DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus" \\
       sh -c 'log="$1"; shift; nohup "$@" >>"$log" 2>&1 & echo $!' sh "$logfile" "$@"
   )"
   echo "$pid" > "$pidfile"
@@ -767,7 +788,7 @@ if ! alive "$RUNDIR/openbox.pid"; then
   start_ui openbox openbox
 fi
 if command -v xsetroot >/dev/null 2>&1; then
-  runuser -u "$UI_USER" -- env DISPLAY="$DISPLAY" HOME="$UI_HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" xsetroot -solid '#1f2933' || true
+  runuser -u "$UI_USER" -- env DISPLAY="$DISPLAY" HOME="$UI_HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus" xsetroot -solid '#1f2933' || true
 fi
 if command -v x11vnc >/dev/null 2>&1 && ! alive "$RUNDIR/x11vnc.pid"; then
   start_ui x11vnc x11vnc -display "$DISPLAY" -localhost -nopw -forever -shared -rfbport 5900
