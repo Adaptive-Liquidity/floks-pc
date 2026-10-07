@@ -745,4 +745,42 @@ describe("owner computer dashboard", { concurrency: 1 }, () => {
       assert.equal(body.actions?.restart, false, state);
     }
   });
+
+  it("unlocks resume and restart after a provisioning computer with no provider ref", async () => {
+    const store = new MemoryControlPlaneStore();
+    const service = new ComputerService(new FakeProvider(), {
+      store,
+      activityStore: new MemoryActivityStore(),
+    });
+    setComputerServiceForTests(service);
+    const computer = await seatWithComputer("owner@example.com", service, "bird-nostart");
+    const snap = await store.load();
+    assert.ok(snap);
+    const row = snap.computers.find((item) => item.id === computer.id);
+    assert.ok(row);
+    row.state = "provisioning";
+    row.providerRef = null;
+    await store.save(snap);
+    await service.reloadIfRevisionChanged();
+
+    const life = await getLifecycle(getReq(computer.id, "owner@example.com"), params(computer.id));
+    assert.equal(life.status, 200);
+    const body = (await life.json()) as {
+      status?: string;
+      actions?: { pause: boolean; resume: boolean; restart: boolean };
+    };
+    assert.equal(body.status, "stopped");
+    assert.deepEqual(body.actions, { pause: false, resume: true, restart: true });
+    assert.equal((await service.get(computer.id)).state, "error");
+    assert.equal((await service.get(computer.id)).providerRef, null);
+
+    const restart = await postLifecycle(
+      postReq(computer.id, "owner@example.com", { action: "restart" }),
+      params(computer.id),
+    );
+    assert.equal(restart.status, 200);
+    const after = await service.get(computer.id);
+    assert.equal(after.state, "ready");
+    assert.ok(after.providerRef);
+  });
 });

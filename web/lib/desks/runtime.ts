@@ -157,9 +157,10 @@ export async function desksForSeats(seats: SeatRecord[]): Promise<DeskRecord[]> 
     }
     for (let i = 0; i < slots; i++) {
       const knownId = seat.computerIds[i] ?? (i === 0 ? seat.computerId : null);
-      const computer =
+      const found =
         (knownId ? await safeGet(service, knownId) : null) ??
         (await service.getByBird(birdIdForSeat(seat, i)));
+      const computer = found ? await service.failProvisioningWithoutRef(found.id) : null;
       const codes = computer ? service.listPairCodes(computer.id) : [];
       const pairStatus = computer ? service.pairStatus(computer.id) : "unpaired";
       out.push(

@@ -525,8 +525,13 @@ export class ComputerService {
     computer = this.applyTransition(computer, "provisioning");
     await this.persist();
 
-    // Call provider
-    const provisioned = await this.provider.provision(spec);
+    let provisioned;
+    try {
+      provisioned = await this.provider.provision(spec);
+    } catch (err) {
+      await this.failProvisioningWithoutRef(computer.id);
+      throw err;
+    }
 
     // provisioning → ready
     computer = {
@@ -1757,10 +1762,62 @@ export class ComputerService {
     });
   }
 
+  /**
+   * A start that never received a provider ref is not still coming up.
+   * provisioning → error. A later status load uses the same rule.
+   */
+  async failProvisioningWithoutRef(computerId: string): Promise<Computer> {
+    const computer = await this.get(computerId);
+    if (computer.state !== "provisioning" || computer.providerRef !== null) return computer;
+    const failed = this.applyTransition(computer, "error");
+    await this.persist();
+    return failed;
+  }
+
+  private neverStarted(computer: Computer): boolean {
+    return computer.providerRef === null && (computer.state === "error" || computer.state === "provisioning");
+  }
+
+  /** Resume or restart of a failed start. error → recovering → ready. */
+  private async launchNeverStarted(computer: Computer): Promise<Computer> {
+    let current = await this.failProvisioningWithoutRef(computer.id);
+    if (current.providerRef !== null) return current;
+    if (current.state !== "error") return current;
+    current = this.applyTransition(current, "recovering");
+    await this.persist();
+    try {
+      const created = await this.provider.provision({
+        birdId: current.birdId,
+        flockId: current.flockId,
+        osType: current.osType,
+        ...(current.computerClass ? { computerClass: current.computerClass } : {}),
+        ...(current.cpu !== null ? { cpu: current.cpu } : {}),
+        ...(current.memoryMb !== null ? { memoryMb: current.memoryMb } : {}),
+        ...(current.diskGb !== null ? { diskGb: current.diskGb } : {}),
+        ...(current.baseImageVersion ? { baseImageVersion: current.baseImageVersion } : {}),
+      });
+      const withRef: Computer = {
+        ...(await this.get(current.id)),
+        providerRef: created.providerRef,
+      };
+      this.computers.set(current.id, withRef);
+      this.applyTransition(withRef, "ready");
+      return this.patchComputer(current.id, { recoveryNote: null, rebuildConfirmRequired: false });
+    } catch (err) {
+      const latest = await this.get(current.id);
+      if (latest.state === "recovering") {
+        this.applyTransition(latest, "error");
+        await this.persist();
+      }
+      throw err;
+    }
+  }
+
   async status(auth: ComputerOperationAuth, computerId: string): Promise<ComputerStatus> {
     await this.reloadIfRevisionChanged();
     const authorized = this.authorize(auth, computerId, "status");
-    const computer = await this.ensureAwake(authorized.computer);
+    const awake = await this.ensureAwake(authorized.computer);
+    const computer = await this.failProvisioningWithoutRef(awake.id);
     const result: ComputerStatus = { state: computer.state };
     if (computer.lastActiveAt !== null) {
       result.lastActiveAt = computer.lastActiveAt;
@@ -2026,6 +2083,7 @@ export class ComputerService {
   private async wakeThisComputerLocked(computerId: string): Promise<Computer> {
     const current = await this.get(computerId);
     await this.requireWakeAdmission(computerId);
+    if (this.neverStarted(current)) return this.launchNeverStarted(current);
     if (current.state === "ready" || current.state === "running") return current;
     let computer = current.state === "waking" ? current : this.applyTransition(current, "waking");
     await this.persist();
@@ -2107,6 +2165,7 @@ export class ComputerService {
       throw new ComputerNotFound(computerId);
     }
     await this.requireWakeAdmission(computerId);
+    if (this.neverStarted(computer)) return this.launchNeverStarted(computer);
     if (!isRestartableState(computer.state)) {
       throw new RestartNotAvailable(computer.state);
     }

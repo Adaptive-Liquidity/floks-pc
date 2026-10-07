@@ -6,6 +6,7 @@ import { getComputerService } from "../desks/runtime";
 import {
   dashboardStatus,
   formatLastActive,
+  lifecycleActionsFor,
   lifecycleActionsForState,
   type DashboardStatus,
 } from "./dashboard";
@@ -70,7 +71,7 @@ export async function requireOwnedComputer(
   try {
     const service = await getComputerService();
     await service.reloadIfRevisionChanged();
-    const computer = await service.get(computerId);
+    const computer = await service.failProvisioningWithoutRef(computerId);
     return { ok: true, computer, computerId };
   } catch {
     return { ok: false, status: 404, body: { ok: false, message: "Computer not found." } };
@@ -87,12 +88,13 @@ export function ownerComputerPayload(computer: Computer): {
 } {
   const status = dashboardStatus(computer.state);
   const lastActiveAt = computer.lastActiveAt ? computer.lastActiveAt.toISOString() : null;
+  const failedStart = computer.state === "error" && computer.providerRef === null;
   return {
     computerId: computer.id,
     status,
     lastActiveAt,
     lastActiveLabel: formatLastActive(lastActiveAt),
-    actions: lifecycleActionsForState(computer.state),
+    actions: failedStart ? lifecycleActionsFor("stopped") : lifecycleActionsForState(computer.state),
     ...(computer.rebuildConfirmRequired ? { needsRebuildConfirm: true as const } : {}),
   };
 }
