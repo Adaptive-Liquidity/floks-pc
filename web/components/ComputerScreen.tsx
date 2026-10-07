@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "react";
 import { DESKTOP_POLL_MS, desktopPollDelay } from "@/lib/desks/desktop-poll";
+import {
+  SCROLL_BURST_MS,
+  emptyScrollBurst,
+  noteWheelTick,
+  scrollSendFinished,
+  scrollToSend,
+} from "@/lib/desks/scroll-burst";
 
 type DesktopMode = "view" | "control";
 
@@ -89,13 +96,41 @@ export function ComputerScreen({
   const inFlightRef = useRef(false);
   const lastErrorRef = useRef(false);
   const lastDelayRef = useRef(DESKTOP_POLL_MS);
+  const scrollRef = useRef(emptyScrollBurst());
+  const scrollTimerRef = useRef<number | undefined>(undefined);
+  const scrollEpochRef = useRef(0);
+  const flushScrollBurstRef = useRef<() => void>(() => {});
+
+  const dropScrollBurst = useCallback(() => {
+    scrollEpochRef.current += 1;
+    if (scrollTimerRef.current !== undefined) {
+      window.clearTimeout(scrollTimerRef.current);
+      scrollTimerRef.current = undefined;
+    }
+    scrollRef.current = emptyScrollBurst();
+  }, []);
+
+  const applyMode = useCallback(
+    (next: DesktopMode) => {
+      modeRef.current = next;
+      setMode(next);
+      if (next !== "control") dropScrollBurst();
+    },
+    [dropScrollBurst],
+  );
 
   useEffect(() => {
     tokenRef.current = token;
   }, [token]);
   useEffect(() => {
     modeRef.current = mode;
-  }, [mode]);
+    if (mode !== "control") dropScrollBurst();
+  }, [dropScrollBurst, mode]);
+  useEffect(() => {
+    return () => {
+      dropScrollBurst();
+    };
+  }, [dropScrollBurst]);
 
   const applyStatus = useCallback((body: { state?: unknown; needsWake?: unknown }) => {
     if (typeof body.state === "string") setState(body.state);
@@ -117,9 +152,9 @@ export function ComputerScreen({
       return;
     }
     setToken(body.token);
-    setMode(body.mode === "control" ? "control" : "view");
+    applyMode(body.mode === "control" ? "control" : "view");
     applyStatus(body);
-  }, [applyStatus, computerId]);
+  }, [applyMode, applyStatus, computerId]);
 
   const pullScreen = useCallback(async () => {
     const current = tokenRef.current;
@@ -142,7 +177,7 @@ export function ComputerScreen({
       if (res.status === 401 && (body.reason === "expired" || body.reason === "revoked")) {
         lastErrorRef.current = false;
         setToken(null);
-        setMode("view");
+        applyMode("view");
         setMessage(body.message ?? "That screen session expired.");
         return;
       }
@@ -163,7 +198,7 @@ export function ComputerScreen({
     } finally {
       inFlightRef.current = false;
     }
-  }, [applyStatus, computerId]);
+  }, [applyMode, applyStatus, computerId]);
 
   useEffect(() => {
     void openSession();
@@ -265,7 +300,7 @@ export function ComputerScreen({
         return;
       }
       setToken(body.token);
-      setMode(body.mode === "control" ? "control" : "view");
+      applyMode(body.mode === "control" ? "control" : "view");
     } finally {
       setBusy(false);
     }
@@ -288,12 +323,42 @@ export function ComputerScreen({
     void sendActions([{ type: "click_coordinates", x, y }]);
   }
 
+  function armScrollBurst(): void {
+    if (scrollTimerRef.current !== undefined) return;
+    if (scrollRef.current.sending) return;
+    if (scrollRef.current.pending === 0) return;
+    if (modeRef.current !== "control") return;
+    scrollTimerRef.current = window.setTimeout(() => {
+      scrollTimerRef.current = undefined;
+      flushScrollBurstRef.current();
+    }, SCROLL_BURST_MS);
+  }
+
+  function flushScrollBurst(): void {
+    const epoch = scrollEpochRef.current;
+    if (modeRef.current !== "control") {
+      dropScrollBurst();
+      return;
+    }
+    const decision = scrollToSend(scrollRef.current);
+    if (!decision) return;
+    scrollRef.current = decision.next;
+    void sendActions([{ type: "scroll", x: 0, y: decision.y }]).finally(() => {
+      if (scrollEpochRef.current !== epoch) return;
+      scrollRef.current = scrollSendFinished(scrollRef.current);
+      if (modeRef.current !== "control") return;
+      armScrollBurst();
+    });
+  }
+
+  flushScrollBurstRef.current = flushScrollBurst;
+
   function onFrameWheel(event: WheelEvent<HTMLDivElement>): void {
     if (mode !== "control") return;
     event.preventDefault();
-    const y = event.deltaY > 0 ? 3 : event.deltaY < 0 ? -3 : 0;
-    if (y === 0) return;
-    void sendActions([{ type: "scroll", x: 0, y }]);
+    // One command for the burst. A guest command per tick blocks the next screenshot.
+    scrollRef.current = noteWheelTick(scrollRef.current, event.deltaY);
+    armScrollBurst();
   }
 
   useEffect(() => {

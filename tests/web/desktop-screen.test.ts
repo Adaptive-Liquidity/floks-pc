@@ -10,6 +10,15 @@ import { MCP_TOOL_NAMES } from "../../src/lib/mcp/tools.ts";
 import { POST as desktopPost } from "../../web/app/api/setup/computers/[id]/desktop/route.ts";
 import { createSeat, getSeatStore, resetSeatStoreForTests, type SeatRecord, type SeatStatus } from "../../web/lib/billing/seats.ts";
 import { DESKTOP_POLL_MAX_MS, DESKTOP_POLL_MS, desktopPollDelay } from "../../web/lib/desks/desktop-poll.ts";
+import {
+  SCROLL_BURST_MS,
+  SCROLL_REPEAT_CAP,
+  emptyScrollBurst,
+  noteWheelTick,
+  scrollSendFinished,
+  scrollToSend,
+  wheelScrollTick,
+} from "../../web/lib/desks/scroll-burst.ts";
 import { DESKTOP_OWNER_LIMIT } from "../../web/lib/desks/desktop-rate.ts";
 import {
   desktopBindSecret,
@@ -408,6 +417,16 @@ describe("owner desktop HTTP", { concurrency: 1 }, () => {
     assert.match(screen, /visibilitychange/);
     assert.match(screen, /desktopPollDelay/);
     assert.match(screen, /inFlightRef/);
+    const wheel = functionBody(screen, "function onFrameWheel");
+    const click = functionBody(screen, "function onFrameClick");
+    assert.match(wheel, /noteWheelTick/);
+    assert.match(wheel, /armScrollBurst/);
+    assert.doesNotMatch(wheel, /sendActions/);
+    assert.match(click, /click_coordinates/);
+    assert.match(click, /sendActions/);
+    assert.match(screen, /void sendActions\(\[mapped\]\)/);
+    assert.match(screen, /type: "scroll"/);
+    assert.equal(screen.match(/sendActions/g)?.length, 4);
     assert.doesNotMatch(screen, /setInterval/);
     assert.doesNotMatch(screen, /neon|glow|gradient|novnc|runloop\.ai/i);
     assert.doesNotMatch(tools, /computer_takeover|computer_vnc|computer_desktop/);
@@ -518,6 +537,67 @@ function missingTableError(): Error {
   (err as Error & { code: string }).code = "42P01";
   return err;
 }
+
+function functionBody(source: string, signature: string): string {
+  const start = source.indexOf(signature);
+  assert.ok(start >= 0, signature);
+  const brace = source.indexOf("{", start);
+  assert.ok(brace >= 0);
+  let depth = 0;
+  for (let i = brace; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  assert.fail(`unclosed ${signature}`);
+}
+
+describe("owner scroll burst", () => {
+  it("sends one scroll for a burst and holds ticks that arrive while that send is in flight", () => {
+    assert.ok(SCROLL_BURST_MS > 0 && SCROLL_BURST_MS < DESKTOP_POLL_MS);
+    assert.equal(wheelScrollTick(12), 3);
+    assert.equal(wheelScrollTick(-4), -3);
+    assert.equal(wheelScrollTick(0), 0);
+
+    let state = emptyScrollBurst();
+    assert.equal(scrollToSend(state), null);
+    state = noteWheelTick(state, 0);
+    assert.equal(state.pending, 0);
+    assert.equal(scrollToSend(state), null);
+
+    for (let i = 0; i < 8; i += 1) state = noteWheelTick(state, 48);
+    const first = scrollToSend(state);
+    assert.ok(first);
+    assert.equal(first.y, SCROLL_REPEAT_CAP);
+    assert.deepEqual(first.next, { pending: 0, sending: true });
+
+    let during = first.next;
+    for (let i = 0; i < 4; i += 1) during = noteWheelTick(during, 48);
+    assert.equal(scrollToSend(during), null);
+    assert.equal(during.pending, 12);
+    assert.equal(during.sending, true);
+
+    const finished = scrollSendFinished(during);
+    const second = scrollToSend(finished);
+    assert.ok(second);
+    assert.equal(second.y, 12);
+    assert.equal(second.next.pending, 0);
+    assert.equal(second.next.sending, true);
+  });
+
+  it("cancels opposite wheel ticks inside one burst", () => {
+    let state = emptyScrollBurst();
+    state = noteWheelTick(state, 10);
+    state = noteWheelTick(state, 10);
+    state = noteWheelTick(state, -10);
+    const send = scrollToSend(state);
+    assert.ok(send);
+    assert.equal(send.y, 3);
+  });
+});
 
 describe("owner desktop poll helpers", () => {
   it("does not overlap, pauses when hidden, and backs off on errors", () => {
