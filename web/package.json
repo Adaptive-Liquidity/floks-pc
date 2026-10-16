@@ -14,7 +14,7 @@
     "verify": "npm run typecheck && npm run build"
   },
   "dependencies": {
-    "next": "^15.5.2",
+    "next": "^16.4.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
