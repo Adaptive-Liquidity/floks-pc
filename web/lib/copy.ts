@@ -11,7 +11,7 @@ export const HOME_SUB =
   "Give it somewhere to work. An isolated Agent Computer — persistent workspace, dedicated browser, private files, controlled execution, scoped permissions.";
 
 export const HOME_LINE =
-  "Not another chat window. Not a temporary sandbox. One Bot, one isolated computer. Work stays in Grok.";
+  "Not another chat window. Not a temporary sandbox. Work stays in Grok.";
 
 export const HOME_TOOLS =
   "Same eight tools on every desk. Renews monthly until you cancel.";
@@ -23,8 +23,7 @@ export const JOIN_LINE = "Create an account. Then buy a computer. We email a 6-d
 
 export const CREATE_ACCOUNT = "Create account";
 
-export const ACCOUNT_HOME_LINE =
-  "An isolated Agent Computer for one Grok Bot. Work stays in Grok.";
+export const ACCOUNT_HOME_LINE = "Work stays in Grok.";
 
 export const ACCOUNT_EMPTY =
   "No computer yet. Buy a plan to open a desk. Pairing starts after the seat exists.";
@@ -143,8 +142,7 @@ export const NOW_TITLE = "Live. Occupiable. Bounded.";
 export const FAQ_EYEBROW = "FAQ";
 export const FAQ_TITLE = "Questions";
 export const JOIN_TITLE = "Pick the hours";
-export const JOIN_SUB =
-  "One paid seat: one Grok Bot, one isolated computer. Create an account, then buy. Work stays in Grok.";
+export const JOIN_SUB = "Create an account, then buy. Work stays in Grok.";
 export const JOIN_HOURS =
   "Boot and resume burn hours. Asleep and shutdown do not. Extra hours $1.20/h, off by default.";
 export const PRICING_TITLE = "Pricing";

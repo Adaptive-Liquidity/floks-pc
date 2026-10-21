@@ -11,7 +11,6 @@ export default function NowPage() {
         <h2 className="font-headline-sm text-headline-sm text-tertiary-fixed uppercase">Available now</h2>
         <ul className="list-disc pl-5 space-y-2">
           <li>Personal · $29/mo · 10h · Pro · $99/mo · 40h · Team · $79/agent · 30h (min 3)</li>
-          <li>One Bot, one isolated Linux VM</li>
           <li>Live Chrome observe (screenshots + accessibility tree)</li>
           <li>Private files on that computer</li>
           <li>Bounded command execution</li>
